@@ -198,6 +198,22 @@ export class LocalToadRuntime {
     const adapter = this.supervisor.getAdapter(runtime.runtimeId);
     if (adapter) {
       this.adapters.set(runtime.runtimeId, adapter);
+      // Auto-consume the adapter's stream-json events into the ingestor so
+      // they reach runtime_events + the SSE bus without the caller wiring it
+      // up. Without this, an agent runs and accepts input but its responses
+      // are lost. Errors in the consumer loop are logged and swallowed —
+      // they must not crash the runtime, and they should not propagate up
+      // to the caller of launchAgent.
+      if (typeof adapter.events === 'function') {
+        Promise.resolve()
+          .then(() => this.eventIngestor.ingestFrom(adapter.events()))
+          .catch((err) => {
+            // Don't throw — adapter event stream errors are non-fatal at the
+            // runtime level. The supervisor still owns process lifecycle.
+            // eslint-disable-next-line no-console
+            console.error(`[LocalToadRuntime] adapter events loop error for ${runtime.runtimeId}:`, err?.message || err);
+          });
+      }
     }
     return runtime;
   }

@@ -117,6 +117,89 @@ test('LocalToadRuntime ingests runtime events and exposes a team overview', asyn
   assert.equal(overview.pendingApprovals[0].approvalId, 'approval-1');
 });
 
+test('LocalToadRuntime auto-consumes adapter events on launch (no manual ingestRuntimeEvent needed)', async () => {
+  // Reproduces the Level-2 wiring bug. The adapter emits stream-json events;
+  // the runtime should pull them through eventIngestor.ingestFrom without the
+  // caller having to wire it up.
+  const child = createFakeChild();
+  let resolveEmit;
+  const emitted = new Promise((r) => { resolveEmit = r; });
+
+  // A controllable async-iterable adapter. After launch, we push one event
+  // through the queue and assert the runtime persisted it.
+  const events = [];
+  let push;
+  let pushDone = false;
+  const queue = [];
+  const adapter = {
+    runtimeId: 'runtime-lead-1',
+    teamId: 'team-a',
+    agentId: 'lead',
+    providerId: 'claude',
+    async sendTurn() { return { accepted: true, responseState: 'accepted_by_runtime' }; },
+    async stop() {},
+    events() {
+      return (async function* () {
+        // simple buffered async iterator backed by the queue
+        while (true) {
+          if (queue.length > 0) {
+            yield queue.shift();
+          } else if (pushDone) {
+            return;
+          } else {
+            await new Promise((r) => { push = r; });
+          }
+        }
+      })();
+    },
+    push(ev) {
+      queue.push(ev);
+      if (push) { push(); push = null; }
+    },
+    end() {
+      pushDone = true;
+      if (push) { push(); push = null; }
+    },
+  };
+
+  const runtime = new LocalToadRuntime({
+    spawnProcess() { return child; },
+    createAdapter() { return adapter; },
+  });
+
+  await runtime.launchAgent({
+    teamId: 'team-a',
+    agentId: 'lead',
+    runtimeId: 'runtime-lead-1',
+    command: 'claude',
+  });
+
+  // Push an event AFTER launch — it should flow through ingestFrom and land
+  // in eventLog without manual intervention.
+  adapter.push({
+    type: 'assistant_text',
+    runtimeId: 'runtime-lead-1',
+    teamId: 'team-a',
+    agentId: 'lead',
+    text: 'Auto-consumed!',
+  });
+
+  // Give the consumer loop a tick to process
+  for (let i = 0; i < 50; i++) {
+    await new Promise((r) => setTimeout(r, 10));
+    if (runtime.eventLog.listEvents({ runtimeId: 'runtime-lead-1' }).length >= 1) break;
+  }
+
+  const persisted = runtime.eventLog.listEvents({ runtimeId: 'runtime-lead-1' });
+  assert.equal(persisted.length, 1, 'auto-consumer should have persisted the event');
+  assert.equal(persisted[0].eventType, 'assistant_text');
+  assert.equal(persisted[0].payload.text, 'Auto-consumed!');
+
+  // Cleanup
+  adapter.end();
+  await runtime.stopAgent('runtime-lead-1');
+});
+
 test('LocalToadRuntime removes adapters when a runtime is stopped', async () => {
   const child = createFakeChild();
   const runtime = new LocalToadRuntime({
