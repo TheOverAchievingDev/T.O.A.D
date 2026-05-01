@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useToadEvents } from '../hooks/useToadEvents';
 import { useToadApi } from '../hooks/useToadApi';
-import { Activity, Database, Server, Check, CheckCircle, MessageSquare, Send, ShieldAlert, Trash2, Wrench, X, Zap, Clock } from 'lucide-react';
+import { Activity, Database, Play, Server, Check, CheckCircle, MessageSquare, Send, ShieldAlert, Trash2, Wrench, X, Zap, Clock } from 'lucide-react';
 
 export default function Dashboard() {
   const { connected, events, lastEvent } = useToadEvents();
@@ -26,6 +26,16 @@ export default function Dashboard() {
   const [runtimeTools, setRuntimeTools] = useState([]);
   const [runtimeHealth, setRuntimeHealth] = useState(null);
   const [runtimeDetailLoading, setRuntimeDetailLoading] = useState(false);
+  const [launchForm, setLaunchForm] = useState({
+    teamId: '',
+    agentId: 'lead',
+    runtimeId: '',
+    command: 'claude',
+    cwd: '',
+  });
+  const [launchingAgent, setLaunchingAgent] = useState(false);
+  const [launchError, setLaunchError] = useState(null);
+  const [launchSuccess, setLaunchSuccess] = useState(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -116,6 +126,42 @@ export default function Dashboard() {
 
   const handleCrossTeamFormChange = (field, value) => {
     setCrossTeamForm(current => ({ ...current, [field]: value }));
+  };
+
+  const handleLaunchFormChange = (field, value) => {
+    setLaunchForm(current => ({ ...current, [field]: value }));
+  };
+
+  const handleLaunchAgent = async (event) => {
+    event.preventDefault();
+    const teamId = launchForm.teamId.trim();
+    const agentId = launchForm.agentId.trim();
+    const runtimeId = launchForm.runtimeId.trim();
+    const command = launchForm.command.trim();
+    if (!teamId || !agentId || !runtimeId || !command) return;
+    setLaunchingAgent(true);
+    setLaunchError(null);
+    setLaunchSuccess(null);
+    try {
+      const args = {
+        idempotencyKey: `ui-launch-${Date.now()}-${runtimeId}`,
+        teamId,
+        agentId,
+        runtimeId,
+        command,
+      };
+      const cwd = launchForm.cwd.trim();
+      if (cwd) args.cwd = cwd;
+      const result = await callTool('agent_launch', args);
+      setLaunchSuccess(`Runtime ${result?.runtimeId || runtimeId} starting (pid ${result?.pid ?? '?'}).`);
+      setLaunchForm(current => ({ ...current, runtimeId: '' }));
+      await fetchData();
+    } catch (e) {
+      console.error('Failed to launch agent', e);
+      setLaunchError(e.message || 'Launch failed');
+    } finally {
+      setLaunchingAgent(false);
+    }
   };
 
   const handleCrossTeamSend = async (event) => {
@@ -239,6 +285,91 @@ export default function Dashboard() {
             <div className="stat-label">{health?.summary?.rateLimited || 0} API retries rate limited</div>
           </div>
         </div>
+      </div>
+
+      {/* Launch Agent */}
+      <div className="col-span-12 glass-panel animate-fade-in">
+        <div style={{ padding: '1rem 1.5rem', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+          <h2 className="card-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Play size={18} /> Launch Agent
+          </h2>
+          <span className="stat-label" style={{ margin: 0 }}>
+            spawns a runtime via the supervisor
+          </span>
+        </div>
+        <form onSubmit={handleLaunchAgent} style={{ padding: '1rem 1.5rem', display: 'grid', gridTemplateColumns: 'repeat(5, 1fr) auto', gap: '0.75rem', alignItems: 'end' }}>
+          <label className="flex-col gap-1">
+            <span className="stat-label">Team ID</span>
+            <input
+              className="input"
+              style={inputStyle()}
+              value={launchForm.teamId}
+              onChange={(e) => handleLaunchFormChange('teamId', e.target.value)}
+              placeholder="team-a"
+              required
+            />
+          </label>
+          <label className="flex-col gap-1">
+            <span className="stat-label">Agent ID</span>
+            <input
+              className="input"
+              style={inputStyle()}
+              value={launchForm.agentId}
+              onChange={(e) => handleLaunchFormChange('agentId', e.target.value)}
+              placeholder="lead"
+              required
+            />
+          </label>
+          <label className="flex-col gap-1">
+            <span className="stat-label">Runtime ID</span>
+            <input
+              className="input"
+              style={inputStyle()}
+              value={launchForm.runtimeId}
+              onChange={(e) => handleLaunchFormChange('runtimeId', e.target.value)}
+              placeholder="runtime-lead-1"
+              required
+            />
+          </label>
+          <label className="flex-col gap-1">
+            <span className="stat-label">Command</span>
+            <input
+              className="input"
+              style={inputStyle()}
+              value={launchForm.command}
+              onChange={(e) => handleLaunchFormChange('command', e.target.value)}
+              required
+            />
+          </label>
+          <label className="flex-col gap-1">
+            <span className="stat-label">CWD (optional)</span>
+            <input
+              className="input"
+              style={inputStyle()}
+              value={launchForm.cwd}
+              onChange={(e) => handleLaunchFormChange('cwd', e.target.value)}
+              placeholder="(orchestrator's cwd)"
+            />
+          </label>
+          <button type="submit" className="btn btn-primary" disabled={launchingAgent}>
+            <Play size={16} />
+            {launchingAgent ? 'Launching…' : 'Launch'}
+          </button>
+        </form>
+        {(launchError || launchSuccess) && (
+          <div style={{ padding: '0 1.5rem 1rem' }}>
+            {launchError && (
+              <div className="badge badge-warning" style={{ display: 'inline-block' }}>
+                {launchError}
+              </div>
+            )}
+            {launchSuccess && !launchError && (
+              <div className="badge badge-success" style={{ display: 'inline-block' }}>
+                {launchSuccess}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* System Housekeeping */}

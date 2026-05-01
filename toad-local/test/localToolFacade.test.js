@@ -440,3 +440,79 @@ test('LocalToolFacade sends cross-team messages with prefix and dual-write', () 
   assert.equal(senderMessages[0].metadata.source, 'cross_team_sent');
   assert.equal(senderMessages[0].metadata.conversationId, 'conv-1');
 });
+
+test('LocalToolFacade routes agent_launch to the launchAgent callback', async () => {
+  const broker = new InMemoryBroker();
+  const taskBoard = new InMemoryTaskBoard();
+  const calls = [];
+  const facade = new LocalToolFacade({
+    broker,
+    taskBoard,
+    launchAgent(input) {
+      calls.push(input);
+      return Promise.resolve({ runtimeId: input.runtimeId, status: 'starting', pid: 1234 });
+    },
+  });
+
+  const result = await facade.execute({
+    commandName: COMMANDS.AGENT_LAUNCH,
+    idempotencyKey: 'launch-1',
+    actor: { teamId: 'team-a', agentId: 'operator' },
+    args: {
+      teamId: 'team-a',
+      agentId: 'lead',
+      runtimeId: 'runtime-lead-1',
+      command: 'claude',
+      args: ['--print'],
+      cwd: 'C:\\Project-TOAD',
+      env: { CLAUDE_VAR: 'on' },
+      providerId: 'claude',
+    },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0], {
+    teamId: 'team-a',
+    agentId: 'lead',
+    runtimeId: 'runtime-lead-1',
+    command: 'claude',
+    args: ['--print'],
+    cwd: 'C:\\Project-TOAD',
+    env: { CLAUDE_VAR: 'on' },
+    providerId: 'claude',
+  });
+  assert.deepEqual(result, { runtimeId: 'runtime-lead-1', status: 'starting', pid: 1234 });
+});
+
+test('LocalToolFacade rejects agent_launch when no launchAgent callback is configured', async () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  await assert.rejects(
+    () => facade.execute({
+      commandName: COMMANDS.AGENT_LAUNCH,
+      idempotencyKey: 'launch-fail',
+      actor: { teamId: 'team-a', agentId: 'operator' },
+      args: { teamId: 'team-a', agentId: 'lead', runtimeId: 'r1', command: 'claude' },
+    }),
+    /agent_launch is not configured/,
+  );
+});
+
+test('LocalToolFacade requires idempotencyKey for agent_launch', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    launchAgent: () => ({ runtimeId: 'r', status: 'starting' }),
+  });
+  // execute()'s mutating-command check is synchronous — throws before reaching the async handler
+  assert.throws(
+    () => facade.execute({
+      commandName: COMMANDS.AGENT_LAUNCH,
+      actor: { teamId: 'team-a', agentId: 'operator' },
+      args: { teamId: 'team-a', agentId: 'lead', runtimeId: 'r1', command: 'claude' },
+    }),
+    /idempotencyKey/,
+  );
+});

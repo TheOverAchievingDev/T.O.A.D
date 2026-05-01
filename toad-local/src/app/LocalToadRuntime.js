@@ -73,7 +73,16 @@ export class LocalToadRuntime {
       });
     this.toolFacade =
       toolFacade ||
-      new LocalToolFacade({ broker: this.broker, taskBoard: this.taskBoard, runtimeRegistry: this.runtimeRegistry, approvalBroker: this.approvalBroker, adapters, projectCwd, readModel: this.readModel });
+      new LocalToolFacade({
+        broker: this.broker,
+        taskBoard: this.taskBoard,
+        runtimeRegistry: this.runtimeRegistry,
+        approvalBroker: this.approvalBroker,
+        adapters,
+        projectCwd,
+        readModel: this.readModel,
+        launchAgent: (input) => this.launchAgent(input),
+      });
     const db = this.runtimeRegistry?.db || this.eventLog?.db || null;
     this.sideEffectLog = db ? new SideEffectLog(db) : null;
     this.compactionHandler = new CompactionHandler({ adapters, taskBoard: this.taskBoard, sideEffectLog: this.sideEffectLog });

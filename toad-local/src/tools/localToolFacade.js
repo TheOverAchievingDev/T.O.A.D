@@ -8,7 +8,7 @@ import { applyPermissionSuggestions } from '../runtime/claudeSettingsWriter.js';
 import { formatCrossTeamText, CROSS_TEAM_SOURCE, CROSS_TEAM_SENT_SOURCE } from '../protocol/crossTeam.js';
 
 export class LocalToolFacade {
-  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null }) {
+  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null }) {
     if (!broker) throw new TypeError('broker is required');
     if (!taskBoard) throw new TypeError('taskBoard is required');
     this.broker = broker;
@@ -18,6 +18,7 @@ export class LocalToolFacade {
     this.adapters = adapters;
     this.projectCwd = projectCwd;
     this.readModel = readModel;
+    this.launchAgent = typeof launchAgent === 'function' ? launchAgent : null;
   }
 
   execute(command) {
@@ -59,6 +60,8 @@ export class LocalToolFacade {
         return this.#crossTeamMessages(actor, args);
       case COMMANDS.CROSS_TEAM_SEND:
         return this.#crossTeamSend(actor, command.idempotencyKey, args);
+      case COMMANDS.AGENT_LAUNCH:
+        return this.#agentLaunch(actor, args);
       default:
         throw new Error(`unsupported command: ${commandName}`);
     }
@@ -348,6 +351,27 @@ export class LocalToolFacade {
     });
 
     return { ok: true, messageId: incoming.messageId, targetTeamId, targetAgentId };
+  }
+
+  async #agentLaunch(actor, args) {
+    if (!this.launchAgent) {
+      throw new Error('agent_launch is not configured on this facade');
+    }
+    const teamId = requireString(args.teamId, 'args.teamId');
+    const agentId = requireString(args.agentId, 'args.agentId');
+    const runtimeId = requireString(args.runtimeId, 'args.runtimeId');
+    const command = requireString(args.command, 'args.command');
+    const input = {
+      teamId,
+      agentId,
+      runtimeId,
+      command,
+    };
+    if (Array.isArray(args.args)) input.args = args.args.map(String);
+    if (typeof args.cwd === 'string' && args.cwd.length > 0) input.cwd = args.cwd;
+    if (args.env && typeof args.env === 'object' && !Array.isArray(args.env)) input.env = args.env;
+    if (typeof args.providerId === 'string' && args.providerId.length > 0) input.providerId = args.providerId;
+    return this.launchAgent(input);
   }
 }
 

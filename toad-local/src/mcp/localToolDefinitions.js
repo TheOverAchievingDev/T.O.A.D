@@ -180,6 +180,22 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
       replyToConversationId: { type: 'string', minLength: 1 },
     },
   }),
+  makeTool({
+    name: COMMANDS.AGENT_LAUNCH,
+    title: 'Launch Agent Runtime',
+    description: 'Spawn a Claude (or other) CLI runtime under the supervisor and register the adapter so the runtime joins the orchestrator event loop.',
+    required: ['teamId', 'agentId', 'runtimeId', 'command'],
+    properties: {
+      teamId: { type: 'string', minLength: 1 },
+      agentId: { type: 'string', minLength: 1 },
+      runtimeId: { type: 'string', minLength: 1 },
+      command: { type: 'string', minLength: 1 },
+      args: { type: 'array', items: { type: 'string' } },
+      cwd: { type: 'string', minLength: 1 },
+      env: { type: 'object', additionalProperties: { type: 'string' } },
+      providerId: { type: 'string', minLength: 1 },
+    },
+  }),
 ]);
 
 export function listLocalMcpTools() {

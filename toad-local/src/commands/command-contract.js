@@ -14,6 +14,7 @@ export const COMMANDS = Object.freeze({
   HEALTH_STATUS: 'health_status',
   CROSS_TEAM_MESSAGES: 'cross_team_messages',
   CROSS_TEAM_SEND: 'cross_team_send',
+  AGENT_LAUNCH: 'agent_launch',
 });
 
 export const MUTATING_COMMANDS = Object.freeze([
@@ -25,6 +26,7 @@ export const MUTATING_COMMANDS = Object.freeze([
   COMMANDS.REVIEW_DECIDE,
   COMMANDS.APPROVAL_RESPOND,
   COMMANDS.CROSS_TEAM_SEND,
+  COMMANDS.AGENT_LAUNCH,
 ]);
 
 export function commandRequiresIdempotency(commandName) {

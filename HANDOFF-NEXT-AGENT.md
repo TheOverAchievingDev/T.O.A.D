@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-04-30 local session (API token on disk)
+Last updated: 2026-04-30 local session (agent_launch MCP tool + dashboard launcher)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,40 @@ Important files:
 
 ## Latest Completed Slices
 
-### 1. API Token On Disk (latest)
+### 1. `agent_launch` MCP Tool + Dashboard Launcher (latest)
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-agent-launch-tool.md`
+
+Modified files:
+
+- `src/commands/command-contract.js` — adds `AGENT_LAUNCH = 'agent_launch'` to `COMMANDS` and to `MUTATING_COMMANDS` (idempotencyKey required).
+- `src/mcp/localToolDefinitions.js` — adds the `agent_launch` tool definition with required `teamId/agentId/runtimeId/command` plus optional `args/cwd/env/providerId`.
+- `src/tools/localToolFacade.js` — accepts a new `launchAgent` callback in its constructor; routes `COMMANDS.AGENT_LAUNCH` to a new async `#agentLaunch` handler that forwards args to that callback. Throws a clear "agent_launch is not configured" error when no callback is set.
+- `src/app/LocalToadRuntime.js` — passes `(input) => this.launchAgent(input)` to the facade so the runtime's adapter-map setup is preserved (calling `supervisor.launchAgent` directly would skip that step).
+- `test/localToolFacade.test.js` — 3 new tests (now 15 total): facade forwards args correctly, rejects when callback is missing, requires idempotencyKey.
+- `test/localMcpToolDefinitions.test.js` — `agent_launch` added to the expected names list and the mutating-tools assertion.
+- `ui/src/components/Dashboard.jsx` — new "Launch Agent" panel above System Housekeeping with five inputs (teamId, agentId, runtimeId, command, optional cwd) and a submit button. Calls `/api/call agent_launch` with a UI-generated idempotency key; surfaces success/error inline; clears the runtimeId field on success and triggers `fetchData()` so the new runtime appears in the Active Runtimes list.
+
+Behavior:
+
+- `agent_launch` is the first **mutating runtime-management** tool exposed via the API. Prior tools were either pure observers (`agent_status`, `runtime_events`) or affected stored state (`task_create`, `message_send`); this one literally spawns a process under the supervisor.
+- The facade does NOT deduplicate by idempotency key — `launchAgent` itself is not idempotent (a duplicate `runtimeId` would hit a registry uniqueness constraint). The idempotency key is the standard mutating-command requirement; real launch-once semantics would be a separate slice.
+- Args/env are intentionally absent from the UI form (array/object inputs complicate the form). They remain available via `/api/call` for power users.
+
+Verification during slice:
+
+```powershell
+node test/localToolFacade.test.js
+node test/localMcpToolDefinitions.test.js
+npm.cmd test
+cd ui
+npm.cmd run lint
+npm.cmd run build
+```
+
+### 2. API Token On Disk
 
 Plan file:
 
@@ -1134,9 +1167,9 @@ Remaining gaps worth tracking:
 Recommended next slice (pick one):
 
 1. **Subscription quota / plan-usage indicator** — parked. The user wants a "circle indicator" on startup showing Claude (and eventually Codex) plan usage. Investigation found that `--print "/usage"` is a $0 client-side slash command but only returns an auth-status string — the rich quota panel is rendered by the interactive TUI from an undocumented Anthropic API call. `~/.claude/stats-cache.json` has historical activity but not subscription windows. The user is independently investigating reliable data sources before this slice resumes.
-2. **Optional `--bare` smoke variant** — add a parallel smoke path that uses `--bare` when `ANTHROPIC_API_KEY` is set in the environment, for users on direct API auth. The current smoke covers the subscription-OAuth path; the `--bare` path covers API-key auth.
-3. **Codex provider integration** — TOAD currently only spawns Claude runtimes. The legacy app had a full `codex-account` feature (rate-limit windows, ChatGPT auth, model selection). Adding Codex as a runtime provider is a much larger scoped slice.
-4. **`agent_launch` MCP tool / dashboard launcher** — the dashboard observes runtimes but cannot create new ones from the UI. Exposing `LocalToadRuntime.launchAgent()` via a new MCP tool plus a "Launch agent" form on the dashboard would close the gap between observation and orchestration.
+2. **`agent_stop` MCP tool / dashboard stop button** — `LocalToadRuntime.stopAgent` exists but is not yet API-exposed. Companion to the launch slice: lets the operator stop runtimes from the UI.
+3. **Optional `--bare` smoke variant** — add a parallel smoke path that uses `--bare` when `ANTHROPIC_API_KEY` is set in the environment, for users on direct API auth. The current smoke covers the subscription-OAuth path; the `--bare` path covers API-key auth.
+4. **Codex provider integration** — TOAD currently only spawns Claude runtimes. The legacy app had a full `codex-account` feature (rate-limit windows, ChatGPT auth, model selection). Adding Codex as a runtime provider is a much larger scoped slice.
 
 Workflow reminders:
 
@@ -1283,6 +1316,14 @@ rg -n "permission|control_request|approval|runtime adapter|watcher|relay" C:\Pro
 - `C:\Project-TOAD\toad-local\src\runtime\resolveApiToken.js`
 - `C:\Project-TOAD\toad-local\test\resolveApiToken.test.js`
 - `C:\Project-TOAD\toad-local\scripts\generate-api-token.mjs`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-agent-launch-tool.md`
+- `C:\Project-TOAD\toad-local\src\commands\command-contract.js`
+- `C:\Project-TOAD\toad-local\src\mcp\localToolDefinitions.js`
+- `C:\Project-TOAD\toad-local\src\tools\localToolFacade.js`
+- `C:\Project-TOAD\toad-local\src\app\LocalToadRuntime.js`
+- `C:\Project-TOAD\toad-local\test\localToolFacade.test.js`
+- `C:\Project-TOAD\toad-local\test\localMcpToolDefinitions.test.js`
+- `C:\Project-TOAD\toad-local\ui\src\components\Dashboard.jsx`
 
 ## Suggested Opening Move For Next Agent
 
