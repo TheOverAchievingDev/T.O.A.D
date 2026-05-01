@@ -13,6 +13,7 @@ import { SqliteTaskBoard } from '../task/sqliteTaskBoard.js';
 import { SqliteTeamConfigRegistry } from '../team/sqliteTeamConfigRegistry.js';
 import { LocalToolFacade } from '../tools/localToolFacade.js';
 import { WorktreeManager } from '../task/worktreeManager.js';
+import { checkForConflicts } from '../task/mergeChecker.js';
 import { ApiServer } from '../transport/apiServer.js';
 import { SideEffectLog } from '../delivery/sideEffectLog.js';
 import { resolveApiToken } from '../runtime/resolveApiToken.js';
@@ -34,6 +35,7 @@ export class LocalToadRuntime {
     deliveryWorker = null,
     toolFacade = null,
     worktreeManager = null,
+    mergeChecker = null,
     eventIngestor = null,
     readModel = null,
     port = process.env.TOAD_API_PORT ? parseInt(process.env.TOAD_API_PORT, 10) : 3001,
@@ -83,6 +85,12 @@ export class LocalToadRuntime {
       || (typeof projectCwd === 'string' && projectCwd.length > 0
         ? new WorktreeManager({ projectCwd })
         : null);
+    // Merge checker: paired with worktree manager. Same enable rule.
+    this.mergeChecker =
+      mergeChecker
+      || (typeof projectCwd === 'string' && projectCwd.length > 0
+        ? { checkForConflicts }
+        : null);
     this.toolFacade =
       toolFacade ||
       new LocalToolFacade({
@@ -100,6 +108,7 @@ export class LocalToadRuntime {
         dbPath,
         eventLog: this.eventLog,
         worktreeManager: this.worktreeManager,
+        mergeChecker: this.mergeChecker,
       });
     const db = this.runtimeRegistry?.db || this.eventLog?.db || null;
     this.sideEffectLog = db ? new SideEffectLog(db) : null;

@@ -1855,6 +1855,203 @@ test('LocalToolFacade does not trigger worktree creation when no manager is conf
   assert.equal(task.worktree, null);
 });
 
+// --- §19 slice 1: merge_ready → done blocked when worktree branch would conflict with baseRef ---
+
+function setupMergeReadyTask(facade, { taskId = 'mr-1' } = {}) {
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: `${taskId}-create`,
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId, subject: 'merge', status: 'pending' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: `${taskId}-ready`,
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId, status: 'ready' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_PROPOSE,
+    idempotencyKey: `${taskId}-plan`,
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId, summary: 'm' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_APPROVE,
+    idempotencyKey: `${taskId}-app`,
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId },
+  });
+  for (const [id, status] of [
+    [`${taskId}-planned`, 'planned'],
+    [`${taskId}-ip`, 'in_progress'],
+    [`${taskId}-rev`, 'review'],
+    [`${taskId}-test`, 'testing'],
+  ]) {
+    facade.execute({
+      commandName: COMMANDS.TASK_UPDATE,
+      idempotencyKey: id,
+      actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+      args: { taskId, status },
+    });
+  }
+}
+
+function buildMergeFacade({ checkForConflicts, removeForTask = () => ({ status: 'removed', path: '/x', removedAt: 'now' }) } = {}) {
+  const fakeWorktreeManager = {
+    createForTask({ teamId, taskId }) {
+      return { status: 'created', path: `/tmp/${teamId}/${taskId}`, branch: `toad/${teamId}/${taskId}`, baseRef: 'base-sha', createdAt: 'now' };
+    },
+    removeForTask,
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    spawnValidation: () => ({ exitCode: 0, stdout: 'pass', stderr: '', durationMs: 1 }),
+    teamConfigRegistry: new (class {
+      teams = new Map();
+      registerTeam(c) { this.teams.set(c.teamId, c); }
+      getTeam(id) { return this.teams.get(id) || null; }
+      listTeams() { return Array.from(this.teams.values()); }
+    })(),
+    worktreeManager: fakeWorktreeManager,
+    mergeChecker: { checkForConflicts },
+  });
+  return facade;
+}
+
+test('merge_ready → done is allowed when mergeChecker reports clean', async () => {
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  const facade = buildMergeFacade({ checkForConflicts: () => ({ status: 'clean' }) });
+  facade.teamConfigRegistry.registerTeam(new TeamConfig({ teamId: 'team-a', validation: { testCommand: 'npm test' } }));
+  setupMergeReadyTask(facade, { taskId: 'mc-clean' });
+  await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN,
+    idempotencyKey: 'mc-clean-val',
+    actor: { teamId: 'team-a', agentId: 'tester-1', role: 'tester' },
+    args: { taskId: 'mc-clean', kind: 'test' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'mc-clean-mr',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'mc-clean', status: 'merge_ready' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'mc-clean-done',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'mc-clean', status: 'done' },
+  });
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'mc-clean' });
+  assert.equal(task.status, 'done');
+});
+
+test('merge_ready → done is BLOCKED when mergeChecker reports conflict, with file list in error', async () => {
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  const facade = buildMergeFacade({
+    checkForConflicts: () => ({ status: 'conflict', files: ['src/foo.js', 'src/bar.js'] }),
+  });
+  facade.teamConfigRegistry.registerTeam(new TeamConfig({ teamId: 'team-a', validation: { testCommand: 'npm test' } }));
+  setupMergeReadyTask(facade, { taskId: 'mc-conf' });
+  await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN,
+    idempotencyKey: 'mc-conf-val',
+    actor: { teamId: 'team-a', agentId: 'tester-1', role: 'tester' },
+    args: { taskId: 'mc-conf', kind: 'test' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'mc-conf-mr',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'mc-conf', status: 'merge_ready' },
+  });
+  assert.throws(
+    () => facade.execute({
+      commandName: COMMANDS.TASK_UPDATE,
+      idempotencyKey: 'mc-conf-done',
+      actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+      args: { taskId: 'mc-conf', status: 'done' },
+    }),
+    /merge_ready . done blocked.*conflict.*src\/foo\.js/,
+  );
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'mc-conf' });
+  assert.equal(task.status, 'merge_ready', 'task should still be merge_ready after blocked transition');
+});
+
+test('merge_ready → done is BLOCKED when mergeChecker reports error (operator must investigate)', async () => {
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  const facade = buildMergeFacade({
+    checkForConflicts: () => ({ status: 'error', error: 'worktree has uncommitted changes' }),
+  });
+  facade.teamConfigRegistry.registerTeam(new TeamConfig({ teamId: 'team-a', validation: { testCommand: 'npm test' } }));
+  setupMergeReadyTask(facade, { taskId: 'mc-err' });
+  await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN,
+    idempotencyKey: 'mc-err-val',
+    actor: { teamId: 'team-a', agentId: 'tester-1', role: 'tester' },
+    args: { taskId: 'mc-err', kind: 'test' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'mc-err-mr',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'mc-err', status: 'merge_ready' },
+  });
+  assert.throws(
+    () => facade.execute({
+      commandName: COMMANDS.TASK_UPDATE,
+      idempotencyKey: 'mc-err-done',
+      actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+      args: { taskId: 'mc-err', status: 'done' },
+    }),
+    /merge_ready . done blocked.*uncommitted changes/,
+  );
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'mc-err' });
+  assert.equal(task.status, 'merge_ready');
+});
+
+test('merge_ready → done has no merge gate when no worktree exists (back-compat)', async () => {
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  let checkerCalled = false;
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    spawnValidation: () => ({ exitCode: 0, stdout: 'pass', stderr: '', durationMs: 1 }),
+    teamConfigRegistry: new (class {
+      teams = new Map();
+      registerTeam(c) { this.teams.set(c.teamId, c); }
+      getTeam(id) { return this.teams.get(id) || null; }
+      listTeams() { return Array.from(this.teams.values()); }
+    })(),
+    // no worktreeManager → no worktree gets attached
+    mergeChecker: { checkForConflicts: () => { checkerCalled = true; return { status: 'clean' }; } },
+  });
+  facade.teamConfigRegistry.registerTeam(new TeamConfig({ teamId: 'team-a', validation: { testCommand: 'npm test' } }));
+  setupMergeReadyTask(facade, { taskId: 'mc-nowt' });
+  await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN,
+    idempotencyKey: 'mc-nowt-val',
+    actor: { teamId: 'team-a', agentId: 'tester-1', role: 'tester' },
+    args: { taskId: 'mc-nowt', kind: 'test' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'mc-nowt-mr',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'mc-nowt', status: 'merge_ready' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'mc-nowt-done',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'mc-nowt', status: 'done' },
+  });
+  assert.equal(checkerCalled, false, 'mergeChecker should not run without a worktree');
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'mc-nowt' });
+  assert.equal(task.status, 'done');
+});
+
 // --- §7 finished: review_request auto-computes diff against task worktree ---
 
 test('review_request auto-computes diff and files when task has worktree and caller omits both', async () => {

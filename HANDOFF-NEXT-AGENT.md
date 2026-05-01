@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-05-01 local session (diff tracking finished — checklist §7)
+Last updated: 2026-05-01 local session (merge conflict gate — checklist §19 slice 1)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,38 @@ Important files:
 
 ## Latest Completed Slices
 
-### 0. Diff Tracking — Checklist §7 finished (latest)
+### 0. Merge Conflict Gate — Checklist §19 slice 1 (latest)
+
+The `merge_ready → done` transition now runs a non-destructive merge test inside the task's worktree before letting the transition through. If the task branch can't be merged cleanly into `baseRef`, the orchestrator blocks `done` with a list of conflicting files. This slice covers detection only — actually performing the integration commit on `baseBranch` is deferred to slice 2.
+
+New files:
+
+- `src/task/mergeChecker.js` — `checkForConflicts({ worktreePath, baseRef, runGit })`. Sequence:
+  1. `git status --porcelain` — refuse if the worktree has uncommitted changes (the test wouldn't reflect what would happen at integration time).
+  2. `git merge --no-commit --no-ff <baseRef>` inside the worktree.
+  3. If exit 0 → `git merge --abort` → return `{ status: 'clean' }`.
+  4. If exit non-zero → `git diff --name-only --diff-filter=U` to capture conflicting files, then `git merge --abort` → return `{ status: 'conflict', files }`.
+  5. Various failure modes return `{ status: 'error', error }`.
+- `test/mergeChecker.test.js` — 6 unit tests: clean path, conflict path with file list, dirty worktree refused, status command failed, input validation, cwd discipline.
+
+Modified files:
+
+- `src/tools/localToolFacade.js`:
+  - Constructor accepts optional `mergeChecker` (must implement `checkForConflicts`).
+  - `#taskUpdate`: between the existing plan gate and the STATUS_CHANGED append, when `fromStatus === 'merge_ready'` AND `args.status === 'done'` AND `current.worktree.status === 'created'` AND `this.mergeChecker` is set, runs the gate. Conflict throws `merge_ready → done blocked by merge conflict in: <files>`. Error throws `merge_ready → done blocked: <error message>`. Manager throwing is caught and treated as an error verdict (blocks transition).
+- `src/app/LocalToadRuntime.js` — auto-instantiates `{ checkForConflicts }` adapter when `projectCwd` is set; null otherwise.
+- `test/localToolFacade.test.js` — 4 new tests (now 75 total): clean allows transition, conflict blocks with file list in error, error verdict blocks, no-worktree-no-gate (back-compat).
+- `package.json` — `mergeChecker.test.js` added to npm test chain.
+- `docs/CHECKLIST_GAP_MATRIX.md` — §19 flipped from MISSING to REAL (partial).
+
+Why detection-only first:
+
+- Performing the actual integration on `baseBranch` is destructive (creates a merge commit on user's mainline). Two questions need answers before we automate that: (1) what's the `baseBranch` name? — we currently track `baseRef` (a SHA), not a branch name. (2) Should the orchestrator switch HEAD on the main repo, or use `git merge-tree --write-tree` to produce the merge tree without affecting HEAD? Both need real-world testing first. Detection-only is safe and immediately useful — operators can rely on `done` only landing when the merge is feasible.
+- Symmetric: a clean merge in either direction (task→base or base→task) detects the same conflicts. Testing in the worktree (which is on the task branch) is the simplest setup.
+
+Tests pass: 36 backend test files, 383 individual tests, 0 fail.
+
+### 1. Diff Tracking — Checklist §7 finished
 
 Now that worktrees exist (§8), the orchestrator can compute the real diff itself rather than trusting whatever the agent passes in. The `review_request` tool now auto-attaches `diff` + `files` from `git diff baseRef..HEAD` inside the task's worktree when the caller omits them.
 
@@ -1686,8 +1717,9 @@ Anchored to the checklist's own priority order (full detail in `docs/CHECKLIST_G
 8. ✅ Worktree-per-task slice 2 (§8) — done. `agent_launch` cwd enforcement: auto-set or reject based on `task.worktree.path`.
 9. ✅ Worktree-per-task slice 3 (§8) — done. `removeForTask` runs `git worktree remove --force` on `done`. Branch preserved. `rejected` does not auto-remove.
 10. ✅ Diff tracking (§7 finished) — done. `computeDiff` runs `git diff baseRef..HEAD` inside the worktree; `review_request` auto-attaches when caller omits.
-11. **Worktree slice 4 — NEXT.** Explicit `task.baseRef` at task creation (currently HEAD-at-planning).
-12. **Merge workflow (§19).** Orchestrator-run rebase + merge on `merge_ready → done`, with conflict detection.
+11. ✅ Merge conflict gate (§19 slice 1) — done. `checkForConflicts` runs `git merge --no-commit --no-ff` + `--abort` to verify the task branch is mergeable. Conflict or error blocks `merge_ready → done`.
+12. **Worktree slice 4 — NEXT.** Explicit `task.baseRef` at task creation (currently HEAD-at-planning).
+13. **Merge slice 2 (§19).** Actually perform the integration commit on `baseBranch` (today's gate only verifies feasibility).
 10. Smaller follow-ups: failure detection (§13), WIP limits (§9), dependency enforcement (§10), notifications, knowledge propagation.
 
 Parked / out of scope now:

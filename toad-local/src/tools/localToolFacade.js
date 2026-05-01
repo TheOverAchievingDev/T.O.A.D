@@ -14,7 +14,7 @@ import { runDiagnostics } from '../diagnostics/runDiagnostics.js';
 import { computeDiff as defaultComputeDiff } from '../task/diffComputer.js';
 
 export class LocalToolFacade {
-  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null }) {
+  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null }) {
     if (!broker) throw new TypeError('broker is required');
     if (!taskBoard) throw new TypeError('taskBoard is required');
     this.broker = broker;
@@ -34,6 +34,7 @@ export class LocalToolFacade {
     this.diffComputer = diffComputer && typeof diffComputer.computeDiff === 'function'
       ? diffComputer
       : { computeDiff: defaultComputeDiff };
+    this.mergeChecker = mergeChecker && typeof mergeChecker.checkForConflicts === 'function' ? mergeChecker : null;
   }
 
   execute(command) {
@@ -201,6 +202,35 @@ export class LocalToolFacade {
           throw new Error(
             `task_update: ready → planned requires an approved plan (current: ${planState})`,
           );
+        }
+      }
+      // Merge gate (§19 slice 1): merge_ready → done requires a clean merge
+      // verdict from the orchestrator. The check runs against the task's
+      // worktree branch vs. its baseRef. Only fires when the task has a
+      // created worktree AND a mergeChecker is configured — non-git
+      // workspaces and bare-test setups bypass the gate.
+      if (fromStatus === 'merge_ready' && args.status === 'done' && this.mergeChecker) {
+        const wt = current?.worktree;
+        if (wt && wt.status === 'created' && wt.path && wt.baseRef) {
+          let verdict;
+          try {
+            verdict = this.mergeChecker.checkForConflicts({ worktreePath: wt.path, baseRef: wt.baseRef });
+          } catch (err) {
+            verdict = { status: 'error', error: err && err.message ? err.message : String(err) };
+          }
+          if (verdict.status === 'conflict') {
+            const fileList = Array.isArray(verdict.files) && verdict.files.length > 0
+              ? verdict.files.join(', ')
+              : '<unknown files>';
+            throw new Error(
+              `task_update: merge_ready → done blocked by merge conflict in: ${fileList}`,
+            );
+          }
+          if (verdict.status === 'error') {
+            throw new Error(
+              `task_update: merge_ready → done blocked: ${verdict.error || 'merge check failed'}`,
+            );
+          }
         }
       }
       const payload = { status: args.status, from: fromStatus };
