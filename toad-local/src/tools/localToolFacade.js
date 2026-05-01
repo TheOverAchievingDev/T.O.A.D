@@ -13,7 +13,7 @@ import { assertRoleCanCallTool } from '../security/roleAuthority.js';
 import { runDiagnostics } from '../diagnostics/runDiagnostics.js';
 
 export class LocalToolFacade {
-  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, spawnValidation = null, dbPath = null, eventLog = null }) {
+  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null }) {
     if (!broker) throw new TypeError('broker is required');
     if (!taskBoard) throw new TypeError('taskBoard is required');
     this.broker = broker;
@@ -29,6 +29,7 @@ export class LocalToolFacade {
     this.spawnValidation = typeof spawnValidation === 'function' ? spawnValidation : defaultSpawnValidation;
     this.dbPath = typeof dbPath === 'string' && dbPath.length > 0 ? dbPath : null;
     this.eventLog = eventLog && typeof eventLog.appendEvent === 'function' ? eventLog : null;
+    this.worktreeManager = worktreeManager && typeof worktreeManager.createForTask === 'function' ? worktreeManager : null;
   }
 
   execute(command) {
@@ -208,8 +209,43 @@ export class LocalToolFacade {
         actorId: actor.agentId,
         payload,
       });
+      // Worktree-per-task (§8): when a task moves to `planned`, ask the
+      // configured manager to create an isolated worktree on a task-scoped
+      // branch. Best-effort — a missing or broken manager must not block
+      // the state transition; the event is still recorded.
+      if (args.status === 'planned' && this.worktreeManager) {
+        const existing = this.taskBoard.getTask({ teamId: actor.teamId, taskId });
+        if (!existing?.worktree || existing.worktree.status !== 'created') {
+          this.#triggerWorktreeCreation(actor, idempotencyKey, taskId);
+        }
+      }
     }
     return this.taskBoard.getTask({ teamId: actor.teamId, taskId });
+  }
+
+  #triggerWorktreeCreation(actor, idempotencyKey, taskId) {
+    let result;
+    try {
+      result = this.worktreeManager.createForTask({ teamId: actor.teamId, taskId });
+    } catch (err) {
+      result = {
+        status: 'skipped',
+        reason: 'manager_threw',
+        stderr: err && err.message ? err.message : String(err),
+      };
+    }
+    try {
+      this.taskBoard.appendEvent({
+        teamId: actor.teamId,
+        taskId,
+        idempotencyKey: `${idempotencyKey}:worktree`,
+        eventType: TASK_EVENT_TYPES.WORKTREE_CREATED,
+        actorId: actor.agentId,
+        payload: result,
+      });
+    } catch {
+      // best-effort — projection skip is acceptable, transition already landed
+    }
   }
 
   #reviewRequest(actor, idempotencyKey, args) {

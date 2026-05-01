@@ -13,6 +13,7 @@ export const TASK_EVENT_TYPES = Object.freeze({
   PLAN_PROPOSED: 'task.plan_proposed',
   PLAN_APPROVED: 'task.plan_approved',
   PLAN_REJECTED: 'task.plan_rejected',
+  WORKTREE_CREATED: 'task.worktree_created',
 });
 
 export const TASK_STATUS = Object.freeze({
@@ -103,6 +104,7 @@ export function projectTask(events) {
     reviewState: REVIEW_STATE.NONE,
     review: null,
     plan: null,
+    worktree: null,
     validations: [],
     latestValidation: {},
     comments: [],
@@ -192,6 +194,22 @@ export function projectTask(events) {
           reason: typeof event.payload?.reason === 'string' ? event.payload.reason : null,
         };
       }
+    }
+    if (event.eventType === TASK_EVENT_TYPES.WORKTREE_CREATED) {
+      const p = event.payload || {};
+      const status = p.status === 'created' ? 'created' : 'skipped';
+      task.worktree = status === 'created'
+        ? {
+            status: 'created',
+            path: typeof p.path === 'string' ? p.path : null,
+            branch: typeof p.branch === 'string' ? p.branch : null,
+            baseRef: typeof p.baseRef === 'string' ? p.baseRef : null,
+            createdAt: typeof p.createdAt === 'string' ? p.createdAt : event.createdAt,
+          }
+        : {
+            status: 'skipped',
+            reason: typeof p.reason === 'string' ? p.reason : 'unknown',
+          };
     }
     if (event.eventType === TASK_EVENT_TYPES.VALIDATION_RUN) {
       const payload = event.payload || {};

@@ -302,6 +302,58 @@ test('projectTask builds task.plan from PLAN_PROPOSED then merges APPROVED/REJEC
   assert.equal(task.plan.decidedBy, 'lead');
 });
 
+test('projectTask captures WORKTREE_CREATED into task.worktree (status: created)', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'wt-1',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead',
+    payload: { subject: 'worktree task' },
+  });
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'wt-1',
+    eventType: TASK_EVENT_TYPES.WORKTREE_CREATED,
+    actorId: 'lead',
+    payload: {
+      status: 'created',
+      path: '/tmp/.toad/worktrees/team-a/wt-1',
+      branch: 'toad/team-a/wt-1',
+      baseRef: 'abc123',
+      createdAt: '2026-05-01T00:00:00.000Z',
+    },
+  });
+  const task = board.getTask({ teamId: 'team-a', taskId: 'wt-1' });
+  assert.ok(task.worktree, 'task.worktree should be populated');
+  assert.equal(task.worktree.status, 'created');
+  assert.equal(task.worktree.path, '/tmp/.toad/worktrees/team-a/wt-1');
+  assert.equal(task.worktree.branch, 'toad/team-a/wt-1');
+  assert.equal(task.worktree.baseRef, 'abc123');
+});
+
+test('projectTask captures WORKTREE_CREATED skipped variant with reason', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'wt-2',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead',
+    payload: { subject: 'no git' },
+  });
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'wt-2',
+    eventType: TASK_EVENT_TYPES.WORKTREE_CREATED,
+    actorId: 'lead',
+    payload: { status: 'skipped', reason: 'not_in_git_repo' },
+  });
+  const task = board.getTask({ teamId: 'team-a', taskId: 'wt-2' });
+  assert.equal(task.worktree.status, 'skipped');
+  assert.equal(task.worktree.reason, 'not_in_git_repo');
+  assert.equal(task.worktree.path, undefined);
+});
+
 test('task events are idempotent by idempotencyKey', () => {
   const board = new InMemoryTaskBoard();
   const first = board.appendEvent({

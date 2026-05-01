@@ -12,6 +12,7 @@ import { SqliteRuntimeRegistry } from '../runtime/sqliteRuntimeRegistry.js';
 import { SqliteTaskBoard } from '../task/sqliteTaskBoard.js';
 import { SqliteTeamConfigRegistry } from '../team/sqliteTeamConfigRegistry.js';
 import { LocalToolFacade } from '../tools/localToolFacade.js';
+import { WorktreeManager } from '../task/worktreeManager.js';
 import { ApiServer } from '../transport/apiServer.js';
 import { SideEffectLog } from '../delivery/sideEffectLog.js';
 import { resolveApiToken } from '../runtime/resolveApiToken.js';
@@ -32,6 +33,7 @@ export class LocalToadRuntime {
     supervisor = null,
     deliveryWorker = null,
     toolFacade = null,
+    worktreeManager = null,
     eventIngestor = null,
     readModel = null,
     port = process.env.TOAD_API_PORT ? parseInt(process.env.TOAD_API_PORT, 10) : 3001,
@@ -74,6 +76,13 @@ export class LocalToadRuntime {
         eventLog: this.eventLog,
         approvalBroker: this.approvalBroker,
       });
+    // Worktree manager: only enabled when projectCwd is set so tests with
+    // ephemeral cwds can opt in explicitly.
+    this.worktreeManager =
+      worktreeManager
+      || (typeof projectCwd === 'string' && projectCwd.length > 0
+        ? new WorktreeManager({ projectCwd })
+        : null);
     this.toolFacade =
       toolFacade ||
       new LocalToolFacade({
@@ -90,6 +99,7 @@ export class LocalToadRuntime {
         teamConfigRegistry: this.teamConfigRegistry,
         dbPath,
         eventLog: this.eventLog,
+        worktreeManager: this.worktreeManager,
       });
     const db = this.runtimeRegistry?.db || this.eventLog?.db || null;
     this.sideEffectLog = db ? new SideEffectLog(db) : null;

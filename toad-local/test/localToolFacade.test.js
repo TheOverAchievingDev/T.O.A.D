@@ -1708,6 +1708,153 @@ test('LocalToolFacade blocks merge_ready → done for non-lead roles', async () 
   assert.equal(task.status, 'done');
 });
 
+test('LocalToolFacade triggers worktree creation when a task transitions ready → planned', async () => {
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  const calls = [];
+  const fakeWorktreeManager = {
+    createForTask({ teamId, taskId }) {
+      calls.push({ teamId, taskId });
+      return {
+        status: 'created',
+        path: `/tmp/.toad/worktrees/${teamId}/${taskId}`,
+        branch: `toad/${teamId}/${taskId}`,
+        baseRef: 'abc123',
+        createdAt: '2026-05-01T00:00:00.000Z',
+      };
+    },
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    worktreeManager: fakeWorktreeManager,
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'wt-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'wt-1', subject: 'wt', status: 'pending' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'wt-ready',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'wt-1', status: 'ready' },
+  });
+  // Approve a plan so the ready→planned gate passes
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_PROPOSE,
+    idempotencyKey: 'wt-plan',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'wt-1', summary: 'do it' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_APPROVE,
+    idempotencyKey: 'wt-approve',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'wt-1' },
+  });
+  // The transition that triggers worktree creation
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'wt-planned',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'wt-1', status: 'planned' },
+  });
+  // Manager called once for this task
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0], { teamId: 'team-a', taskId: 'wt-1' });
+  // Projection picks up the worktree
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'wt-1' });
+  assert.equal(task.worktree.status, 'created');
+  assert.equal(task.worktree.branch, 'toad/team-a/wt-1');
+  assert.equal(task.worktree.baseRef, 'abc123');
+});
+
+test('LocalToolFacade tolerates worktreeManager throwing (best-effort, transition still completes)', async () => {
+  const fakeWorktreeManager = {
+    createForTask() { throw new Error('git is busted'); },
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    worktreeManager: fakeWorktreeManager,
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'wt2-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'wt-2', subject: 'wt2', status: 'pending' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'wt2-ready',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'wt-2', status: 'ready' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_PROPOSE,
+    idempotencyKey: 'wt2-plan',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'wt-2', summary: 'do it' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_APPROVE,
+    idempotencyKey: 'wt2-approve',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'wt-2' },
+  });
+  // Should not throw — transition still completes
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'wt2-planned',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'wt-2', status: 'planned' },
+  });
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'wt-2' });
+  assert.equal(task.status, 'planned');
+});
+
+test('LocalToolFacade does not trigger worktree creation when no manager is configured', async () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    // no worktreeManager
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'wt3-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'wt-3', subject: 'wt3', status: 'pending' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'wt3-ready',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'wt-3', status: 'ready' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_PROPOSE,
+    idempotencyKey: 'wt3-plan',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'wt-3', summary: 'do it' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_APPROVE,
+    idempotencyKey: 'wt3-approve',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'wt-3' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'wt3-planned',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'wt-3', status: 'planned' },
+  });
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'wt-3' });
+  assert.equal(task.status, 'planned');
+  assert.equal(task.worktree, null);
+});
+
 test('LocalToolFacade emits tool_call_denied event when role authority rejects a call', () => {
   const events = [];
   const eventLog = {

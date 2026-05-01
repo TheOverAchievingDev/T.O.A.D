@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-05-01 local session (tool_call_denied event emission — checklist §26)
+Last updated: 2026-05-01 local session (worktree-per-task slice 1 — checklist §8)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,44 @@ Important files:
 
 ## Latest Completed Slices
 
-### 0. tool_call_denied Event Emission — Checklist §26 (latest)
+### 0. Worktree per Task — Checklist §8, slice 1 (latest)
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-05-01-worktree-per-task.md`
+
+First slice of §8: when a task moves `ready → planned`, the orchestrator creates an isolated git worktree on a task-scoped branch. Path scheme is deterministic: `${projectCwd}/.toad/worktrees/${teamId}/${taskId}` on branch `toad/${teamId}/${taskId}` from `HEAD` at planning time. Cwd enforcement, removal, and explicit `baseRef` come in slices 2/3/4.
+
+New files:
+
+- `src/git/runGit.js` — small synchronous wrapper around `spawnSync('git', args, { cwd })`. Returns `{ exitCode, stdout, stderr }` with stdout/stderr coerced to strings. Tests inject `spawn`. Production callers use the default. `exitCode === -1` when spawn itself throws.
+- `src/task/worktreeManager.js` — `WorktreeManager.createForTask({ teamId, taskId })` runs the sequence: `rev-parse --is-inside-work-tree` → `rev-parse HEAD` → check path doesn't exist → `worktree add -b <branch> <path> <baseRef>`. Returns `{ status: 'created' | 'skipped', ... }`. Skip reasons: `not_in_git_repo`, `path_exists`, `git_command_failed`. Tests inject `runGit` + `fsExistsSync`.
+- `test/runGit.test.js` — 4 unit tests (forwarding, normalization, smoke real-git, spawn-throws path).
+- `test/worktreeManager.test.js` — 5 unit tests covering all four skip/created branches plus path determinism.
+
+Modified files:
+
+- `src/task/inMemoryTaskBoard.js` — new `TASK_EVENT_TYPES.WORKTREE_CREATED = 'task.worktree_created'`. Projection captures `task.worktree = { status, path?, branch?, baseRef?, createdAt?, reason? }`. Created variant has the populated fields; skipped variant has `status` + `reason`.
+- `src/tools/localToolFacade.js`:
+  - Constructor accepts optional `worktreeManager` (must implement `createForTask`).
+  - `#taskUpdate` after the `STATUS_CHANGED` event lands: when status is `planned` and there's no existing `created` worktree on the task, calls `#triggerWorktreeCreation`.
+  - `#triggerWorktreeCreation`: best-effort. Wraps `manager.createForTask` in try/catch; on throw, falls back to a `{ status: 'skipped', reason: 'manager_threw', stderr }` event variant. The `task.worktree_created` event is appended either way (audit trail). The state transition itself never blocks on worktree errors.
+- `src/app/LocalToadRuntime.js` — accepts optional `worktreeManager` constructor param. Auto-instantiates when `projectCwd` is set, leaves null otherwise (test-friendly default).
+- `test/taskBoard.test.js` — 2 new projection tests (now 10 total).
+- `test/localToolFacade.test.js` — 3 new integration tests (now 56 → 59 total).
+- `package.json` — added `runDiagnostics`, `runGit`, `worktreeManager` test files to the `npm test` chain (the diagnostics file had been silently missing since that slice).
+- `docs/CHECKLIST_GAP_MATRIX.md` — §8 flipped from MISSING to REAL (partial).
+
+Key design decisions:
+
+- **Best-effort on planned trigger**: a manager throw or failed git command does NOT block the state transition. Non-git workspaces stay usable; the audit event records why the worktree wasn't created.
+- **Idempotent**: facade checks `task.worktree?.status === 'created'` before triggering, so a re-attempt at `ready → planned` (e.g., after a rejected revision cycle) won't create duplicate worktrees.
+- **HEAD-at-planning baseRef**: simplest possible. Slice 4 will add `task.baseRef` from operator at task creation (part of §1 schema).
+- **Branch scheme `toad/${teamId}/${taskId}`**: git rejects `:` in branch names so this is filesystem-safe and team-scoped.
+
+Tests pass: 34 backend test files, 351 individual tests, 0 fail.
+
+### 1. tool_call_denied Event Emission — Checklist §26
 
 No new plan doc — small follow-up that closes the audit half of §26.
 
@@ -1580,8 +1617,10 @@ Anchored to the checklist's own priority order (full detail in `docs/CHECKLIST_G
 4. ✅ Diagnostics (§25) — done. `diagnostics_run` read-only MCP tool runs eight self-checks (state-machine deny + allow paths, role-authority developer-deny + unknown-role-deny, validation-commands-configured per team, claude CLI detected, claude CLI authenticated, dbpath persistence) and returns `{ checks: [{ id, label, status, evidence, suggestedFix? }], summary: { pass, warning, fail } }`. Available to every role.
 5. ✅ Per-transition role guards (§3 × §5) — done. `TRANSITION_ROLES` map; `validateTaskStatusTransition` accepts `role`; `merge_ready → done` lead/human only; `rejected → backlog` and `blocked → *` architect/lead/human only.
 6. ✅ `tool_call_denied` event emission (§26) — done. Best-effort runtime event on every role-authority denial. §26 fully done.
-7. **Worktree enforcement (§8) → diff tracking (§7 finished) → merge workflow (§19) — NEXT.** Bigger lift because of git integration. Diagnostics already has placeholder slots for `worktree_present_per_task` once §8 lands.
-8. Smaller follow-ups: failure detection (§13), WIP limits (§9), dependency enforcement (§10), notifications, knowledge propagation.
+7. ✅ Worktree-per-task slice 1 (§8) — done. Creation half: orchestrator runs `git worktree add` on `ready → planned`; projection picks up `task.worktree`.
+8. **Worktree slices 2/3/4 — NEXT.** Cwd enforcement on `agent_launch`, removal on `done`/`rejected`, explicit `task.baseRef`. Each is a small slice.
+9. **Diff tracking (§7 finished) → merge workflow (§19).** Now unblocked by §8 slice 1.
+10. Smaller follow-ups: failure detection (§13), WIP limits (§9), dependency enforcement (§10), notifications, knowledge propagation.
 
 Parked / out of scope now:
 
