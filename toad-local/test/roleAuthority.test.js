@@ -80,3 +80,18 @@ test('reviewer can call review_decide, review_list, task_comment', () => {
     assertRoleCanCallTool({ role: 'reviewer', toolName: tool });
   }
 });
+
+test('developer and tester can call validation_run; reviewer and architect cannot', () => {
+  assertRoleCanCallTool({ role: 'developer', toolName: 'validation_run' });
+  assertRoleCanCallTool({ role: 'tester', toolName: 'validation_run' });
+  assertRoleCanCallTool({ role: 'lead', toolName: 'validation_run' });
+  assertRoleCanCallTool({ role: 'human', toolName: 'validation_run' });
+  assert.throws(
+    () => assertRoleCanCallTool({ role: 'reviewer', toolName: 'validation_run' }),
+    /reviewer cannot call validation_run/,
+  );
+  assert.throws(
+    () => assertRoleCanCallTool({ role: 'architect', toolName: 'validation_run' }),
+    /architect cannot call validation_run/,
+  );
+});

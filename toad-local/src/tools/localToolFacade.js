@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { COMMANDS, commandRequiresIdempotency } from '../commands/command-contract.js';
 import { MESSAGE_KINDS } from '../protocol/envelopes.js';
 import {
@@ -11,7 +12,7 @@ import { validateTaskStatusTransition } from '../task/taskLifecycle.js';
 import { assertRoleCanCallTool } from '../security/roleAuthority.js';
 
 export class LocalToolFacade {
-  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null }) {
+  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, spawnValidation = null }) {
     if (!broker) throw new TypeError('broker is required');
     if (!taskBoard) throw new TypeError('taskBoard is required');
     this.broker = broker;
@@ -24,6 +25,7 @@ export class LocalToolFacade {
     this.launchAgent = typeof launchAgent === 'function' ? launchAgent : null;
     this.stopAgent = typeof stopAgent === 'function' ? stopAgent : null;
     this.teamConfigRegistry = teamConfigRegistry;
+    this.spawnValidation = typeof spawnValidation === 'function' ? spawnValidation : defaultSpawnValidation;
   }
 
   execute(command) {
@@ -84,6 +86,8 @@ export class LocalToolFacade {
         return this.#teamStop(actor, args);
       case COMMANDS.RUNTIME_SEND_INPUT:
         return this.#runtimeSendInput(actor, args);
+      case COMMANDS.VALIDATION_RUN:
+        return this.#validationRun(actor, command.idempotencyKey, args);
       default:
         throw new Error(`unsupported command: ${commandName}`);
     }
@@ -156,6 +160,17 @@ export class LocalToolFacade {
       const validation = validateTaskStatusTransition({ from: fromStatus, to: args.status });
       if (!validation.ok) {
         throw new Error(`task_update: ${validation.reason}`);
+      }
+      // CI gate: testing → merge_ready requires a passing test verdict.
+      // Implements the gate half of checklist §6 + §18 ("failed command blocks merge_ready").
+      if (fromStatus === 'testing' && args.status === 'merge_ready') {
+        const latestTest = current?.latestValidation?.test;
+        if (!latestTest || latestTest.verdict !== 'passed') {
+          const detail = latestTest ? `latest: ${latestTest.verdict}` : 'no test run';
+          throw new Error(
+            `task_update: testing → merge_ready requires a passing test verdict (${detail})`,
+          );
+        }
       }
       const payload = { status: args.status, from: fromStatus };
       if (typeof args.reason === 'string' && args.reason.length > 0) payload.reason = args.reason;
@@ -444,6 +459,7 @@ export class LocalToolFacade {
       teamId: requireString(args.teamId, 'args.teamId'),
       lead: args.lead || {},
       teammates: Array.isArray(args.teammates) ? args.teammates : [],
+      validation: args.validation || null,
     });
     this.teamConfigRegistry.registerTeam(config);
     return config.toJSON ? config.toJSON() : { teamId: config.teamId, lead: config.lead, teammates: config.teammates };
@@ -513,6 +529,65 @@ export class LocalToolFacade {
     return { teamId, members: results };
   }
 
+  async #validationRun(actor, idempotencyKey, args) {
+    const taskId = requireString(args.taskId, 'args.taskId');
+    const kind = requireString(args.kind, 'args.kind');
+    const validKinds = ['install', 'lint', 'typecheck', 'test', 'build', 'security'];
+    if (!validKinds.includes(kind)) {
+      throw new Error(`validation_run: unknown kind "${kind}"`);
+    }
+    // Resolve the command: explicit override → team config → null
+    let command = typeof args.command === 'string' && args.command.length > 0 ? args.command : null;
+    if (!command && this.teamConfigRegistry) {
+      const team = this.teamConfigRegistry.getTeam?.(actor.teamId);
+      const key = `${kind}Command`;
+      const fromConfig = team?.validation?.[key];
+      if (typeof fromConfig === 'string' && fromConfig.length > 0) command = fromConfig;
+    }
+    let payload;
+    if (!command) {
+      // Not configured and no override — explicit "not_run" record per checklist §18
+      payload = {
+        kind,
+        command: null,
+        exitCode: null,
+        durationMs: 0,
+        verdict: 'not_run',
+        stdout: '',
+        stderr: '',
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      };
+    } else {
+      const cwd = typeof args.cwd === 'string' && args.cwd.length > 0
+        ? args.cwd
+        : (this.projectCwd || process.cwd());
+      const result = await this.spawnValidation(command, { cwd });
+      const stdoutText = typeof result.stdout === 'string' ? result.stdout : '';
+      const stderrText = typeof result.stderr === 'string' ? result.stderr : '';
+      payload = {
+        kind,
+        command,
+        exitCode: Number.isFinite(result.exitCode) ? result.exitCode : null,
+        durationMs: Number.isFinite(result.durationMs) ? result.durationMs : 0,
+        verdict: result.exitCode === 0 ? 'passed' : 'failed',
+        stdout: truncate(stdoutText, 4096),
+        stderr: truncate(stderrText, 4096),
+        stdoutTruncated: stdoutText.length > 4096,
+        stderrTruncated: stderrText.length > 4096,
+      };
+    }
+    this.taskBoard.appendEvent({
+      teamId: actor.teamId,
+      taskId,
+      idempotencyKey,
+      eventType: TASK_EVENT_TYPES.VALIDATION_RUN,
+      actorId: actor.agentId,
+      payload,
+    });
+    return payload;
+  }
+
   async #runtimeSendInput(actor, args) {
     const runtimeId = requireString(args.runtimeId, 'args.runtimeId');
     const text = requireString(args.text, 'args.text');
@@ -552,6 +627,30 @@ export class LocalToolFacade {
     }
     return { teamId, members: results };
   }
+}
+
+function truncate(value, max) {
+  if (typeof value !== 'string') return '';
+  return value.length <= max ? value : value.slice(0, max);
+}
+
+function defaultSpawnValidation(command, { cwd } = {}) {
+  // Returns { exitCode, stdout, stderr, durationMs }. Sync via spawnSync because
+  // validation runs are blocking by intent — the caller awaits the result. Tests
+  // pass their own spawn fn through the LocalToolFacade `spawnValidation` option.
+  const start = Date.now();
+  const result = spawnSync(command, {
+    cwd: cwd || process.cwd(),
+    shell: true,
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  return {
+    exitCode: typeof result.status === 'number' ? result.status : -1,
+    stdout: typeof result.stdout === 'string' ? result.stdout : '',
+    stderr: typeof result.stderr === 'string' ? result.stderr : '',
+    durationMs: Date.now() - start,
+  };
 }
 
 function normalizeActor(actor) {

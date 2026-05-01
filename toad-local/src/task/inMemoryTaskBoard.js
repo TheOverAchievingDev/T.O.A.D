@@ -9,6 +9,7 @@ export const TASK_EVENT_TYPES = Object.freeze({
   REVIEW_REQUESTED: 'task.review_requested',
   REVIEW_STARTED: 'task.review_started',
   REVIEW_DECIDED: 'task.review_decided',
+  VALIDATION_RUN: 'task.validation_run',
 });
 
 export const TASK_STATUS = Object.freeze({
@@ -98,6 +99,8 @@ export function projectTask(events) {
     status: TASK_STATUS.PENDING,
     reviewState: REVIEW_STATE.NONE,
     review: null,
+    validations: [],
+    latestValidation: {},
     comments: [],
     history: [],
     createdAt: ordered[0].createdAt,
@@ -147,6 +150,27 @@ export function projectTask(events) {
     }
     if (event.eventType === TASK_EVENT_TYPES.REVIEW_STARTED) {
       task.reviewState = REVIEW_STATE.REVIEW;
+    }
+    if (event.eventType === TASK_EVENT_TYPES.VALIDATION_RUN) {
+      const payload = event.payload || {};
+      const kind = typeof payload.kind === 'string' ? payload.kind : null;
+      if (kind) {
+        const record = {
+          kind,
+          command: typeof payload.command === 'string' ? payload.command : null,
+          exitCode: Number.isFinite(payload.exitCode) ? payload.exitCode : null,
+          durationMs: Number.isFinite(payload.durationMs) ? payload.durationMs : null,
+          verdict: typeof payload.verdict === 'string' ? payload.verdict : 'not_run',
+          stdout: typeof payload.stdout === 'string' ? payload.stdout : '',
+          stderr: typeof payload.stderr === 'string' ? payload.stderr : '',
+          stdoutTruncated: Boolean(payload.stdoutTruncated),
+          stderrTruncated: Boolean(payload.stderrTruncated),
+          actorId: event.actorId,
+          createdAt: event.createdAt,
+        };
+        task.validations.push(record);
+        task.latestValidation[kind] = record;
+      }
     }
     if (event.eventType === TASK_EVENT_TYPES.REVIEW_DECIDED) {
       task.reviewState =

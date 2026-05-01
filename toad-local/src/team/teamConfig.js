@@ -12,8 +12,31 @@ function normalizeMember(member, fallbackAgentId) {
   };
 }
 
+const VALIDATION_KIND_KEYS = Object.freeze([
+  'installCommand',
+  'lintCommand',
+  'typecheckCommand',
+  'testCommand',
+  'buildCommand',
+  'securityCommand',
+]);
+
+function normalizeValidation(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const out = {};
+  let any = false;
+  for (const key of VALIDATION_KIND_KEYS) {
+    const value = input[key];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      out[key] = value.trim();
+      any = true;
+    }
+  }
+  return any ? out : null;
+}
+
 export class TeamConfig {
-  constructor({ teamId, lead = {}, teammates = [] }) {
+  constructor({ teamId, lead = {}, teammates = [], validation = null }) {
     if (typeof teamId !== 'string' || teamId.trim() === '') {
       throw new TypeError('teamId must be a non-empty string');
     }
@@ -22,14 +45,17 @@ export class TeamConfig {
     this.teammates = Array.isArray(teammates)
       ? teammates.map((t, idx) => normalizeMember(t, `worker-${idx + 1}`))
       : [];
+    this.validation = normalizeValidation(validation);
   }
 
   toJSON() {
-    return {
+    const json = {
       teamId: this.teamId,
       lead: { ...this.lead, env: { ...this.lead.env }, args: [...this.lead.args] },
       teammates: this.teammates.map((t) => ({ ...t, env: { ...t.env }, args: [...t.args] })),
     };
+    if (this.validation) json.validation = { ...this.validation };
+    return json;
   }
 }
 

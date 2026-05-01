@@ -35,6 +35,7 @@ test('listLocalMcpTools exposes MCP-shaped local command tools', () => {
     'team_list',
     'team_stop',
     'tool_activity',
+    'validation_run',
   ]);
   for (const tool of tools) {
     assert.equal(typeof tool.title, 'string');
@@ -75,6 +76,8 @@ test('mutating MCP tools require idempotencyKey in their schemas', () => {
   assert.equal(getLocalMcpTool('team_stop').annotations.destructiveHint, false);
   assert.ok(getLocalMcpTool('runtime_send_input').inputSchema.required.includes('idempotencyKey'));
   assert.equal(getLocalMcpTool('runtime_send_input').annotations.destructiveHint, false);
+  assert.ok(getLocalMcpTool('validation_run').inputSchema.required.includes('idempotencyKey'));
+  assert.equal(getLocalMcpTool('validation_run').annotations.destructiveHint, false);
 
   // Read-only tools
   for (const name of ['task_list', 'agent_status', 'approval_list', 'runtime_events', 'cross_team_messages', 'tool_activity', 'health_status', 'team_list', 'review_list']) {

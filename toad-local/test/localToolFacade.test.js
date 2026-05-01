@@ -500,6 +500,281 @@ test('LocalToolFacade rejects agent_launch when no launchAgent callback is confi
   );
 });
 
+test('LocalToolFacade blocks testing → merge_ready when no passing test verdict exists', async () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  // Walk task into testing
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'gate-create',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'gate-1', subject: 'gate', status: 'pending' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'gate-u1',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'gate-1', status: 'in_progress' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'gate-u2',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'gate-1', status: 'review' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'gate-u3',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'gate-1', status: 'testing' },
+  });
+
+  // No validation_run for kind=test → merge_ready must be blocked
+  assert.throws(
+    () => facade.execute({
+      commandName: COMMANDS.TASK_UPDATE,
+      idempotencyKey: 'gate-u4',
+      actor: { teamId: 'team-a', agentId: 'lead' },
+      args: { taskId: 'gate-1', status: 'merge_ready' },
+    }),
+    /requires a passing test verdict/,
+  );
+});
+
+test('LocalToolFacade allows testing → merge_ready after a passing test verdict is recorded', async () => {
+  const spawnFn = fakeSpawn({ exitCode: 0, stdout: 'all green', stderr: '' });
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    teamConfigRegistry: new (class {
+      teams = new Map();
+      registerTeam(c) { this.teams.set(c.teamId, c); }
+      getTeam(id) { return this.teams.get(id) || null; }
+    })(),
+    spawnValidation: spawnFn,
+  });
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  facade.teamConfigRegistry.registerTeam(new TeamConfig({
+    teamId: 'team-a',
+    lead: { agentId: 'lead' },
+    validation: { testCommand: 'npm test' },
+  }));
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'pass-create',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'pass-1', subject: 'pass', status: 'pending' },
+  });
+  for (const [id, status] of [
+    ['p1', 'in_progress'],
+    ['p2', 'review'],
+    ['p3', 'testing'],
+  ]) {
+    facade.execute({
+      commandName: COMMANDS.TASK_UPDATE,
+      idempotencyKey: `pass-${id}`,
+      actor: { teamId: 'team-a', agentId: 'lead' },
+      args: { taskId: 'pass-1', status },
+    });
+  }
+  // Run the test command — verdict 'passed'
+  await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN,
+    idempotencyKey: 'pass-run',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'pass-1', kind: 'test' },
+  });
+  // Now merge_ready should be allowed
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'pass-u4',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'pass-1', status: 'merge_ready' },
+  });
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'pass-1' });
+  assert.equal(task.status, 'merge_ready');
+});
+
+test('LocalToolFacade blocks testing → merge_ready when the latest test verdict is "failed"', async () => {
+  const spawnFn = fakeSpawn({ exitCode: 1, stdout: '', stderr: 'fail' });
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    teamConfigRegistry: new (class {
+      teams = new Map();
+      registerTeam(c) { this.teams.set(c.teamId, c); }
+      getTeam(id) { return this.teams.get(id) || null; }
+    })(),
+    spawnValidation: spawnFn,
+  });
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  facade.teamConfigRegistry.registerTeam(new TeamConfig({
+    teamId: 'team-a',
+    lead: { agentId: 'lead' },
+    validation: { testCommand: 'npm test' },
+  }));
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'fail-c',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'fail-1', subject: 'fail', status: 'pending' },
+  });
+  for (const [id, status] of [['f1', 'in_progress'], ['f2', 'review'], ['f3', 'testing']]) {
+    facade.execute({
+      commandName: COMMANDS.TASK_UPDATE,
+      idempotencyKey: `fail-${id}`,
+      actor: { teamId: 'team-a', agentId: 'lead' },
+      args: { taskId: 'fail-1', status },
+    });
+  }
+  await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN,
+    idempotencyKey: 'fail-run',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'fail-1', kind: 'test' },
+  });
+  assert.throws(
+    () => facade.execute({
+      commandName: COMMANDS.TASK_UPDATE,
+      idempotencyKey: 'fail-u4',
+      actor: { teamId: 'team-a', agentId: 'lead' },
+      args: { taskId: 'fail-1', status: 'merge_ready' },
+    }),
+    /failed/,
+  );
+});
+
+function fakeSpawn({ exitCode = 0, stdout = '', stderr = '', durationMs = 1 } = {}) {
+  const calls = [];
+  const fn = (command, opts) => {
+    calls.push({ command, opts });
+    return { exitCode, stdout, stderr, durationMs };
+  };
+  fn.calls = calls;
+  return fn;
+}
+
+test('LocalToolFacade validation_run records the run as a TASK_VALIDATION_RUN event', async () => {
+  const spawnFn = fakeSpawn({ exitCode: 0, stdout: 'tests run', stderr: '' });
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    teamConfigRegistry: new (class {
+      teams = new Map();
+      registerTeam(c) { this.teams.set(c.teamId, c); }
+      getTeam(id) { return this.teams.get(id) || null; }
+    })(),
+    spawnValidation: spawnFn,
+  });
+  // Seed team config with a test command
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  facade.teamConfigRegistry.registerTeam(new TeamConfig({
+    teamId: 'team-a',
+    lead: { agentId: 'lead' },
+    validation: { testCommand: 'npm test' },
+  }));
+  // Seed a task
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'val-create',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'val-1', subject: 'validate' },
+  });
+
+  const result = await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN,
+    idempotencyKey: 'val-run-1',
+    actor: { teamId: 'team-a', agentId: 'tester-1' },
+    args: { taskId: 'val-1', kind: 'test' },
+  });
+
+  assert.equal(spawnFn.calls.length, 1);
+  assert.equal(spawnFn.calls[0].command, 'npm test');
+  assert.equal(result.verdict, 'passed');
+  assert.equal(result.exitCode, 0);
+
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'val-1' });
+  assert.equal(task.validations.length, 1);
+  assert.equal(task.validations[0].kind, 'test');
+  assert.equal(task.validations[0].verdict, 'passed');
+  assert.equal(task.latestValidation.test.verdict, 'passed');
+});
+
+test('LocalToolFacade validation_run records "not_run" when no command is configured and no override is supplied', async () => {
+  const spawnFn = fakeSpawn();
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    teamConfigRegistry: new (class {
+      teams = new Map();
+      registerTeam(c) { this.teams.set(c.teamId, c); }
+      getTeam(id) { return this.teams.get(id) || null; }
+    })(),
+    spawnValidation: spawnFn,
+  });
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  facade.teamConfigRegistry.registerTeam(new TeamConfig({
+    teamId: 'team-a',
+    lead: { agentId: 'lead' },
+    // No validation field — testCommand not configured
+  }));
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'nr-create',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'nr-1', subject: 'not run' },
+  });
+
+  const result = await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN,
+    idempotencyKey: 'nr-run',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'nr-1', kind: 'test' },
+  });
+
+  assert.equal(spawnFn.calls.length, 0, 'spawn should not be called when no command is configured');
+  assert.equal(result.verdict, 'not_run');
+});
+
+test('LocalToolFacade validation_run records "failed" when the command exits non-zero', async () => {
+  const spawnFn = fakeSpawn({ exitCode: 2, stdout: '', stderr: 'boom' });
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    teamConfigRegistry: new (class {
+      teams = new Map();
+      registerTeam(c) { this.teams.set(c.teamId, c); }
+      getTeam(id) { return this.teams.get(id) || null; }
+    })(),
+    spawnValidation: spawnFn,
+  });
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  facade.teamConfigRegistry.registerTeam(new TeamConfig({
+    teamId: 'team-a',
+    lead: { agentId: 'lead' },
+    validation: { testCommand: 'npm test' },
+  }));
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'f-create',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'f-1', subject: 'fail' },
+  });
+
+  const result = await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN,
+    idempotencyKey: 'f-run',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'f-1', kind: 'test' },
+  });
+
+  assert.equal(result.verdict, 'failed');
+  assert.equal(result.exitCode, 2);
+  assert.match(result.stderr, /boom/);
+});
+
 test('LocalToolFacade enforces role authority on dispatch (developer cannot agent_launch)', () => {
   const facade = new LocalToolFacade({
     broker: new InMemoryBroker(),

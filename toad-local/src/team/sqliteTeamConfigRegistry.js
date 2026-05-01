@@ -65,5 +65,6 @@ function rowToConfig(row) {
     teamId: raw.teamId,
     lead: raw.lead || {},
     teammates: Array.isArray(raw.teammates) ? raw.teammates : [],
+    validation: raw.validation || null,
   });
 }

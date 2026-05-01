@@ -87,6 +87,34 @@ test('TeamConfig members carry launch fields with sensible defaults', () => {
   assert.equal(config.teammates[0].prompt, '');
 });
 
+test('TeamConfig persists validation commands when provided', () => {
+  const config = new TeamConfig({
+    teamId: 'team-validate',
+    lead: { agentId: 'lead' },
+    validation: {
+      installCommand: 'npm.cmd install',
+      lintCommand: 'npm.cmd run lint',
+      typecheckCommand: null,
+      testCommand: 'npm.cmd test',
+      buildCommand: 'npm.cmd run build',
+    },
+  });
+  assert.equal(config.validation.installCommand, 'npm.cmd install');
+  assert.equal(config.validation.lintCommand, 'npm.cmd run lint');
+  assert.equal(config.validation.testCommand, 'npm.cmd test');
+  assert.equal(config.validation.buildCommand, 'npm.cmd run build');
+  // null is normalized away (not preserved as a key)
+  assert.equal(config.validation.typecheckCommand, undefined);
+  // toJSON round-trips
+  const json = config.toJSON();
+  assert.equal(json.validation.installCommand, 'npm.cmd install');
+});
+
+test('TeamConfig validation defaults to null when not provided', () => {
+  const config = new TeamConfig({ teamId: 'team-no-val' });
+  assert.equal(config.validation, null);
+});
+
 test('TeamConfig coerces malformed args/env into defaults', () => {
   const config = new TeamConfig({
     teamId: 'team-malformed',

@@ -302,6 +302,21 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
       text: { type: 'string', minLength: 1 },
     },
   }),
+  makeTool({
+    name: COMMANDS.VALIDATION_RUN,
+    title: 'Run Validation Command',
+    description: 'Run a configured validation command (install/lint/typecheck/test/build/security) for a task. The orchestrator spawns the command, captures exit code/stdout/stderr/duration, and records a structured task event. Failed test runs block testing → merge_ready.',
+    required: ['taskId', 'kind'],
+    properties: {
+      taskId: { type: 'string', minLength: 1 },
+      kind: {
+        type: 'string',
+        enum: ['install', 'lint', 'typecheck', 'test', 'build', 'security'],
+      },
+      command: { type: 'string', minLength: 1 },
+      cwd: { type: 'string', minLength: 1 },
+    },
+  }),
 ]);
 
 export function listLocalMcpTools() {

@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-04-30 local session (role authority — checklist §5 + §26)
+Last updated: 2026-04-30 local session (test artifacts + CI gates — checklist §6 + §18)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,52 @@ Important files:
 
 ## Latest Completed Slices
 
-### 1. Role Authority — Checklist §5 + §26 (latest)
+### 1. Test Artifacts + CI Gates — Checklist §6 + §18 (latest)
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-test-artifacts-ci-gates.md`
+
+The biggest correctness gap remaining per the gap matrix. Today the orchestrator runs validation commands (not the agent), records the result as a structured task event, and blocks `testing → merge_ready` when no passing test verdict exists. Agent claims of "tests pass" no longer override orchestrator-run results.
+
+Modified files:
+
+- `src/team/teamConfig.js` — `TeamConfig` accepts an optional `validation` field carrying `installCommand` / `lintCommand` / `typecheckCommand` / `testCommand` / `buildCommand` / `securityCommand`. Persists through `team_create` upsert and `team_list`. `SqliteTeamConfigRegistry.rowToConfig` re-hydrates it.
+- `src/task/inMemoryTaskBoard.js` — new `TASK_EVENT_TYPES.VALIDATION_RUN`. `projectTask` now populates `task.validations[]` (oldest → newest) and `task.latestValidation: { [kind]: payload }` for fast lookup.
+- `src/commands/command-contract.js` — `VALIDATION_RUN = 'validation_run'`, mutating.
+- `src/mcp/localToolDefinitions.js` — `validation_run` tool def with required `taskId` + `kind` (enum), optional `command` and `cwd` overrides.
+- `src/tools/localToolFacade.js`:
+  - New `spawnValidation` constructor injection (defaults to `child_process.spawnSync` with `shell: true`); tests pass a fake.
+  - New `#validationRun` handler resolves the command from `team.validation[<kind>Command]` or the explicit override; if neither, records an explicit `not_run` event per checklist §18.
+  - Captures exit code / stdout / stderr / durationMs. Truncates stdout/stderr to 4 KiB inline with `*Truncated` boolean flags.
+  - Verdict: `exitCode === 0 ? 'passed' : 'failed'`; `not_run` when no command resolved.
+  - **CI gate:** `#taskUpdate` blocks `testing → merge_ready` when `task.latestValidation.test?.verdict !== 'passed'`. Error message names the latest verdict.
+- `src/security/roleAuthority.js` — `validation_run` added to `developer` and `tester` allowlists (`lead` and `human` already wildcard).
+- `test/teamConfig.test.js` — 2 new tests (validation persistence + null default).
+- `test/taskBoard.test.js` — 1 new test (projection collects validations + latestValidation by kind).
+- `test/localToolFacade.test.js` — 6 new tests: validation_run records the event with full payload; not-configured kind records `not_run`; failed exit code → `failed` verdict; testing → merge_ready blocked without a test run; allowed after passing run; blocked after failing run.
+- `test/localMcpToolDefinitions.test.js` — `validation_run` added to expected names + mutating-tools assertion.
+- `test/roleAuthority.test.js` — assertion that developer/tester can call validation_run; reviewer/architect cannot.
+
+Behavior decisions:
+
+- **Only `kind: 'test'` blocks `testing → merge_ready`.** A strict reading of §6 would require ALL configured kinds (lint/typecheck/build/security) to pass. Deferred to a follow-up — needs design choices around what "recent" means and what to do when a team didn't configure `securityCommand`.
+- **Inline truncation to 4 KiB.** SQLite handles large blobs but the projection is loaded into memory on every read. Truncation keeps the projection bounded; full-log file storage is a small follow-up (`<projectCwd>/.toad/validation/<eventId>.{stdout,stderr}`).
+- **Synchronous spawn.** `validation_run` waits for the command to complete before returning. Streaming progress via SSE is a future ergonomic improvement, not a correctness gate.
+
+Verification during slice:
+
+```powershell
+node test/teamConfig.test.js
+node test/taskBoard.test.js
+node test/localToolFacade.test.js
+node test/roleAuthority.test.js
+npm.cmd test
+```
+
+All 30 backend test files pass.
+
+### 2. Role Authority — Checklist §5 + §26
 
 Plan file:
 
@@ -1397,8 +1442,8 @@ Remaining gaps worth tracking:
 Anchored to the checklist's own priority order (full detail in `docs/CHECKLIST_GAP_MATRIX.md`):
 
 1. ✅ Role authority (§5 + §26) — done with permissive default for backward compat.
-2. **Test artifacts + CI gates (§6 + §18) — NEXT.** Orchestrator-run validation commands stored as a structured `TestResult`. Failed tests block `merge_ready` transition. Biggest correctness gap between agent claims and system truth.
-3. **Plan-before-code (§2).** New `task_plan_propose` / `task_plan_approve` MCP tools backed by `PLAN_PROPOSED` / `PLAN_APPROVED` events. Tied to the `ready → planned` transition.
+2. ✅ Test artifacts + CI gates (§6 + §18) — done. Validation config on TeamConfig; `validation_run` MCP tool; `task.validations[]` projection; `testing → merge_ready` gated on passing test verdict.
+3. **Plan-before-code (§2) — NEXT.** New `task_plan_propose` / `task_plan_approve` MCP tools backed by `PLAN_PROPOSED` / `PLAN_APPROVED` events. Tied to the `ready → planned` transition.
 4. **Diagnostics (§25).** `diagnostics_run` MCP tool returning `{ check, status: PASS/WARNING/FAIL, evidence, suggestedFix }[]`.
 5. **Worktree enforcement (§8) → diff tracking (§7 finished) → merge workflow (§19).** Bigger lift because of git integration.
 6. **Per-transition role guards.** Now that roles exist, extend `validateTaskStatusTransition` to check role against the move (e.g. only `lead` can do `merge_ready → done`). Cleanly stacks on the state machine + role auth slices.
@@ -1579,6 +1624,7 @@ rg -n "permission|control_request|approval|runtime adapter|watcher|relay" C:\Pro
 - `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-role-authority.md`
 - `C:\Project-TOAD\toad-local\src\security\roleAuthority.js`
 - `C:\Project-TOAD\toad-local\test\roleAuthority.test.js`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-test-artifacts-ci-gates.md`
 
 ## Suggested Opening Move For Next Agent
 

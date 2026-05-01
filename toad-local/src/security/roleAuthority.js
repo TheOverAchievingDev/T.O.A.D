@@ -43,6 +43,7 @@ export const ROLE_TOOLS = Object.freeze({
     'task_update',
     'review_request',
     'runtime_send_input',
+    'validation_run',
   ]),
   reviewer: Object.freeze([
     ...COMMON_READ_TOOLS,
@@ -51,6 +52,7 @@ export const ROLE_TOOLS = Object.freeze({
   tester: Object.freeze([
     ...COMMON_READ_TOOLS,
     'task_update',
+    'validation_run',
   ]),
   human: '*',
 });

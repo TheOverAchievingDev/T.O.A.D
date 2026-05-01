@@ -23,6 +23,7 @@ export const COMMANDS = Object.freeze({
   TEAM_LAUNCH: 'team_launch',
   TEAM_STOP: 'team_stop',
   RUNTIME_SEND_INPUT: 'runtime_send_input',
+  VALIDATION_RUN: 'validation_run',
 });
 
 export const MUTATING_COMMANDS = Object.freeze([
@@ -41,6 +42,7 @@ export const MUTATING_COMMANDS = Object.freeze([
   COMMANDS.TEAM_LAUNCH,
   COMMANDS.TEAM_STOP,
   COMMANDS.RUNTIME_SEND_INPUT,
+  COMMANDS.VALIDATION_RUN,
 ]);
 
 export function commandRequiresIdempotency(commandName) {

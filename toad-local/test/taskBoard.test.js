@@ -157,6 +157,74 @@ test('projectTask merges review feedback into task.review on REVIEW_DECIDED', ()
   assert.deepEqual(task.review.files, ['x']);
 });
 
+test('projectTask collects VALIDATION_RUN events into task.validations[] and task.latestValidation', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'val-1',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead',
+    payload: { subject: 'Validate' },
+  });
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'val-1',
+    eventType: TASK_EVENT_TYPES.VALIDATION_RUN,
+    actorId: 'tester',
+    payload: {
+      kind: 'test',
+      command: 'npm test',
+      exitCode: 1,
+      durationMs: 1234,
+      verdict: 'failed',
+      stdout: 'tests run',
+      stderr: 'one failed',
+      stdoutTruncated: false,
+      stderrTruncated: false,
+    },
+  });
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'val-1',
+    eventType: TASK_EVENT_TYPES.VALIDATION_RUN,
+    actorId: 'tester',
+    payload: {
+      kind: 'test',
+      command: 'npm test',
+      exitCode: 0,
+      durationMs: 1100,
+      verdict: 'passed',
+      stdout: 'all green',
+      stderr: '',
+      stdoutTruncated: false,
+      stderrTruncated: false,
+    },
+  });
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'val-1',
+    eventType: TASK_EVENT_TYPES.VALIDATION_RUN,
+    actorId: 'tester',
+    payload: {
+      kind: 'lint',
+      command: 'npm run lint',
+      exitCode: 0,
+      durationMs: 200,
+      verdict: 'passed',
+      stdout: '',
+      stderr: '',
+      stdoutTruncated: false,
+      stderrTruncated: false,
+    },
+  });
+
+  const task = board.getTask({ teamId: 'team-a', taskId: 'val-1' });
+  assert.equal(task.validations.length, 3);
+  // latestValidation indexes by kind, latest wins
+  assert.equal(task.latestValidation.test.verdict, 'passed');
+  assert.equal(task.latestValidation.lint.verdict, 'passed');
+});
+
 test('task events are idempotent by idempotencyKey', () => {
   const board = new InMemoryTaskBoard();
   const first = board.appendEvent({
