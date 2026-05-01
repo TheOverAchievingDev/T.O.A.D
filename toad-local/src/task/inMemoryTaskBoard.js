@@ -154,6 +154,7 @@ export function projectTask(events) {
         scopeDrift: Array.isArray(event.payload.scopeDrift)
           ? event.payload.scopeDrift.filter((f) => typeof f === 'string')
           : [],
+        noOpDiff: event.payload.noOpDiff === true,
         requestedBy: event.actorId,
         requestedAt: event.createdAt,
       };

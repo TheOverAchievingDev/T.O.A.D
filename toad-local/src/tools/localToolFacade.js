@@ -331,6 +331,7 @@ export class LocalToolFacade {
     // the base ref. Operator-supplied diff always wins (covers cases like
     // squash-rebase summaries the orchestrator can't reconstruct).
     const taskBeforeReview = this.taskBoard.getTask({ teamId: actor.teamId, taskId });
+    let computedRan = false;
     if (!payload.diff && !payload.files) {
       const wt = taskBeforeReview?.worktree;
       if (wt && wt.status === 'created' && wt.path && wt.baseRef) {
@@ -340,12 +341,21 @@ export class LocalToolFacade {
         } catch (err) {
           computed = { diff: null, files: [], error: err && err.message ? err.message : String(err) };
         }
-        if (computed && typeof computed.diff === 'string') payload.diff = computed.diff;
+        if (computed && typeof computed.diff === 'string') {
+          payload.diff = computed.diff;
+          computedRan = true;
+        }
         if (computed && Array.isArray(computed.files) && computed.files.length > 0) {
           payload.files = computed.files;
         }
       }
     }
+    // §13 partial: no-op diff detector. If the orchestrator successfully ran
+    // the diff but it found no changed files, surface `noOpDiff: true` so the
+    // reviewer can ask "did you actually do the work?". Reviewer-informational
+    // (a verify-only task may legitimately produce no diff). Always defined as
+    // a boolean so projection consumers don't have to handle undefined.
+    payload.noOpDiff = computedRan && (!Array.isArray(payload.files) || payload.files.length === 0);
     // §13 partial: scope-drift detection. Compare the actual changed files
     // against the plan's filesExpectedToChange. Files outside the plan are
     // flagged for the reviewer. Empty plan list (or no plan) → no flagging,

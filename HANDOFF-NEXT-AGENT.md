@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-05-01 local session (scope-drift detection — checklist §13 partial)
+Last updated: 2026-05-01 local session (no-op diff detector — checklist §13 partial)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,26 @@ Important files:
 
 ## Latest Completed Slices
 
-### 0. Scope-Drift Detection — Checklist §13 partial (latest)
+### 0. No-Op Diff Detector — Checklist §13 partial (latest)
+
+When the orchestrator successfully runs `git diff baseRef..HEAD` and finds zero changed files, the review now carries `task.review.noOpDiff = true`. This is the second §13 detector — same pattern as scope-drift: reviewer-informational, not transition-blocking. The agent might legitimately be done with a verify-only task (no code changes), but the reviewer should at least see the signal.
+
+Modified files:
+
+- `src/tools/localToolFacade.js` — `#reviewRequest` tracks `computedRan` (true when the diff computer returned a string, even an empty one). `payload.noOpDiff = computedRan && (no files in payload)`. Caller-supplied diff/files always set `noOpDiff = false` — we trust the caller.
+- `src/task/inMemoryTaskBoard.js` — projection sets `task.review.noOpDiff = event.payload.noOpDiff === true` (defaults to `false` when missing).
+- `test/localToolFacade.test.js` — 3 new tests (now 82 total): empty diff flagged, real changes leave it false, no-diff-computer-ran path leaves it false.
+- `docs/CHECKLIST_GAP_MATRIX.md` — §13 evidence updated with the new detector.
+
+The `task.review` projection now answers four reviewer questions in one place:
+- *What did they say?* → `summary`
+- *What actually changed?* → `diff` + `files` (orchestrator-computed via §7)
+- *Did they edit outside the plan?* → `scopeDrift` (§13 detector 1)
+- *Did they actually do anything?* → `noOpDiff` (§13 detector 2)
+
+Tests pass: 36 backend test files, 390 individual tests, 0 fail.
+
+### 1. Scope-Drift Detection — Checklist §13 partial
 
 Now that we have both halves of the data — the **plan** says what files the developer agent intended to change (§2), and the **diff** records what files actually changed (§7) — the orchestrator can compare them and flag out-of-scope edits. This is the first §13 failure-detector slice.
 
@@ -1740,7 +1759,8 @@ Anchored to the checklist's own priority order (full detail in `docs/CHECKLIST_G
 10. ✅ Diff tracking (§7 finished) — done. `computeDiff` runs `git diff baseRef..HEAD` inside the worktree; `review_request` auto-attaches when caller omits.
 11. ✅ Merge conflict gate (§19 slice 1) — done. `checkForConflicts` runs `git merge --no-commit --no-ff` + `--abort` to verify the task branch is mergeable. Conflict or error blocks `merge_ready → done`.
 12. ✅ Scope-drift detection (§13 partial) — done. `task.review.scopeDrift[]` lists out-of-plan files after diff is captured.
-13. **Worktree slice 4 — NEXT.** Explicit `task.baseRef` at task creation (currently HEAD-at-planning).
+13. ✅ No-op diff detector (§13 partial) — done. `task.review.noOpDiff` flags empty-diff review requests.
+14. **Worktree slice 4 — NEXT.** Explicit `task.baseRef` at task creation (currently HEAD-at-planning).
 14. **Merge slice 2 (§19).** Actually perform the integration commit on `baseBranch` (today's gate only verifies feasibility).
 10. Smaller follow-ups: failure detection (§13), WIP limits (§9), dependency enforcement (§10), notifications, knowledge propagation.
 

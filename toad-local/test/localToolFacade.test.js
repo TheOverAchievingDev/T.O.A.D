@@ -2052,6 +2052,107 @@ test('merge_ready → done has no merge gate when no worktree exists (back-compa
   assert.equal(task.status, 'done');
 });
 
+// --- §13 partial: no-op diff detector ---
+
+test('review_request flags review.noOpDiff = true when computed diff has no files', () => {
+  const fakeWorktreeManager = {
+    createForTask: ({ teamId, taskId }) => ({ status: 'created', path: `/tmp/${teamId}/${taskId}`, branch: 'b', baseRef: 'r', createdAt: 'now' }),
+  };
+  const fakeDiffComputer = {
+    computeDiff: () => ({ diff: '', files: [] }),
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    worktreeManager: fakeWorktreeManager,
+    diffComputer: fakeDiffComputer,
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'no-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'no-1', subject: 'noop', status: 'ready' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_PROPOSE,
+    idempotencyKey: 'no-plan',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'no-1', summary: 's' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_APPROVE,
+    idempotencyKey: 'no-app',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'no-1' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'no-planned',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'no-1', status: 'planned' },
+  });
+  facade.execute({
+    commandName: COMMANDS.REVIEW_REQUEST,
+    idempotencyKey: 'no-rev',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'no-1', summary: 'I did the thing' },
+  });
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'no-1' });
+  assert.equal(task.review.noOpDiff, true);
+});
+
+test('review_request leaves noOpDiff false when files have actual changes', () => {
+  const fakeWorktreeManager = {
+    createForTask: ({ teamId, taskId }) => ({ status: 'created', path: `/tmp/${teamId}/${taskId}`, branch: 'b', baseRef: 'r', createdAt: 'now' }),
+  };
+  const fakeDiffComputer = {
+    computeDiff: () => ({ diff: 'real diff', files: ['x.js'] }),
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    worktreeManager: fakeWorktreeManager,
+    diffComputer: fakeDiffComputer,
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'no2-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'no-2', subject: 's' },
+  });
+  facade.execute({
+    commandName: COMMANDS.REVIEW_REQUEST,
+    idempotencyKey: 'no2-rev',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'no-2', summary: 's', diff: 'caller', files: ['caller.js'] },
+  });
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'no-2' });
+  assert.equal(task.review.noOpDiff, false);
+});
+
+test('review_request leaves noOpDiff false when no diff computer was able to run (no worktree, caller silent)', () => {
+  // Caller didn't supply diff; no worktree → no diff computed → not the "I did work but no files changed" case
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'no3-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'no-3', subject: 's' },
+  });
+  facade.execute({
+    commandName: COMMANDS.REVIEW_REQUEST,
+    idempotencyKey: 'no3-rev',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'no-3', summary: 's' },
+  });
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'no-3' });
+  // No diff computed → don't claim no-op (we don't actually know)
+  assert.equal(task.review.noOpDiff, false);
+});
+
 // --- §13 partial: scope-drift detection in review_request ---
 
 test('review_request flags scope drift: files outside plan.filesExpectedToChange land in review.scopeDrift', () => {
