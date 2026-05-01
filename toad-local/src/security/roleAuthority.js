@@ -29,6 +29,7 @@ const COMMON_READ_TOOLS = Object.freeze([
   'health_status',
   'diagnostics_run',
   'task_history_export',
+  'stuck_runtime_list',
 ]);
 
 export const ROLE_TOOLS = Object.freeze({

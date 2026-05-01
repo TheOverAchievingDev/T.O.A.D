@@ -265,3 +265,40 @@ test('summary tallies match per-check statuses', () => {
   assert.equal(report.summary.warning, warning);
   assert.equal(report.summary.fail, fail);
 });
+
+test('stuck_runtimes_within_threshold: pass when no runtimes are stuck', () => {
+  const fakeRegistry = { listRuntimes: () => [
+    { runtimeId: 'r1', teamId: 't', agentId: 'a', status: 'running', startedAt: '2026-05-01T22:00:00.000Z' },
+  ]};
+  const fakeEventLog = { latestEventByRuntime: () => new Map([['r1', '2026-05-01T22:00:00.000Z']]) };
+  const report = runDiagnostics({
+    teamConfigRegistry: new TeamConfigRegistry(),
+    spawnValidation: fakeSpawn([]),
+    dbPath: '/x.db',
+    runtimeRegistry: fakeRegistry,
+    eventLog: fakeEventLog,
+    now: '2026-05-01T22:00:01.000Z',
+  });
+  const check = findCheck(report, 'stuck_runtimes_within_threshold');
+  assert.equal(check.status, 'pass');
+});
+
+test('stuck_runtimes_within_threshold: warning when ≥1 runtime is stuck', () => {
+  const fakeRegistry = { listRuntimes: () => [
+    { runtimeId: 'r1', teamId: 't', agentId: 'a', status: 'running', taskId: 'task-stuck', startedAt: '2026-05-01T20:00:00.000Z' },
+  ]};
+  const fakeEventLog = { latestEventByRuntime: () => new Map([['r1', '2026-05-01T21:00:00.000Z']]) };
+  const report = runDiagnostics({
+    teamConfigRegistry: new TeamConfigRegistry(),
+    spawnValidation: fakeSpawn([]),
+    dbPath: '/x.db',
+    runtimeRegistry: fakeRegistry,
+    eventLog: fakeEventLog,
+    now: '2026-05-01T22:00:00.000Z',
+    stuckThresholdMs: 15 * 60_000,
+  });
+  const check = findCheck(report, 'stuck_runtimes_within_threshold');
+  assert.equal(check.status, 'warning');
+  assert.equal(check.evidence.stuckCount, 1);
+  assert.equal(check.evidence.stuck[0].runtimeId, 'r1');
+});

@@ -10,6 +10,7 @@
 
 import { validateTaskStatusTransition } from '../task/taskLifecycle.js';
 import { assertRoleCanCallTool } from '../security/roleAuthority.js';
+import { detectStuckRuntimes, DEFAULT_THRESHOLD_MS as STUCK_DEFAULT_THRESHOLD_MS } from './stuckRuntimeDetector.js';
 
 const CLAUDE_VERSION_CMD = 'claude --version';
 const CLAUDE_AUTH_CMD = 'claude auth status --json';
@@ -18,6 +19,10 @@ export function runDiagnostics({
   teamConfigRegistry = null,
   spawnValidation = null,
   dbPath = null,
+  runtimeRegistry = null,
+  eventLog = null,
+  stuckThresholdMs = STUCK_DEFAULT_THRESHOLD_MS,
+  now = new Date().toISOString(),
 } = {}) {
   const checks = [];
 
@@ -32,9 +37,32 @@ export function runDiagnostics({
   checks.push(checkProviderAuthenticated(versionResult, spawnValidation));
 
   checks.push(checkDbPathPersistent(dbPath));
+  checks.push(checkStuckRuntimes(runtimeRegistry, eventLog, stuckThresholdMs, now));
 
   const summary = tally(checks);
   return { checks, summary };
+}
+
+function checkStuckRuntimes(runtimeRegistry, eventLog, thresholdMs, now) {
+  const id = 'stuck_runtimes_within_threshold';
+  const label = 'No running runtimes are silent past the inactivity threshold';
+  if (!runtimeRegistry || typeof runtimeRegistry.listRuntimes !== 'function') {
+    return warning(id, label, { hint: 'no runtime registry available; cannot check stuck runtimes' });
+  }
+  const runtimes = runtimeRegistry.listRuntimes();
+  const latestEventByRuntime = eventLog && typeof eventLog.latestEventByRuntime === 'function'
+    ? eventLog.latestEventByRuntime()
+    : new Map();
+  const stuck = detectStuckRuntimes({ runtimes, latestEventByRuntime, now, thresholdMs });
+  if (stuck.length === 0) {
+    return pass(id, label, { runtimesChecked: runtimes.filter((r) => r.status === 'running').length, thresholdMs });
+  }
+  return warning(id, label, {
+    stuckCount: stuck.length,
+    thresholdMs,
+    stuck: stuck.map(({ runtimeId, taskId, silentMs, lastEventAt }) => ({ runtimeId, taskId, silentMs, lastEventAt })),
+    suggestedFix: 'Inspect each stuck runtime via agent_status; consider agent_stop + relaunch.',
+  });
 }
 
 function checkInvalidTransitionRejected() {

@@ -499,6 +499,96 @@ test('projectTask ignores non-test validation runs when counting failures', () =
   assert.equal(task.consecutiveTestFailures, 2);
 });
 
+test('§1 follow-up: task_create accepts priority/assignedRole/testCommands/expectedDeliverables/dependencyTaskIds and projects them', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 't', taskId: 's-1', eventType: TASK_EVENT_TYPES.CREATED, actorId: 'lead',
+    payload: {
+      subject: 'rich task',
+      priority: 'high',
+      assignedRole: 'developer',
+      testCommands: ['npm test', 'npm run lint'],
+      expectedDeliverables: ['src/foo.js', 'src/foo.test.js'],
+      dependencyTaskIds: ['t-1', 't-2'],
+    },
+  });
+  const t = board.getTask({ teamId: 't', taskId: 's-1' });
+  assert.equal(t.priority, 'high');
+  assert.equal(t.assignedRole, 'developer');
+  assert.deepEqual(t.testCommands, ['npm test', 'npm run lint']);
+  assert.deepEqual(t.expectedDeliverables, ['src/foo.js', 'src/foo.test.js']);
+  assert.deepEqual(t.dependencyTaskIds, ['t-1', 't-2']);
+});
+
+test('§1 follow-up: defaults are sensible when fields are omitted', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 't', taskId: 's-2', eventType: TASK_EVENT_TYPES.CREATED, actorId: 'lead',
+    payload: { subject: 'minimal' },
+  });
+  const t = board.getTask({ teamId: 't', taskId: 's-2' });
+  assert.equal(t.priority, null);
+  assert.equal(t.assignedRole, null);
+  assert.deepEqual(t.testCommands, []);
+  assert.deepEqual(t.expectedDeliverables, []);
+  assert.deepEqual(t.dependencyTaskIds, []);
+});
+
+test('REVIEW_DECIDED feedback items preserve severity (§17)', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 't', taskId: 'sev-1', eventType: TASK_EVENT_TYPES.CREATED, actorId: 'lead',
+    payload: { subject: 'severity test' },
+  });
+  board.appendEvent({
+    teamId: 't', taskId: 'sev-1', eventType: TASK_EVENT_TYPES.REVIEW_REQUESTED, actorId: 'dev',
+    payload: { reviewerId: 'lead', diff: '...', files: ['a.js'] },
+  });
+  board.appendEvent({
+    teamId: 't', taskId: 'sev-1', eventType: TASK_EVENT_TYPES.REVIEW_DECIDED, actorId: 'lead',
+    payload: {
+      decision: 'changes_requested',
+      feedback: [
+        { file: 'a.js', comment: 'rename for clarity', severity: 'nit' },
+        { file: 'a.js', comment: 'this guard is wrong', severity: 'major' },
+        { file: 'a.js', comment: 'consider...', severity: 'banana' }, // unknown — dropped
+        { file: 'a.js', comment: 'no severity is fine' },
+      ],
+    },
+  });
+  const t = board.getTask({ teamId: 't', taskId: 'sev-1' });
+  assert.equal(t.review.feedback.length, 4);
+  assert.equal(t.review.feedback[0].severity, 'nit');
+  assert.equal(t.review.feedback[1].severity, 'major');
+  assert.equal(t.review.feedback[2].severity, undefined, 'unknown severity should be dropped');
+  assert.equal(t.review.feedback[3].severity, undefined, 'no severity stays absent');
+});
+
+test('task.integration defaults to null and INTEGRATION_MERGED populates it', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 't', taskId: 'i-1', eventType: TASK_EVENT_TYPES.CREATED, actorId: 'lead',
+    payload: { subject: 'x' },
+  });
+  let task = board.getTask({ teamId: 't', taskId: 'i-1' });
+  assert.equal(task.integration, null);
+  board.appendEvent({
+    teamId: 't', taskId: 'i-1', eventType: TASK_EVENT_TYPES.INTEGRATION_MERGED, actorId: 'lead',
+    payload: {
+      status: 'merged',
+      baseBranch: 'main',
+      mergeCommit: 'abc123',
+      parents: ['BASE', 'TASK'],
+      mergedAt: '2026-05-01T22:00:00.000Z',
+    },
+  });
+  task = board.getTask({ teamId: 't', taskId: 'i-1' });
+  assert.equal(task.integration.status, 'merged');
+  assert.equal(task.integration.baseBranch, 'main');
+  assert.equal(task.integration.mergeCommit, 'abc123');
+  assert.deepEqual(task.integration.parents, ['BASE', 'TASK']);
+});
+
 test('task.humanApproval defaults to { approved: false }', () => {
   const board = new InMemoryTaskBoard();
   board.appendEvent({

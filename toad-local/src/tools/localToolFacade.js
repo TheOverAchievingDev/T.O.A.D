@@ -12,11 +12,15 @@ import { TeamConfig } from '../team/teamConfig.js';
 import { validateTaskStatusTransition } from '../task/taskLifecycle.js';
 import { assertRoleCanCallTool } from '../security/roleAuthority.js';
 import { runDiagnostics } from '../diagnostics/runDiagnostics.js';
+import { detectStuckRuntimes, DEFAULT_THRESHOLD_MS as STUCK_DEFAULT_THRESHOLD_MS } from '../diagnostics/stuckRuntimeDetector.js';
 import { classify as classifyRisk } from '../policy/riskClassifier.js';
+
+// §17: review-feedback severity scale, ordered low → high blocking weight.
+export const REVIEW_FEEDBACK_SEVERITIES = Object.freeze(['nit', 'minor', 'major', 'blocking']);
 import { computeDiff as defaultComputeDiff } from '../task/diffComputer.js';
 
 export class LocalToolFacade {
-  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null, riskPolicy = null }) {
+  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null, mergeIntegrator = null, riskPolicy = null }) {
     if (!broker) throw new TypeError('broker is required');
     if (!taskBoard) throw new TypeError('taskBoard is required');
     this.broker = broker;
@@ -37,8 +41,15 @@ export class LocalToolFacade {
       ? diffComputer
       : { computeDiff: defaultComputeDiff };
     this.mergeChecker = mergeChecker && typeof mergeChecker.checkForConflicts === 'function' ? mergeChecker : null;
+    // §19 slice 2: integration step. Null = no actual merge (back-compat).
+    this.mergeIntegrator = mergeIntegrator && typeof mergeIntegrator.integrate === 'function' ? mergeIntegrator : null;
     // §14: project-local risk policy. Null = no auto-classification (back-compat).
-    this.riskPolicy = riskPolicy && Array.isArray(riskPolicy.rules) ? riskPolicy : null;
+    // Accepts policies with either `rules` (file matching), `commandRules`
+    // (Bash command matching, §14 follow-up), or both.
+    this.riskPolicy =
+      riskPolicy && (Array.isArray(riskPolicy.rules) || Array.isArray(riskPolicy.commandRules))
+        ? riskPolicy
+        : null;
   }
 
   execute(command) {
@@ -118,6 +129,8 @@ export class LocalToolFacade {
         return this.#taskHistoryExport(actor, args);
       case COMMANDS.TASK_HUMAN_APPROVE:
         return this.#humanApprove(actor, command.idempotencyKey, args);
+      case COMMANDS.STUCK_RUNTIME_LIST:
+        return this.#stuckRuntimeList(actor, args);
       default:
         throw new Error(`unsupported command: ${commandName}`);
     }
@@ -254,6 +267,50 @@ export class LocalToolFacade {
           throw new Error(
             `task_update: merge_ready → done blocked by human-approval gate (riskLevel: ${current.riskLevel || 'unspecified'}). Run task_human_approve before transitioning.`,
           );
+        }
+      }
+      // Integration step (§19 slice 2): after the conflict gate (slice 1) and
+      // human-approval gate (§14), perform the actual merge into baseBranch.
+      // Non-destructive: merge-tree → commit-tree → update-ref. No HEAD change,
+      // no working-directory mutation. Only fires when configured AND the task
+      // has a created worktree AND a baseBranch is set; otherwise records a
+      // 'skipped' integration event and lets the lifecycle continue.
+      if (fromStatus === 'merge_ready' && args.status === 'done' && this.mergeIntegrator) {
+        const wt = current?.worktree;
+        if (wt && wt.status === 'created' && typeof wt.branch === 'string' && wt.branch.length > 0) {
+          let result;
+          if (typeof current?.baseBranch !== 'string' || current.baseBranch.length === 0) {
+            result = { status: 'skipped', reason: 'no_base_branch' };
+          } else {
+            try {
+              result = this.mergeIntegrator.integrate({
+                projectCwd: this.projectCwd,
+                taskBranch: wt.branch,
+                baseBranch: current.baseBranch,
+                taskSubject: current.subject,
+              });
+            } catch (err) {
+              result = { status: 'error', reason: 'integrator_threw', stderr: err && err.message ? err.message : String(err) };
+            }
+          }
+          if (result.status === 'error') {
+            throw new Error(
+              `task_update: merge_ready → done blocked by integration: ${result.reason}${result.stderr ? ' — ' + result.stderr : ''}`,
+            );
+          }
+          // Append INTEGRATION_MERGED event (success OR best-effort skip)
+          try {
+            this.taskBoard.appendEvent({
+              teamId: actor.teamId,
+              taskId,
+              idempotencyKey: `${idempotencyKey}:integration`,
+              eventType: TASK_EVENT_TYPES.INTEGRATION_MERGED,
+              actorId: actor.agentId,
+              payload: result,
+            });
+          } catch {
+            // best-effort — projection is informational
+          }
         }
       }
       const payload = { status: args.status, from: fromStatus };
@@ -409,8 +466,21 @@ export class LocalToolFacade {
       // projection sees the elevated values when downstream consumers read.
       // Classifier never demotes — operator-supplied baselines are preserved.
       if (this.riskPolicy) {
+        // §14 follow-up: also pull Bash commands the agent ran on this task
+        // out of runtime_events so the classifier can match commandRules.
+        // Best-effort: missing event log = file-only classification.
+        let commands = [];
+        if (this.eventLog && typeof this.eventLog.listEventsByTask === 'function') {
+          try {
+            const runtimeEvents = this.eventLog.listEventsByTask({ teamId: actor.teamId, taskId });
+            commands = extractBashCommands(runtimeEvents);
+          } catch {
+            // ignore; commandRules just won't fire
+          }
+        }
         const classification = classifyRisk({
           files: payload.files,
+          commands,
           policy: this.riskPolicy,
           currentRiskLevel: taskBeforeReview?.riskLevel ?? null,
           currentRequiresHumanApproval: taskBeforeReview?.requiresHumanApproval === true,
@@ -462,7 +532,16 @@ export class LocalToolFacade {
     if (Array.isArray(args.feedback)) {
       const cleaned = args.feedback
         .filter((f) => f && typeof f.file === 'string' && typeof f.comment === 'string')
-        .map((f) => ({ file: f.file, comment: f.comment }));
+        .map((f) => {
+          const item = { file: f.file, comment: f.comment };
+          // §17: optional severity tag — nit / minor / major / blocking.
+          // Unknown values are dropped (no validation throw — better to keep
+          // the comment than reject the whole review on a typo).
+          if (typeof f.severity === 'string' && REVIEW_FEEDBACK_SEVERITIES.includes(f.severity)) {
+            item.severity = f.severity;
+          }
+          return item;
+        });
       if (cleaned.length > 0) payload.feedback = cleaned;
     }
     this.taskBoard.appendEvent({
@@ -955,6 +1034,8 @@ export class LocalToolFacade {
       teamConfigRegistry: this.teamConfigRegistry,
       spawnValidation: this.spawnValidation,
       dbPath: this.dbPath,
+      runtimeRegistry: this.runtimeRegistry,
+      eventLog: this.eventLog,
     });
   }
 
@@ -1003,6 +1084,35 @@ export class LocalToolFacade {
     return this.taskBoard.getTask({ teamId: actor.teamId, taskId });
   }
 
+  /**
+   * §13 follow-up: list runtimes whose `runtime_events` stream has been
+   * silent past the inactivity threshold. Pulls running runtimes from the
+   * registry, looks up the latest event timestamp per runtime via the
+   * event log's SQL aggregation, then runs the pure detector.
+   *
+   * Args: { thresholdMs?: number }. Default 15 minutes.
+   * Returns: [{ runtimeId, taskId, teamId, agentId, lastEventAt, silentMs, thresholdMs }]
+   * Read-only; available to every role via COMMON_READ_TOOLS.
+   */
+  #stuckRuntimeList(actor, args) {
+    if (!this.runtimeRegistry || typeof this.runtimeRegistry.listRuntimes !== 'function') {
+      return [];
+    }
+    const runtimes = this.runtimeRegistry.listRuntimes({ teamId: actor.teamId });
+    const latestEventByRuntime = this.eventLog && typeof this.eventLog.latestEventByRuntime === 'function'
+      ? this.eventLog.latestEventByRuntime({ teamId: actor.teamId })
+      : new Map();
+    const thresholdMs = Number.isFinite(args?.thresholdMs) && args.thresholdMs > 0
+      ? args.thresholdMs
+      : STUCK_DEFAULT_THRESHOLD_MS;
+    return detectStuckRuntimes({
+      runtimes,
+      latestEventByRuntime,
+      now: new Date().toISOString(),
+      thresholdMs,
+    });
+  }
+
   #emitToolCallDenied(actor, commandName, err) {
     if (!this.eventLog) return;
     // Best-effort audit. The original error always re-throws; a broken event log
@@ -1040,6 +1150,30 @@ function truncate(value, max) {
  * Patterns and paths are case-sensitive. No globstar in the middle of a
  * pattern (e.g. "src/**\/test.js"); add later if a slice needs it.
  */
+/**
+ * §14 follow-up: pull shell commands the agent ran out of `runtime_events`.
+ * Looks for `tool_use` events on Bash-shaped tools (`Bash` or any MCP-wrapped
+ * shell) and extracts the `input.command` string. Used to feed
+ * `policy.commandRules` into the risk classifier at review_request time.
+ */
+function extractBashCommands(events) {
+  if (!Array.isArray(events)) return [];
+  const SHELL_TOOL_NAMES = new Set(['Bash']);
+  const commands = [];
+  for (const e of events) {
+    if (!e || e.eventType !== 'tool_use') continue;
+    const p = e.payload || {};
+    const tool = typeof p.toolName === 'string' ? p.toolName : null;
+    if (!tool) continue;
+    const isShell = SHELL_TOOL_NAMES.has(tool) || /Bash/i.test(tool);
+    if (!isShell) continue;
+    const input = p.input && typeof p.input === 'object' ? p.input : {};
+    const command = typeof input.command === 'string' ? input.command : null;
+    if (command && command.length > 0) commands.push(command);
+  }
+  return commands;
+}
+
 function matchesAny(file, patterns) {
   if (typeof file !== 'string') return false;
   for (const p of patterns) {
@@ -1112,8 +1246,34 @@ function normalizeTaskRiskContractArgs(args) {
   if (typeof args.requiresHumanApproval === 'boolean') {
     payload.requiresHumanApproval = args.requiresHumanApproval;
   }
+  // §1 follow-up: priority + assignedRole + testCommands + expectedDeliverables
+  // + dependencyTaskIds. All optional. priority + assignedRole validate against
+  // enums; the others are sanitized string lists.
+  if (typeof args.priority === 'string' && args.priority.trim().length > 0) {
+    const priority = args.priority.trim();
+    if (!TASK_PRIORITY_LEVELS.includes(priority)) {
+      throw new Error(`task_create: unsupported priority ${priority}`);
+    }
+    payload.priority = priority;
+  }
+  if (typeof args.assignedRole === 'string' && args.assignedRole.trim().length > 0) {
+    const assignedRole = args.assignedRole.trim();
+    if (!TASK_ASSIGNED_ROLES.includes(assignedRole)) {
+      throw new Error(`task_create: unsupported assignedRole ${assignedRole}`);
+    }
+    payload.assignedRole = assignedRole;
+  }
+  const testCommands = normalizeStringList(args.testCommands);
+  if (testCommands) payload.testCommands = testCommands;
+  const expectedDeliverables = normalizeStringList(args.expectedDeliverables);
+  if (expectedDeliverables) payload.expectedDeliverables = expectedDeliverables;
+  const dependencyTaskIds = normalizeStringList(args.dependencyTaskIds);
+  if (dependencyTaskIds) payload.dependencyTaskIds = dependencyTaskIds;
   return payload;
 }
+
+export const TASK_PRIORITY_LEVELS = Object.freeze(['low', 'medium', 'high', 'urgent']);
+export const TASK_ASSIGNED_ROLES = Object.freeze(['lead', 'architect', 'developer', 'reviewer', 'tester', 'human']);
 
 function normalizeStringList(value) {
   if (!Array.isArray(value)) return null;

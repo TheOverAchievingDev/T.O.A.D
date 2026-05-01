@@ -17,6 +17,7 @@ export const TASK_EVENT_TYPES = Object.freeze({
   WORKTREE_REMOVED: 'task.worktree_removed',
   RISK_CLASSIFIED: 'task.risk_classified',
   HUMAN_APPROVED: 'task.human_approved',
+  INTEGRATION_MERGED: 'task.integration_merged',
 });
 
 export const TASK_STATUS = Object.freeze({
@@ -118,6 +119,12 @@ export function projectTask(events) {
     riskLevel: null,
     requiresHumanApproval: false,
     humanApproval: { approved: false },
+    integration: null,
+    priority: null,
+    assignedRole: null,
+    testCommands: [],
+    expectedDeliverables: [],
+    dependencyTaskIds: [],
     validations: [],
     latestValidation: {},
     consecutiveTestFailures: 0,
@@ -150,6 +157,13 @@ export function projectTask(events) {
       task.acceptanceCriteria = normalizeStringList(event.payload.acceptanceCriteria);
       task.riskLevel = normalizeRiskLevel(event.payload.riskLevel);
       task.requiresHumanApproval = event.payload.requiresHumanApproval === true;
+      // §1 follow-up: priority / assignedRole / testCommands /
+      // expectedDeliverables / dependencyTaskIds — all optional.
+      task.priority = typeof event.payload.priority === 'string' ? event.payload.priority : null;
+      task.assignedRole = typeof event.payload.assignedRole === 'string' ? event.payload.assignedRole : null;
+      task.testCommands = normalizeStringList(event.payload.testCommands);
+      task.expectedDeliverables = normalizeStringList(event.payload.expectedDeliverables);
+      task.dependencyTaskIds = normalizeStringList(event.payload.dependencyTaskIds);
     }
     if (event.eventType === TASK_EVENT_TYPES.ASSIGNED) {
       task.ownerId = event.payload.ownerId || null;
@@ -279,6 +293,17 @@ export function projectTask(events) {
         ...(typeof p.reason === 'string' && p.reason.length > 0 ? { reason: p.reason } : {}),
       };
     }
+    if (event.eventType === TASK_EVENT_TYPES.INTEGRATION_MERGED) {
+      const p = event.payload || {};
+      task.integration = {
+        status: typeof p.status === 'string' ? p.status : 'merged',
+        baseBranch: typeof p.baseBranch === 'string' ? p.baseBranch : null,
+        mergeCommit: typeof p.mergeCommit === 'string' ? p.mergeCommit : null,
+        parents: Array.isArray(p.parents) ? [...p.parents] : null,
+        mergedAt: typeof p.mergedAt === 'string' ? p.mergedAt : event.createdAt,
+        reason: typeof p.reason === 'string' ? p.reason : null,
+      };
+    }
     if (event.eventType === TASK_EVENT_TYPES.VALIDATION_RUN) {
       const payload = event.payload || {};
       const kind = typeof payload.kind === 'string' ? payload.kind : null;
@@ -314,7 +339,14 @@ export function projectTask(events) {
         feedback: Array.isArray(event.payload.feedback)
           ? event.payload.feedback.filter(
               (f) => f && typeof f.file === 'string' && typeof f.comment === 'string',
-            ).map((f) => ({ file: f.file, comment: f.comment }))
+            ).map((f) => {
+              const out = { file: f.file, comment: f.comment };
+              // §17: severity is optional; only persist known values.
+              if (typeof f.severity === 'string' && ['nit', 'minor', 'major', 'blocking'].includes(f.severity)) {
+                out.severity = f.severity;
+              }
+              return out;
+            })
           : [],
         decidedBy: event.actorId,
         decidedAt: event.createdAt,

@@ -14,6 +14,7 @@ import { SqliteTeamConfigRegistry } from '../team/sqliteTeamConfigRegistry.js';
 import { LocalToolFacade } from '../tools/localToolFacade.js';
 import { WorktreeManager } from '../task/worktreeManager.js';
 import { checkForConflicts } from '../task/mergeChecker.js';
+import { integrate as integrateMerge } from '../task/mergeIntegrator.js';
 import { ApiServer } from '../transport/apiServer.js';
 import { SideEffectLog } from '../delivery/sideEffectLog.js';
 import { resolveApiToken } from '../runtime/resolveApiToken.js';
@@ -93,6 +94,12 @@ export class LocalToadRuntime {
       || (typeof projectCwd === 'string' && projectCwd.length > 0
         ? { checkForConflicts }
         : null);
+    // Merge integrator (§19 slice 2): performs the real merge on done.
+    // Same enable rule — needs projectCwd to know which repo to integrate in.
+    this.mergeIntegrator =
+      typeof projectCwd === 'string' && projectCwd.length > 0
+        ? { integrate: (input) => integrateMerge({ ...input, projectCwd }) }
+        : null;
     // §14: load `.toad/risk-policy.json` once at construction. Null when
     // missing/unparseable — the facade's classifier hook is a no-op in that
     // case (back-compat for projects that never opt in).
@@ -118,6 +125,7 @@ export class LocalToadRuntime {
         eventLog: this.eventLog,
         worktreeManager: this.worktreeManager,
         mergeChecker: this.mergeChecker,
+        mergeIntegrator: this.mergeIntegrator,
         riskPolicy: this.riskPolicy,
       });
     const db = this.runtimeRegistry?.db || this.eventLog?.db || null;

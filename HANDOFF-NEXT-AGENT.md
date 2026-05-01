@@ -1,8 +1,19 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-05-01 local session (risk-policy classifier + human-approval gate — checklist §14)
+Last updated: 2026-05-01 local session (slices A–F: Level-4 verify + merge-integration + stuck-runtime detector + command rules + review severity + task schema fields)
 
-Update from same session, latest slice: §14 promoted from PARTIAL to REAL (partial). The `.toad/risk-policy.json` config drives a pattern-based classifier (`src/policy/riskClassifier.js`) that runs at `review_request` time and may auto-elevate `task.riskLevel` and flip `requiresHumanApproval` via a new `RISK_CLASSIFIED` event. The classifier is monotonic upward (never demotes operator-supplied baselines). Patterns supported: exact, `**` (recursive), trailing `/` (dir prefix), trailing `*` (suffix wildcard), `**/*.ext`. `merge_ready → done` is now blocked when `task.requiresHumanApproval && !task.humanApproval.approved`; cleared by the new `task_human_approve` MCP tool (mutating, restricted to lead/human via roleAuthority's existing wildcards). New event types `RISK_CLASSIFIED` + `HUMAN_APPROVED`; new projection field `task.humanApproval`. `LocalToadRuntime` auto-loads the policy from `projectCwd`. 30 new tests across `riskClassifier`, `loadRiskPolicy`, projection, facade, and runtime wiring. Plan doc: `docs/superpowers/plans/2026-05-01-risk-policy-human-approval-gate.md`. Full `npm.cmd test` passes (465 tests, 0 fail).
+Update from same session: shipped six slices in one go after the §14 risk-policy + human-approval gate landed.
+
+- **A — Level-4 real-agent verification of §14**: Wrote `.toad/risk-policy.json`, launched a real Claude agent, watched it edit `.env.demo`, classifier auto-elevated `riskLevel: critical` + `requiresHumanApproval: true`, `merge_ready → done` was blocked with the right message, `task_human_approve` cleared the gate. Smoke verified end-to-end. ~$0.40.
+- **B — §19 slice 2 merge integration**: New `src/task/mergeIntegrator.js`. Non-destructive `merge-tree --write-tree → commit-tree → update-ref` advances `baseBranch` without touching HEAD or the working directory. Optimistic-concurrency 4-arg form on `update-ref` handles races. New `INTEGRATION_MERGED` event + `task.integration` projection. 9 unit tests + 4 facade integration tests. §19 fully REAL.
+- **C — §13 stuck/zombie runtime detector**: New `src/diagnostics/stuckRuntimeDetector.js` (pure). New `latestEventByRuntime` SQL aggregation on the event log. New `stuck_runtime_list` MCP tool (read-only, all roles) + new `runDiagnostics` check `stuck_runtimes_within_threshold`. 9 detector + 1 facade + 2 diagnostics tests.
+- **D — §14 follow-up: command rules**: Risk policy now supports `commandRules` alongside `rules`. Classifier extracts Bash commands from `runtime_events` for the task and feeds them through alongside `payload.files`. Substring/prefix/suffix glob matching for command patterns. `matchedRules` entries now tagged `appliesTo: 'files' | 'commands'`. 5 new classifier tests + 1 facade integration test.
+- **E — §17 review severity tags**: `review_decide` feedback items now accept optional `severity: 'nit'|'minor'|'major'|'blocking'`. Persisted on the projection. Unknown severities silently dropped (don't reject the whole review for a typo). MCP schema updated. 1 projection test.
+- **F — §1 remaining task schema**: `priority` (`low|medium|high|urgent`), `assignedRole` (one of the six roles), `testCommands`, `expectedDeliverables`, `dependencyTaskIds` all on `task_create` + projection. Enums validated. §10 dependency enforcement is now unblocked. 2 projection tests + 1 facade enum test.
+
+Full `npm.cmd test` passes (502 tests across 41 files, 0 fail; was 435 at slice start).
+
+Prior: §14 promoted from PARTIAL to REAL (partial). The `.toad/risk-policy.json` config drives a pattern-based classifier (`src/policy/riskClassifier.js`) that runs at `review_request` time and may auto-elevate `task.riskLevel` and flip `requiresHumanApproval` via a new `RISK_CLASSIFIED` event. Plan doc: `docs/superpowers/plans/2026-05-01-risk-policy-human-approval-gate.md`.
 
 Prior: Risk/file contract enforcement at `review_request` for `forbiddenFiles` / `allowedFiles` (hard rejection before `REVIEW_REQUESTED` appends).
 

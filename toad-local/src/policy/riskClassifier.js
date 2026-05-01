@@ -14,36 +14,37 @@ export const RISK_LEVEL_ORDER = Object.freeze(['low', 'medium', 'high', 'critica
 
 export function classify({
   files,
+  commands,
   policy,
   currentRiskLevel = null,
   currentRequiresHumanApproval = false,
 } = {}) {
   const fileList = Array.isArray(files) ? files.filter((f) => typeof f === 'string' && f.length > 0) : [];
-  const rules = policy && Array.isArray(policy.rules) ? policy.rules : [];
+  const commandList = Array.isArray(commands) ? commands.filter((c) => typeof c === 'string' && c.length > 0) : [];
+  const fileRules = policy && Array.isArray(policy.rules) ? policy.rules : [];
+  const commandRules = policy && Array.isArray(policy.commandRules) ? policy.commandRules : [];
 
   let highestRank = riskRank(currentRiskLevel);
   let highestLevel = currentRiskLevel || null;
   let approvalFlag = currentRequiresHumanApproval === true;
   const matchedRules = [];
 
-  for (const rule of rules) {
+  // Match file rules against the changed-files list.
+  for (const rule of fileRules) {
     if (!isValidRule(rule)) continue;
     const hits = fileList.some((file) => matchesPattern(file, rule.pattern));
     if (!hits) continue;
+    [highestRank, highestLevel, approvalFlag] = applyRuleEffect(rule, highestRank, highestLevel, approvalFlag);
+    matchedRules.push(formatMatchedRule(rule, 'files'));
+  }
 
-    if (typeof rule.riskLevel === 'string' && RISK_LEVEL_ORDER.includes(rule.riskLevel)) {
-      const rank = riskRank(rule.riskLevel);
-      if (rank > highestRank) {
-        highestRank = rank;
-        highestLevel = rule.riskLevel;
-      }
-    }
-    if (rule.requiresHumanApproval === true) approvalFlag = true;
-    matchedRules.push({
-      pattern: rule.pattern,
-      ...(typeof rule.riskLevel === 'string' && RISK_LEVEL_ORDER.includes(rule.riskLevel) ? { riskLevel: rule.riskLevel } : {}),
-      ...(rule.requiresHumanApproval === true ? { requiresHumanApproval: true } : {}),
-    });
+  // §14 follow-up: match command rules against shell commands the agent ran.
+  for (const rule of commandRules) {
+    if (!isValidRule(rule)) continue;
+    const hits = commandList.some((cmd) => commandMatchesPattern(cmd, rule.pattern));
+    if (!hits) continue;
+    [highestRank, highestLevel, approvalFlag] = applyRuleEffect(rule, highestRank, highestLevel, approvalFlag);
+    matchedRules.push(formatMatchedRule(rule, 'commands'));
   }
 
   return {
@@ -51,6 +52,47 @@ export function classify({
     requiresHumanApproval: approvalFlag,
     matchedRules,
   };
+}
+
+function applyRuleEffect(rule, highestRank, highestLevel, approvalFlag) {
+  if (typeof rule.riskLevel === 'string' && RISK_LEVEL_ORDER.includes(rule.riskLevel)) {
+    const rank = riskRank(rule.riskLevel);
+    if (rank > highestRank) {
+      highestRank = rank;
+      highestLevel = rule.riskLevel;
+    }
+  }
+  if (rule.requiresHumanApproval === true) approvalFlag = true;
+  return [highestRank, highestLevel, approvalFlag];
+}
+
+function formatMatchedRule(rule, appliesTo) {
+  return {
+    pattern: rule.pattern,
+    appliesTo,
+    ...(typeof rule.riskLevel === 'string' && RISK_LEVEL_ORDER.includes(rule.riskLevel) ? { riskLevel: rule.riskLevel } : {}),
+    ...(rule.requiresHumanApproval === true ? { requiresHumanApproval: true } : {}),
+  };
+}
+
+/**
+ * Pattern matcher for shell commands. More forgiving than file patterns:
+ *   - `prefix*`  → command starts with prefix (no trailing *)
+ *   - `*suffix`  → command ends with suffix
+ *   - exact      → command === pattern
+ *   - otherwise  → pattern as substring of command (the catch-all that handles
+ *                  bare tokens like `curl` or `psql`)
+ */
+function commandMatchesPattern(cmd, pattern) {
+  if (typeof cmd !== 'string' || typeof pattern !== 'string') return false;
+  if (cmd === pattern) return true;
+  if (pattern.endsWith('*') && !pattern.startsWith('*')) {
+    return cmd.startsWith(pattern.slice(0, -1));
+  }
+  if (pattern.startsWith('*') && !pattern.endsWith('*')) {
+    return cmd.endsWith(pattern.slice(1));
+  }
+  return cmd.includes(pattern);
 }
 
 function isValidRule(rule) {

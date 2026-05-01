@@ -94,6 +94,28 @@ export class SqliteRuntimeEventLog {
       .map((row) => this.#rowToEvent(row));
   }
 
+  /**
+   * Map<runtimeId, ISO timestamp of most recent event>. Optionally filter by
+   * teamId. Used by the §13 stuck-runtime detector — efficient SQL aggregation
+   * instead of N round-trips through `listEvents`.
+   */
+  latestEventByRuntime({ teamId = null } = {}) {
+    const rows = teamId
+      ? this.db
+          .prepare(
+            'SELECT runtime_id, MAX(created_at) AS last_at FROM runtime_events WHERE team_id = ? GROUP BY runtime_id'
+          )
+          .all(teamId)
+      : this.db
+          .prepare('SELECT runtime_id, MAX(created_at) AS last_at FROM runtime_events GROUP BY runtime_id')
+          .all();
+    const map = new Map();
+    for (const row of rows) {
+      if (row.runtime_id && row.last_at) map.set(row.runtime_id, row.last_at);
+    }
+    return map;
+  }
+
   listEvents({ runtimeId = null, teamId = null } = {}) {
     if (runtimeId) {
       return this.db

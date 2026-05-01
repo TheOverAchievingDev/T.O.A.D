@@ -106,6 +106,11 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
       acceptanceCriteria: STRING_LIST_SCHEMA,
       riskLevel: { type: 'string', enum: TASK_RISK_LEVELS },
       requiresHumanApproval: { type: 'boolean' },
+      priority: { type: 'string', enum: ['low', 'medium', 'high', 'urgent'] },
+      assignedRole: { type: 'string', enum: ['lead', 'architect', 'developer', 'reviewer', 'tester', 'human'] },
+      testCommands: STRING_LIST_SCHEMA,
+      expectedDeliverables: STRING_LIST_SCHEMA,
+      dependencyTaskIds: STRING_LIST_SCHEMA,
     },
   }),
   makeTool({
@@ -146,7 +151,7 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
   makeTool({
     name: COMMANDS.REVIEW_DECIDE,
     title: 'Decide Review',
-    description: 'Approve a task review or request changes. Optionally attach per-file feedback comments.',
+    description: 'Approve a task review or request changes. Optionally attach per-file feedback comments. Each feedback item can carry an optional severity (nit/minor/major/blocking) to help prioritize follow-up work.',
     required: ['taskId', 'decision'],
     properties: {
       taskId: { type: 'string', minLength: 1 },
@@ -161,6 +166,7 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
           properties: {
             file: { type: 'string', minLength: 1 },
             comment: { type: 'string', minLength: 1 },
+            severity: { type: 'string', enum: ['nit', 'minor', 'major', 'blocking'] },
           },
         },
       },
@@ -392,6 +398,15 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
     properties: {
       taskId: { type: 'string', minLength: 1 },
       reason: { type: 'string' },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.STUCK_RUNTIME_LIST,
+    title: 'List Stuck Runtimes',
+    description: 'Read-only. Returns running runtimes whose runtime_events stream has been silent past `thresholdMs` (default 15 minutes). Useful for catching agents stuck in tool loops, waiting on permissions, or zombie processes. Available to every role.',
+    required: [],
+    properties: {
+      thresholdMs: { type: 'integer', minimum: 1 },
     },
   }),
 ]);

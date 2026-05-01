@@ -103,6 +103,71 @@ test('classify supports exact, **, and trailing-slash directory patterns', () =>
   assert.equal(classify({ files: ['package.json.bak'], policy }).riskLevel, null);
 });
 
+// --- §14 follow-up: command rules ---
+
+test('classify processes policy.commandRules against the commands argument', () => {
+  const r = classify({
+    commands: ['rm -rf /tmp/foo'],
+    policy: {
+      commandRules: [
+        { pattern: 'rm -rf*', riskLevel: 'critical', requiresHumanApproval: true },
+      ],
+    },
+  });
+  assert.equal(r.riskLevel, 'critical');
+  assert.equal(r.requiresHumanApproval, true);
+  assert.equal(r.matchedRules.length, 1);
+});
+
+test('classify command pattern: prefix glob with trailing *', () => {
+  const policy = { commandRules: [{ pattern: 'aws s3 *', riskLevel: 'high', requiresHumanApproval: true }] };
+  assert.equal(classify({ commands: ['aws s3 cp foo.txt s3://bucket'], policy }).riskLevel, 'high');
+  assert.equal(classify({ commands: ['ls'], policy }).riskLevel, null);
+});
+
+test('classify command pattern: substring fallback when no glob marker', () => {
+  const policy = { commandRules: [{ pattern: 'curl', riskLevel: 'medium' }] };
+  assert.equal(classify({ commands: ['curl https://example.com'], policy }).riskLevel, 'medium');
+  // Substring inside a longer command also matches
+  assert.equal(classify({ commands: ['echo hello | curl --data-binary @-'], policy }).riskLevel, 'medium');
+  // Unrelated command doesn't match
+  assert.equal(classify({ commands: ['ls'], policy }).riskLevel, null);
+});
+
+test('classify combines file and command matches into matchedRules', () => {
+  const r = classify({
+    files: ['.env.production'],
+    commands: ['rm -rf node_modules'],
+    policy: {
+      rules: [{ pattern: '.env*', riskLevel: 'critical', requiresHumanApproval: true }],
+      commandRules: [{ pattern: 'rm -rf*', riskLevel: 'high' }],
+    },
+  });
+  assert.equal(r.riskLevel, 'critical'); // critical wins over high
+  assert.equal(r.requiresHumanApproval, true);
+  assert.equal(r.matchedRules.length, 2);
+});
+
+test('classify: no commandRules + commands provided is a noop', () => {
+  const r = classify({
+    commands: ['rm -rf everything'],
+    policy: { rules: [] }, // no commandRules
+  });
+  assert.equal(r.riskLevel, null);
+  assert.equal(r.matchedRules.length, 0);
+});
+
+test('classify: missing commands array is fine (back-compat for callers that only pass files)', () => {
+  const r = classify({
+    files: ['src/foo.js'],
+    policy: {
+      rules: [{ pattern: 'src/**', riskLevel: 'low' }],
+      commandRules: [{ pattern: 'rm*', riskLevel: 'critical' }],
+    },
+  });
+  assert.equal(r.riskLevel, 'low');
+});
+
 test('classify is robust to malformed rule entries (skipped, not crashing)', () => {
   const r = classify({
     files: ['src/foo.js'],

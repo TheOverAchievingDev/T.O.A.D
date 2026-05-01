@@ -3727,3 +3727,308 @@ test('classifier-driven elevation triggers the human-approval gate (end-to-end)'
     /human-approval gate/,
   );
 });
+
+// --- §19 slice 2: integration merge on merge_ready → done ---
+
+function buildMergeIntegrationFacade({ mergeIntegrator } = {}) {
+  return new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    spawnValidation: () => ({ exitCode: 0, stdout: 'pass', stderr: '', durationMs: 1 }),
+    teamConfigRegistry: new (class {
+      teams = new Map();
+      registerTeam(c) { this.teams.set(c.teamId, c); }
+      getTeam(id) { return this.teams.get(id) || null; }
+      listTeams() { return Array.from(this.teams.values()); }
+    })(),
+    mergeIntegrator,
+  });
+}
+
+async function walkToMergeReady(facade, taskId, { teamId = 'team-a', baseBranch = 'main', worktreeBranch } = {}) {
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  if (!facade.teamConfigRegistry.getTeam(teamId)) {
+    facade.teamConfigRegistry.registerTeam(new TeamConfig({ teamId, validation: { testCommand: 'noop' } }));
+  }
+  // Synthesize a worktree directly via events so we don't need a real WorktreeManager.
+  facade.taskBoard.appendEvent({
+    teamId, taskId,
+    idempotencyKey: `${taskId}:create`,
+    eventType: 'task.created',
+    actorId: 'lead',
+    payload: { subject: 'integ smoke', status: 'testing', baseRef: 'BASE_SHA', baseBranch },
+  });
+  facade.taskBoard.appendEvent({
+    teamId, taskId,
+    idempotencyKey: `${taskId}:wt`,
+    eventType: 'task.worktree_created',
+    actorId: 'lead',
+    payload: {
+      status: 'created',
+      path: '/tmp/wt',
+      branch: worktreeBranch || `toad/${teamId}/${taskId}`,
+      baseRef: 'BASE_SHA',
+      createdAt: 'now',
+    },
+  });
+  // Run validation to satisfy the CI gate
+  await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN,
+    idempotencyKey: `${taskId}:val`,
+    actor: { teamId, agentId: 'tester-1', role: 'tester' },
+    args: { taskId, kind: 'test' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: `${taskId}:mr`,
+    actor: { teamId, agentId: 'lead', role: 'lead' },
+    args: { taskId, status: 'merge_ready' },
+  });
+}
+
+test('merge_ready → done invokes mergeIntegrator and emits INTEGRATION_MERGED on success', async () => {
+  const calls = [];
+  const mergeIntegrator = {
+    integrate(input) {
+      calls.push(input);
+      return {
+        status: 'merged',
+        baseBranch: input.baseBranch,
+        mergeCommit: 'NEW_MERGE_SHA',
+        parents: ['BASE_TIP', 'TASK_TIP'],
+        mergedAt: '2026-05-01T22:00:00.000Z',
+      };
+    },
+  };
+  const facade = buildMergeIntegrationFacade({ mergeIntegrator });
+  await walkToMergeReady(facade, 'integ-1');
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'integ-1:done',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'integ-1', status: 'done' },
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].baseBranch, 'main');
+  assert.equal(calls[0].taskBranch, 'toad/team-a/integ-1');
+  const t = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'integ-1' });
+  assert.equal(t.status, 'done');
+  assert.equal(t.integration.status, 'merged');
+  assert.equal(t.integration.mergeCommit, 'NEW_MERGE_SHA');
+  assert.deepEqual(t.integration.parents, ['BASE_TIP', 'TASK_TIP']);
+});
+
+test('merge_ready → done with no baseBranch on task records a "skipped" integration but lets the transition through', async () => {
+  let called = false;
+  const mergeIntegrator = {
+    integrate() { called = true; return { status: 'merged' }; },
+  };
+  const facade = buildMergeIntegrationFacade({ mergeIntegrator });
+  // Walk a task with NO baseBranch set
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  facade.teamConfigRegistry.registerTeam(new TeamConfig({ teamId: 'team-a', validation: { testCommand: 'noop' } }));
+  facade.taskBoard.appendEvent({
+    teamId: 'team-a', taskId: 'no-base',
+    idempotencyKey: 'no-base:create',
+    eventType: 'task.created',
+    actorId: 'lead',
+    payload: { subject: 'no base branch', status: 'testing' },
+  });
+  facade.taskBoard.appendEvent({
+    teamId: 'team-a', taskId: 'no-base',
+    idempotencyKey: 'no-base:wt',
+    eventType: 'task.worktree_created',
+    actorId: 'lead',
+    payload: { status: 'created', path: '/tmp/wt', branch: 'toad/team-a/no-base', baseRef: 'BASE', createdAt: 'now' },
+  });
+  await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN,
+    idempotencyKey: 'no-base:val',
+    actor: { teamId: 'team-a', agentId: 'tester-1', role: 'tester' },
+    args: { taskId: 'no-base', kind: 'test' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'no-base:mr',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'no-base', status: 'merge_ready' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'no-base:done',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'no-base', status: 'done' },
+  });
+  assert.equal(called, false, 'integrator should not be called when task has no baseBranch');
+  const t = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'no-base' });
+  assert.equal(t.status, 'done');
+  assert.equal(t.integration.status, 'skipped');
+  assert.equal(t.integration.reason, 'no_base_branch');
+});
+
+test('merge_ready → done is BLOCKED when integrator returns { status: error }', async () => {
+  const mergeIntegrator = {
+    integrate: () => ({ status: 'error', reason: 'update_ref_failed', stderr: 'race detected' }),
+  };
+  const facade = buildMergeIntegrationFacade({ mergeIntegrator });
+  await walkToMergeReady(facade, 'integ-err');
+  assert.throws(
+    () => facade.execute({
+      commandName: COMMANDS.TASK_UPDATE,
+      idempotencyKey: 'integ-err:done',
+      actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+      args: { taskId: 'integ-err', status: 'done' },
+    }),
+    /merge_ready . done blocked.*update_ref_failed/,
+  );
+  const t = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'integ-err' });
+  assert.equal(t.status, 'merge_ready');
+});
+
+test('merge_ready → done with no integrator configured leaves integration null (back-compat)', async () => {
+  const facade = buildMergeIntegrationFacade({ mergeIntegrator: null });
+  await walkToMergeReady(facade, 'no-integ');
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'no-integ:done',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'no-integ', status: 'done' },
+  });
+  const t = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'no-integ' });
+  assert.equal(t.status, 'done');
+  assert.equal(t.integration, null);
+});
+
+// --- §1 follow-up: priority/assignedRole/testCommands/expectedDeliverables/dependencyTaskIds ---
+
+test('task_create accepts §1 follow-up fields and validates enums', () => {
+  const facade = new LocalToolFacade({ broker: new InMemoryBroker(), taskBoard: new InMemoryTaskBoard() });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 's1-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: {
+      taskId: 's1-1',
+      subject: 'rich',
+      priority: 'urgent',
+      assignedRole: 'tester',
+      testCommands: ['npm test'],
+      expectedDeliverables: ['out.txt'],
+      dependencyTaskIds: ['parent-1'],
+    },
+  });
+  const t = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 's1-1' });
+  assert.equal(t.priority, 'urgent');
+  assert.equal(t.assignedRole, 'tester');
+  assert.deepEqual(t.testCommands, ['npm test']);
+  assert.deepEqual(t.dependencyTaskIds, ['parent-1']);
+
+  // bad priority rejected
+  assert.throws(
+    () => facade.execute({
+      commandName: COMMANDS.TASK_CREATE,
+      idempotencyKey: 's1-bad-prio',
+      actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+      args: { taskId: 's1-2', subject: 'x', priority: 'apocalyptic' },
+    }),
+    /unsupported priority/,
+  );
+  // bad assignedRole rejected
+  assert.throws(
+    () => facade.execute({
+      commandName: COMMANDS.TASK_CREATE,
+      idempotencyKey: 's1-bad-role',
+      actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+      args: { taskId: 's1-3', subject: 'x', assignedRole: 'fairy' },
+    }),
+    /unsupported assignedRole/,
+  );
+});
+
+// --- §14 follow-up: command rules in risk classifier ---
+
+test('review_request pulls Bash commands from runtime_events and matches commandRules', () => {
+  const fakeEventLog = {
+    listEventsByTask({ teamId, taskId }) {
+      assert.equal(taskId, 'cmd-1');
+      return [
+        { eventType: 'tool_use', payload: { toolName: 'Bash', input: { command: 'rm -rf /tmp/junk' } } },
+        { eventType: 'tool_use', payload: { toolName: 'Read',  input: { file_path: 'README.md' } } },  // not a shell
+        { eventType: 'assistant_text', payload: { text: 'done' } },
+      ];
+    },
+    appendEvent() { return { inserted: true, event: {} }; },
+  };
+  const policy = {
+    commandRules: [
+      { pattern: 'rm -rf*', riskLevel: 'critical', requiresHumanApproval: true },
+    ],
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    eventLog: fakeEventLog,
+    riskPolicy: policy,
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'cmd-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'cmd-1', subject: 'destructive cleanup' },
+  });
+  facade.execute({
+    commandName: COMMANDS.REVIEW_REQUEST,
+    idempotencyKey: 'cmd-rev',
+    actor: { teamId: 'team-a', agentId: 'dev', role: 'developer' },
+    args: { taskId: 'cmd-1', summary: 'cleaned up', files: ['noop.txt'] },
+  });
+  const t = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'cmd-1' });
+  assert.equal(t.riskLevel, 'critical');
+  assert.equal(t.requiresHumanApproval, true);
+  const riskEvents = t.history.filter((e) => e.eventType === 'task.risk_classified');
+  assert.equal(riskEvents.length, 1);
+  // Matched rule should be tagged appliesTo: 'commands'
+  const matched = riskEvents[0].payload.matchedRules;
+  assert.equal(matched.length, 1);
+  assert.equal(matched[0].appliesTo, 'commands');
+  assert.equal(matched[0].pattern, 'rm -rf*');
+});
+
+// --- §13 follow-up: stuck_runtime_list MCP tool ---
+
+test('stuck_runtime_list returns the detector output filtered to actor.teamId', () => {
+  const fakeRegistry = {
+    listRuntimes({ teamId } = {}) {
+      const all = [
+        { runtimeId: 'r-stuck', teamId: 'team-a', agentId: 'a', taskId: 'task-1', status: 'running', startedAt: '2026-05-01T20:00:00.000Z' },
+        { runtimeId: 'r-fresh', teamId: 'team-a', agentId: 'b', taskId: 'task-2', status: 'running', startedAt: '2026-05-01T21:55:00.000Z' },
+        { runtimeId: 'r-other', teamId: 'team-other', agentId: 'c', status: 'running', startedAt: '2026-05-01T20:00:00.000Z' },
+      ];
+      return teamId ? all.filter((r) => r.teamId === teamId) : all;
+    },
+  };
+  const fakeEventLog = {
+    latestEventByRuntime() {
+      return new Map([
+        ['r-fresh', '2026-05-01T21:59:00.000Z'],
+      ]);
+    },
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    runtimeRegistry: fakeRegistry,
+    eventLog: fakeEventLog,
+  });
+  const result = facade.execute({
+    commandName: COMMANDS.STUCK_RUNTIME_LIST,
+    actor: { teamId: 'team-a', agentId: 'operator', role: 'human' },
+    args: { thresholdMs: 15 * 60_000 },
+  });
+  // r-stuck has no events, startedAt is far in the past — flagged
+  // r-fresh ticked 1min ago — within threshold
+  // r-other is in another team — filtered by registry
+  assert.equal(result.length, 1);
+  assert.equal(result[0].runtimeId, 'r-stuck');
+  assert.equal(result[0].taskId, 'task-1');
+});

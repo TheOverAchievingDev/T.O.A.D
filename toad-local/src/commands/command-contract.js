@@ -30,6 +30,7 @@ export const COMMANDS = Object.freeze({
   DIAGNOSTICS_RUN: 'diagnostics_run',
   TASK_HISTORY_EXPORT: 'task_history_export',
   TASK_HUMAN_APPROVE: 'task_human_approve',
+  STUCK_RUNTIME_LIST: 'stuck_runtime_list',
 });
 
 export const MUTATING_COMMANDS = Object.freeze([
