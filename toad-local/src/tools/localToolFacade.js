@@ -73,6 +73,10 @@ export class LocalToolFacade {
         return this.#teamList(actor);
       case COMMANDS.TEAM_DELETE:
         return this.#teamDelete(actor, args);
+      case COMMANDS.TEAM_LAUNCH:
+        return this.#teamLaunch(actor, args);
+      case COMMANDS.TEAM_STOP:
+        return this.#teamStop(actor, args);
       default:
         throw new Error(`unsupported command: ${commandName}`);
     }
@@ -424,6 +428,82 @@ export class LocalToolFacade {
     const teamId = requireString(args.teamId, 'args.teamId');
     const deleted = this.teamConfigRegistry.deleteTeam(teamId);
     return { teamId, deleted };
+  }
+
+  async #teamLaunch(actor, args) {
+    if (!this.teamConfigRegistry) {
+      throw new Error('teamConfigRegistry is not configured on this facade');
+    }
+    if (!this.launchAgent) {
+      throw new Error('launchAgent is not configured on this facade');
+    }
+    const teamId = requireString(args.teamId, 'args.teamId');
+    const config = this.teamConfigRegistry.getTeam(teamId);
+    if (!config) {
+      throw new Error(`team_launch: no config for teamId ${teamId}`);
+    }
+    const members = [config.lead, ...config.teammates];
+    const results = [];
+    for (const member of members) {
+      const runtimeId = `runtime-${teamId}-${member.agentId}`;
+      const existing = this.runtimeRegistry?.getRuntime?.(runtimeId);
+      if (existing && existing.status === 'running') {
+        results.push({ runtimeId, agentId: member.agentId, status: 'already_running' });
+        continue;
+      }
+      try {
+        const launchInput = {
+          teamId,
+          agentId: member.agentId,
+          runtimeId,
+          command: member.command,
+        };
+        if (Array.isArray(member.args) && member.args.length > 0) launchInput.args = member.args;
+        if (typeof member.cwd === 'string' && member.cwd.length > 0) launchInput.cwd = member.cwd;
+        if (member.env && typeof member.env === 'object' && Object.keys(member.env).length > 0) launchInput.env = member.env;
+        if (typeof member.providerId === 'string' && member.providerId.length > 0) launchInput.providerId = member.providerId;
+        const runtime = await this.launchAgent(launchInput);
+        results.push({ runtimeId, agentId: member.agentId, status: runtime?.status || 'starting' });
+      } catch (err) {
+        results.push({
+          runtimeId,
+          agentId: member.agentId,
+          status: 'failed',
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    return { teamId, members: results };
+  }
+
+  async #teamStop(actor, args) {
+    if (!this.runtimeRegistry || typeof this.runtimeRegistry.listRuntimes !== 'function') {
+      throw new Error('runtimeRegistry is not configured on this facade');
+    }
+    if (!this.stopAgent) {
+      throw new Error('stopAgent is not configured on this facade');
+    }
+    const teamId = requireString(args.teamId, 'args.teamId');
+    const signal = typeof args.signal === 'string' && args.signal.length > 0 ? args.signal : null;
+    const runtimes = this.runtimeRegistry.listRuntimes({ teamId })
+      .filter((r) => r && r.status === 'running');
+    const results = [];
+    for (const r of runtimes) {
+      try {
+        const stopInput = { runtimeId: r.runtimeId };
+        if (signal) stopInput.signal = signal;
+        const stopped = await this.stopAgent(stopInput);
+        results.push({ runtimeId: r.runtimeId, agentId: r.agentId, status: stopped?.status || 'stopped' });
+      } catch (err) {
+        results.push({
+          runtimeId: r.runtimeId,
+          agentId: r.agentId,
+          status: 'failed',
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    return { teamId, members: results };
   }
 }
 

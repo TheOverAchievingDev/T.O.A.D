@@ -251,6 +251,25 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
       teamId: { type: 'string', minLength: 1 },
     },
   }),
+  makeTool({
+    name: COMMANDS.TEAM_LAUNCH,
+    title: 'Launch Team',
+    description: 'Launch every member (lead + teammates) of a persisted team config. Runtime IDs are derived as runtime-<teamId>-<agentId>; members already running are skipped (idempotent re-launch).',
+    required: ['teamId'],
+    properties: {
+      teamId: { type: 'string', minLength: 1 },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.TEAM_STOP,
+    title: 'Stop Team',
+    description: 'Stop every running runtime that belongs to the given team. Idempotent when no matching runtimes are running.',
+    required: ['teamId'],
+    properties: {
+      teamId: { type: 'string', minLength: 1 },
+      signal: { type: 'string', enum: ['SIGTERM', 'SIGINT', 'SIGKILL'] },
+    },
+  }),
 ]);
 
 export function listLocalMcpTools() {

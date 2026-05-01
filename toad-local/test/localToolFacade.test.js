@@ -564,6 +564,190 @@ test('LocalToolFacade rejects team_* commands when no teamConfigRegistry is conf
   );
 });
 
+function createTeamLifecycleFacade({ teamRuntimes = [] } = {}) {
+  const launches = [];
+  const stops = [];
+  const registry = new (class {
+    teams = new Map();
+    registerTeam(config) { this.teams.set(config.teamId, config); }
+    getTeam(teamId) { return this.teams.get(teamId) || null; }
+    listTeams() { return [...this.teams.values()]; }
+    deleteTeam(teamId) { return this.teams.delete(teamId); }
+  })();
+  const runtimeRegistry = {
+    runtimes: new Map(teamRuntimes.map((r) => [r.runtimeId, r])),
+    listRuntimes({ teamId } = {}) {
+      const all = [...this.runtimes.values()];
+      return teamId ? all.filter((r) => r.teamId === teamId) : all;
+    },
+    getRuntime(runtimeId) { return this.runtimes.get(runtimeId) || null; },
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    teamConfigRegistry: registry,
+    runtimeRegistry,
+    launchAgent(input) {
+      launches.push(input);
+      runtimeRegistry.runtimes.set(input.runtimeId, {
+        runtimeId: input.runtimeId,
+        teamId: input.teamId,
+        agentId: input.agentId,
+        status: 'starting',
+      });
+      return Promise.resolve({ runtimeId: input.runtimeId, status: 'starting' });
+    },
+    stopAgent(input) {
+      stops.push(input);
+      const r = runtimeRegistry.runtimes.get(input.runtimeId);
+      if (r) r.status = 'stopped';
+      return Promise.resolve({ runtimeId: input.runtimeId, status: 'stopped' });
+    },
+  });
+  return { facade, registry, runtimeRegistry, launches, stops };
+}
+
+test('LocalToolFacade team_launch launches every member with derived runtime IDs', async () => {
+  const { facade, registry, launches } = createTeamLifecycleFacade();
+  registry.registerTeam(new (await import('../src/team/teamConfig.js')).TeamConfig({
+    teamId: 'team-alpha',
+    lead: { agentId: 'lead', command: 'claude', args: ['--print'] },
+    teammates: [
+      { agentId: 'worker-1', command: 'claude' },
+      { agentId: 'worker-2', command: 'claude' },
+    ],
+  }));
+
+  const result = await facade.execute({
+    commandName: COMMANDS.TEAM_LAUNCH,
+    idempotencyKey: 'team-launch-1',
+    actor: { teamId: 'team-alpha', agentId: 'operator' },
+    args: { teamId: 'team-alpha' },
+  });
+
+  assert.equal(launches.length, 3);
+  assert.equal(launches[0].runtimeId, 'runtime-team-alpha-lead');
+  assert.equal(launches[1].runtimeId, 'runtime-team-alpha-worker-1');
+  assert.equal(launches[2].runtimeId, 'runtime-team-alpha-worker-2');
+  assert.equal(result.teamId, 'team-alpha');
+  assert.equal(result.members.length, 3);
+  assert.deepEqual(result.members.map((m) => m.status), ['starting', 'starting', 'starting']);
+});
+
+test('LocalToolFacade team_launch throws when the team config is missing', async () => {
+  const { facade } = createTeamLifecycleFacade();
+  await assert.rejects(
+    () => facade.execute({
+      commandName: COMMANDS.TEAM_LAUNCH,
+      idempotencyKey: 'team-launch-missing',
+      actor: { teamId: 'team-alpha', agentId: 'operator' },
+      args: { teamId: 'team-alpha' },
+    }),
+    /no config for teamId/,
+  );
+});
+
+test('LocalToolFacade team_launch skips members that are already running', async () => {
+  const { facade, registry, launches } = createTeamLifecycleFacade({
+    teamRuntimes: [
+      { runtimeId: 'runtime-team-alpha-lead', teamId: 'team-alpha', agentId: 'lead', status: 'running' },
+    ],
+  });
+  registry.registerTeam(new (await import('../src/team/teamConfig.js')).TeamConfig({
+    teamId: 'team-alpha',
+    lead: { agentId: 'lead' },
+    teammates: [{ agentId: 'worker-1' }],
+  }));
+
+  const result = await facade.execute({
+    commandName: COMMANDS.TEAM_LAUNCH,
+    idempotencyKey: 'team-launch-resume',
+    actor: { teamId: 'team-alpha', agentId: 'operator' },
+    args: { teamId: 'team-alpha' },
+  });
+
+  assert.equal(launches.length, 1, 'only the missing member should be launched');
+  assert.equal(launches[0].agentId, 'worker-1');
+  assert.equal(result.members[0].status, 'already_running');
+  assert.equal(result.members[1].status, 'starting');
+});
+
+test('LocalToolFacade team_launch records per-member failures without aborting the rest', async () => {
+  const launches = [];
+  const registry = new (class {
+    teams = new Map();
+    registerTeam(c) { this.teams.set(c.teamId, c); }
+    getTeam(id) { return this.teams.get(id) || null; }
+  })();
+  const runtimeRegistry = { listRuntimes: () => [], getRuntime: () => null };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    teamConfigRegistry: registry,
+    runtimeRegistry,
+    launchAgent(input) {
+      launches.push(input);
+      if (input.agentId === 'worker-1') return Promise.reject(new Error('boom'));
+      return Promise.resolve({ runtimeId: input.runtimeId, status: 'starting' });
+    },
+  });
+  registry.registerTeam(new (await import('../src/team/teamConfig.js')).TeamConfig({
+    teamId: 'team-alpha',
+    lead: { agentId: 'lead' },
+    teammates: [{ agentId: 'worker-1' }, { agentId: 'worker-2' }],
+  }));
+
+  const result = await facade.execute({
+    commandName: COMMANDS.TEAM_LAUNCH,
+    idempotencyKey: 'team-launch-partial',
+    actor: { teamId: 'team-alpha', agentId: 'operator' },
+    args: { teamId: 'team-alpha' },
+  });
+
+  assert.equal(launches.length, 3);
+  assert.equal(result.members[0].status, 'starting');
+  assert.equal(result.members[1].status, 'failed');
+  assert.match(result.members[1].error, /boom/);
+  assert.equal(result.members[2].status, 'starting');
+});
+
+test('LocalToolFacade team_stop stops every running runtime in the team', async () => {
+  const { facade, stops } = createTeamLifecycleFacade({
+    teamRuntimes: [
+      { runtimeId: 'runtime-team-alpha-lead', teamId: 'team-alpha', agentId: 'lead', status: 'running' },
+      { runtimeId: 'runtime-team-alpha-worker-1', teamId: 'team-alpha', agentId: 'worker-1', status: 'running' },
+      { runtimeId: 'runtime-other-lead', teamId: 'team-other', agentId: 'lead', status: 'running' },
+    ],
+  });
+
+  const result = await facade.execute({
+    commandName: COMMANDS.TEAM_STOP,
+    idempotencyKey: 'team-stop-1',
+    actor: { teamId: 'team-alpha', agentId: 'operator' },
+    args: { teamId: 'team-alpha', signal: 'SIGTERM' },
+  });
+
+  assert.equal(stops.length, 2);
+  assert.deepEqual(stops.map((s) => s.runtimeId).sort(), ['runtime-team-alpha-lead', 'runtime-team-alpha-worker-1']);
+  assert.equal(stops[0].signal, 'SIGTERM');
+  assert.equal(result.teamId, 'team-alpha');
+  assert.equal(result.members.length, 2);
+});
+
+test('LocalToolFacade team_stop is a no-op idempotent return when no runtimes match', async () => {
+  const { facade, stops } = createTeamLifecycleFacade();
+
+  const result = await facade.execute({
+    commandName: COMMANDS.TEAM_STOP,
+    idempotencyKey: 'team-stop-empty',
+    actor: { teamId: 'team-alpha', agentId: 'operator' },
+    args: { teamId: 'team-alpha' },
+  });
+
+  assert.equal(stops.length, 0);
+  assert.deepEqual(result, { teamId: 'team-alpha', members: [] });
+});
+
 test('LocalToolFacade routes agent_stop to the stopAgent callback', async () => {
   const calls = [];
   const facade = new LocalToolFacade({

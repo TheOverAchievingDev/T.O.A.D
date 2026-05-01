@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-04-30 local session (persistent team config + CRUD tools)
+Last updated: 2026-04-30 local session (team_launch / team_stop orchestration)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,37 @@ Important files:
 
 ## Latest Completed Slices
 
-### 1. Persistent Team Config + CRUD Tools (latest)
+### 1. `team_launch` / `team_stop` Orchestration (latest)
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-team-launch-stop.md`
+
+Second half of the team-lifecycle decomposition. Composes the existing `agent_launch` / `agent_stop` callbacks with the team config registry and the runtime registry. After this slice an operator can run a single `/api/call team_launch { teamId }` and get the lead and every teammate spawned in one shot.
+
+Modified files:
+
+- `src/commands/command-contract.js` — adds `TEAM_LAUNCH` and `TEAM_STOP` to `COMMANDS` and `MUTATING_COMMANDS`.
+- `src/mcp/localToolDefinitions.js` — two new tool defs (`team_launch` requires `teamId`; `team_stop` requires `teamId`, optional `signal`).
+- `src/tools/localToolFacade.js` — new `#teamLaunch` and `#teamStop` async handlers. The facade already had all needed injections (`teamConfigRegistry`, `launchAgent`, `stopAgent`, `runtimeRegistry`) from prior slices.
+- `test/localToolFacade.test.js` — 6 new tests (now 26 total): launches every member with derived `runtime-<teamId>-<agentId>` IDs; throws on missing config; skips already-running members (idempotent re-launch); records per-member failures without aborting; team_stop stops only matching team's runtimes; team_stop is idempotent on no matches.
+- `test/localMcpToolDefinitions.test.js` — `team_launch` / `team_stop` added to expected names and mutating-tools assertions.
+
+Behavior decisions worth knowing:
+
+- **Runtime ID derivation is `runtime-<teamId>-<agentId>`** — deterministic on purpose. Lets the "skip if already running" check work, lets `team_stop` find what `team_launch` started without separate bookkeeping, and gives operators a predictable runtime ID for the per-runtime tools.
+- **No roll-back on partial failure.** Per-member failures are caught and recorded as `{ status: 'failed', error }`; the loop continues. The whole call returns a per-member result array. Matches the legacy app's "best effort, surface what happened" semantics.
+- **Skip-if-running** uses `runtimeRegistry.getRuntime(runtimeId)?.status === 'running'`. Re-issuing `team_launch` after a partial-launch failure only launches the missing members.
+
+Verification during slice:
+
+```powershell
+node test/localToolFacade.test.js
+node test/localMcpToolDefinitions.test.js
+npm.cmd test
+```
+
+### 2. Persistent Team Config + CRUD Tools
 
 Plan file:
 
@@ -1219,10 +1249,10 @@ Remaining gaps worth tracking:
 Recommended next slice (pick one):
 
 1. **Subscription quota / plan-usage indicator** — parked. The user wants a "circle indicator" on startup showing Claude (and eventually Codex) plan usage. Investigation found that `--print "/usage"` is a $0 client-side slash command but only returns an auth-status string — the rich quota panel is rendered by the interactive TUI from an undocumented Anthropic API call. `~/.claude/stats-cache.json` has historical activity but not subscription windows. The user is independently investigating reliable data sources before this slice resumes.
-2. **Team orchestration (`team_launch` / `team_stop`)** — the CRUD half of team lifecycle is now in place (`team_create`/`team_list`/`team_delete` against a persistent SqliteTeamConfigRegistry). The remaining half is launching/stopping all members of a team as a unit. Implementation will loop over `agent_launch` for the lead + teammates, with deterministic `runtime-<teamId>-<agentId>` IDs derived at launch time. Failure modes worth designing carefully: partial launches (lead succeeds, teammate fails) and idempotency on retry.
-3. **Code review with diffs** — legacy `review.ts` stores per-task diff content and supports file-level accept/reject. TOAD's `review_request` / `review_decide` work on task IDs only. Needs a diff-content store + new tool surface.
-4. **Notifications** — legacy `notifications.ts` defines typed alert categories (task completion, agent attention, errors). TOAD has the raw event bus; needs a notification projection on top.
-5. **`team_process_send`** — legacy lets you send a message to a specific runtime's stdin. TOAD's adapters expose this internally; small slice to wrap it.
+2. **Code review with diffs** — legacy `review.ts` stores per-task diff content and supports file-level accept/reject. TOAD's `review_request` / `review_decide` work on task IDs only. Needs a diff-content store + new tool surface.
+3. **Notifications** — legacy `notifications.ts` defines typed alert categories (task completion, agent attention, errors). TOAD has the raw event bus; needs a notification projection on top.
+4. **`team_process_send`** — legacy lets you send a message to a specific runtime's stdin. TOAD's adapters expose this internally; small slice to wrap it.
+5. **Git provisioning hooks** — legacy `TEAM_PREPARE_PROVISIONING` / `TEAM_INITIALIZE_GIT_REPOSITORY` / worktree status APIs. Needed before code-review-with-diffs can store actual diffs.
 6. **Optional `--bare` smoke variant** — add a parallel smoke path that uses `--bare` when `ANTHROPIC_API_KEY` is set in the environment, for users on direct API auth.
 7. **Codex provider integration** — TOAD only spawns Claude runtimes. The legacy app had a full `codex-account` feature (rate-limit windows, ChatGPT auth, model selection). Much larger scoped slice.
 
@@ -1384,6 +1414,7 @@ rg -n "permission|control_request|approval|runtime adapter|watcher|relay" C:\Pro
 - `C:\Project-TOAD\toad-local\src\team\teamConfig.js`
 - `C:\Project-TOAD\toad-local\src\team\sqliteTeamConfigRegistry.js`
 - `C:\Project-TOAD\toad-local\test\sqliteTeamConfigRegistry.test.js`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-team-launch-stop.md`
 
 ## Suggested Opening Move For Next Agent
 
