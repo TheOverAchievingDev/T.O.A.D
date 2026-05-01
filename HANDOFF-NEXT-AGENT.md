@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-05-01 local session (no-op diff detector — checklist §13 partial)
+Last updated: 2026-05-01 local session (repeated-test-failure detector — checklist §13 partial)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,31 @@ Important files:
 
 ## Latest Completed Slices
 
-### 0. No-Op Diff Detector — Checklist §13 partial (latest)
+### 0. Repeated Test-Failure Detector — Checklist §13 partial (latest)
+
+Third §13 detector, this one purely derived from existing data. After all events have been folded into the projection, count the trailing streak of test verdicts that came back `failed`. A passing run resets the count.
+
+Modified files:
+
+- `src/task/inMemoryTaskBoard.js`:
+  - Initial task shape gains `consecutiveTestFailures: 0` and `repeatedTestFailures: false`.
+  - After the event loop in `projectTask`, walk `task.validations` backward, counting trailing `failed` runs of `kind === 'test'`. Non-test runs (lint/typecheck/etc.) are skipped — they have their own verdicts. The threshold for `repeatedTestFailures = true` is 3.
+- `test/taskBoard.test.js` — 4 new tests (now 15 total): three consecutive failures sets the flag, latest pass resets, trailing streak only counts after the most recent pass, non-test runs ignored.
+- `docs/CHECKLIST_GAP_MATRIX.md` — §13 evidence rolled up; three detectors now live.
+
+Cumulative §13 detectors:
+
+| Detector | Field | Triggers when |
+|---|---|---|
+| Scope drift | `task.review.scopeDrift[]` | Changed file not in `task.plan.filesExpectedToChange` |
+| No-op diff | `task.review.noOpDiff` | Orchestrator-computed diff has zero files |
+| Repeated test failure | `task.repeatedTestFailures` | `task.consecutiveTestFailures >= 3` (trailing streak) |
+
+All three are reviewer-informational. They surface signal; they don't block transitions. A future §14 risk-policy slice will let operators configure "if X detector trips, emit `task_blocked` and refuse `merge_ready`."
+
+Tests pass: 36 backend test files, 394 individual tests, 0 fail.
+
+### 1. No-Op Diff Detector — Checklist §13 partial
 
 When the orchestrator successfully runs `git diff baseRef..HEAD` and finds zero changed files, the review now carries `task.review.noOpDiff = true`. This is the second §13 detector — same pattern as scope-drift: reviewer-informational, not transition-blocking. The agent might legitimately be done with a verify-only task (no code changes), but the reviewer should at least see the signal.
 
@@ -1760,7 +1784,8 @@ Anchored to the checklist's own priority order (full detail in `docs/CHECKLIST_G
 11. ✅ Merge conflict gate (§19 slice 1) — done. `checkForConflicts` runs `git merge --no-commit --no-ff` + `--abort` to verify the task branch is mergeable. Conflict or error blocks `merge_ready → done`.
 12. ✅ Scope-drift detection (§13 partial) — done. `task.review.scopeDrift[]` lists out-of-plan files after diff is captured.
 13. ✅ No-op diff detector (§13 partial) — done. `task.review.noOpDiff` flags empty-diff review requests.
-14. **Worktree slice 4 — NEXT.** Explicit `task.baseRef` at task creation (currently HEAD-at-planning).
+14. ✅ Repeated test-failure detector (§13 partial) — done. `task.consecutiveTestFailures` + `task.repeatedTestFailures` derived from `task.validations`.
+15. **Worktree slice 4 — NEXT.** Explicit `task.baseRef` at task creation (currently HEAD-at-planning).
 14. **Merge slice 2 (§19).** Actually perform the integration commit on `baseBranch` (today's gate only verifies feasibility).
 10. Smaller follow-ups: failure detection (§13), WIP limits (§9), dependency enforcement (§10), notifications, knowledge propagation.
 

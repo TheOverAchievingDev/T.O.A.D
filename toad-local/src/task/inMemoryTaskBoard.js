@@ -108,6 +108,8 @@ export function projectTask(events) {
     worktree: null,
     validations: [],
     latestValidation: {},
+    consecutiveTestFailures: 0,
+    repeatedTestFailures: false,
     comments: [],
     history: [],
     createdAt: ordered[0].createdAt,
@@ -270,6 +272,23 @@ export function projectTask(events) {
       };
     }
   }
+
+  // §13 partial: repeated-test-failure detector. Counts the trailing streak
+  // of test runs whose verdict is 'failed'. A passing run resets the count
+  // to 0. Non-test validation runs (lint/typecheck/etc.) are skipped — only
+  // test verdicts matter for this signal. `repeatedTestFailures` flips true
+  // at three or more consecutive failures.
+  const testRuns = task.validations.filter((v) => v && v.kind === 'test');
+  let streak = 0;
+  for (let i = testRuns.length - 1; i >= 0; i--) {
+    if (testRuns[i].verdict === 'failed') {
+      streak++;
+    } else {
+      break;
+    }
+  }
+  task.consecutiveTestFailures = streak;
+  task.repeatedTestFailures = streak >= 3;
 
   return task;
 }

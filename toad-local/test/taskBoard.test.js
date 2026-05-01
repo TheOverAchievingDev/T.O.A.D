@@ -332,6 +332,100 @@ test('projectTask captures WORKTREE_CREATED into task.worktree (status: created)
   assert.equal(task.worktree.baseRef, 'abc123');
 });
 
+test('projectTask counts consecutive failed test runs from VALIDATION_RUN events', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'tf-1',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead',
+    payload: { subject: 'flaky' },
+  });
+  // Three consecutive test failures
+  for (let i = 0; i < 3; i++) {
+    board.appendEvent({
+      teamId: 'team-a',
+      taskId: 'tf-1',
+      eventType: TASK_EVENT_TYPES.VALIDATION_RUN,
+      actorId: 'tester',
+      payload: { kind: 'test', command: 'npm test', exitCode: 1, durationMs: 1, verdict: 'failed' },
+    });
+  }
+  const task = board.getTask({ teamId: 'team-a', taskId: 'tf-1' });
+  assert.equal(task.consecutiveTestFailures, 3);
+  assert.equal(task.repeatedTestFailures, true);
+});
+
+test('projectTask resets consecutiveTestFailures when latest test passes', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'tf-2',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead',
+    payload: { subject: 'reset' },
+  });
+  // failed, failed, passed → count is 0
+  for (const verdict of ['failed', 'failed', 'passed']) {
+    board.appendEvent({
+      teamId: 'team-a',
+      taskId: 'tf-2',
+      eventType: TASK_EVENT_TYPES.VALIDATION_RUN,
+      actorId: 'tester',
+      payload: { kind: 'test', command: 'npm test', exitCode: verdict === 'passed' ? 0 : 1, durationMs: 1, verdict },
+    });
+  }
+  const task = board.getTask({ teamId: 'team-a', taskId: 'tf-2' });
+  assert.equal(task.consecutiveTestFailures, 0);
+  assert.equal(task.repeatedTestFailures, false);
+});
+
+test('projectTask only counts the trailing run streak (failed→failed→passed→failed → 1)', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'tf-3',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead',
+    payload: { subject: 'streak' },
+  });
+  for (const verdict of ['failed', 'failed', 'passed', 'failed']) {
+    board.appendEvent({
+      teamId: 'team-a',
+      taskId: 'tf-3',
+      eventType: TASK_EVENT_TYPES.VALIDATION_RUN,
+      actorId: 'tester',
+      payload: { kind: 'test', command: 'npm test', exitCode: verdict === 'passed' ? 0 : 1, durationMs: 1, verdict },
+    });
+  }
+  const task = board.getTask({ teamId: 'team-a', taskId: 'tf-3' });
+  assert.equal(task.consecutiveTestFailures, 1);
+  assert.equal(task.repeatedTestFailures, false);
+});
+
+test('projectTask ignores non-test validation runs when counting failures', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'tf-4',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead',
+    payload: { subject: 'mixed' },
+  });
+  // lint failed, then test failed twice — should count only the test failures
+  for (const [kind, verdict] of [['lint', 'failed'], ['test', 'failed'], ['test', 'failed']]) {
+    board.appendEvent({
+      teamId: 'team-a',
+      taskId: 'tf-4',
+      eventType: TASK_EVENT_TYPES.VALIDATION_RUN,
+      actorId: 'tester',
+      payload: { kind, command: `npm ${kind}`, exitCode: 1, durationMs: 1, verdict },
+    });
+  }
+  const task = board.getTask({ teamId: 'team-a', taskId: 'tf-4' });
+  assert.equal(task.consecutiveTestFailures, 2);
+});
+
 test('projectTask captures WORKTREE_REMOVED and updates task.worktree.status to "removed"', () => {
   const board = new InMemoryTaskBoard();
   board.appendEvent({
