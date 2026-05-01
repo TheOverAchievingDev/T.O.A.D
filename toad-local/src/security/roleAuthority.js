@@ -27,6 +27,7 @@ const COMMON_READ_TOOLS = Object.freeze([
   'runtime_events',
   'tool_activity',
   'health_status',
+  'diagnostics_run',
 ]);
 
 export const ROLE_TOOLS = Object.freeze({

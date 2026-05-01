@@ -27,6 +27,7 @@ export const COMMANDS = Object.freeze({
   TASK_PLAN_PROPOSE: 'task_plan_propose',
   TASK_PLAN_APPROVE: 'task_plan_approve',
   TASK_PLAN_REJECT: 'task_plan_reject',
+  DIAGNOSTICS_RUN: 'diagnostics_run',
 });
 
 export const MUTATING_COMMANDS = Object.freeze([

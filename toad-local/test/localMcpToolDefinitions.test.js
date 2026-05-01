@@ -18,6 +18,7 @@ test('listLocalMcpTools exposes MCP-shaped local command tools', () => {
     'approval_respond',
     'cross_team_messages',
     'cross_team_send',
+    'diagnostics_run',
     'health_status',
     'message_send',
     'review_decide',

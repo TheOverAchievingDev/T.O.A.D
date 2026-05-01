@@ -1584,3 +1584,58 @@ test('LocalToolFacade requires idempotencyKey for agent_launch', () => {
     /idempotencyKey/,
   );
 });
+
+test('LocalToolFacade dispatches diagnostics_run and returns a structured report', async () => {
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  const spawnFn = (command) => {
+    if (command.includes('--version')) return { exitCode: 0, stdout: '1.2.3', stderr: '', durationMs: 1 };
+    if (command.includes('auth status')) return { exitCode: 0, stdout: '{"loggedIn":true}', stderr: '', durationMs: 1 };
+    return { exitCode: 127, stdout: '', stderr: 'unknown', durationMs: 0 };
+  };
+  const registry = new (class {
+    teams = new Map();
+    registerTeam(c) { this.teams.set(c.teamId, c); }
+    getTeam(id) { return this.teams.get(id) || null; }
+    listTeams() { return Array.from(this.teams.values()); }
+  })();
+  registry.registerTeam(new TeamConfig({ teamId: 'team-a', validation: { testCommand: 'npm test' } }));
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    teamConfigRegistry: registry,
+    spawnValidation: spawnFn,
+    dbPath: 'C:/Project-TOAD/.toad/toad.db',
+  });
+  const report = facade.execute({
+    commandName: COMMANDS.DIAGNOSTICS_RUN,
+    actor: { teamId: 'team-a', agentId: 'operator', role: 'human' },
+    args: {},
+  });
+  assert.ok(Array.isArray(report.checks));
+  assert.ok(report.summary);
+  // Should include all the enforcement checks
+  const ids = report.checks.map((c) => c.id);
+  assert.ok(ids.includes('state_machine_invalid_transitions_rejected'));
+  assert.ok(ids.includes('role_authority_denies_developer_agent_launch'));
+  assert.ok(ids.includes('validation_commands_configured'));
+  assert.ok(ids.includes('provider_claude_detected'));
+  assert.ok(ids.includes('provider_claude_authenticated'));
+  assert.ok(ids.includes('dbpath_persistent'));
+});
+
+test('LocalToolFacade.diagnostics_run is callable by every role (read-only)', async () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    spawnValidation: () => ({ exitCode: 0, stdout: '1.0', stderr: '', durationMs: 1 }),
+    dbPath: '/tmp/x.db',
+  });
+  for (const role of ['developer', 'reviewer', 'tester', 'architect', 'lead', 'human']) {
+    const report = facade.execute({
+      commandName: COMMANDS.DIAGNOSTICS_RUN,
+      actor: { teamId: 'team-a', agentId: `${role}-1`, role },
+      args: {},
+    });
+    assert.ok(Array.isArray(report.checks), `role ${role} did not get checks`);
+  }
+});

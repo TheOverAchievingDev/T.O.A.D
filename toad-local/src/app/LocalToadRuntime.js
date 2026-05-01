@@ -88,6 +88,7 @@ export class LocalToadRuntime {
         stopAgent: ({ runtimeId, signal } = {}) =>
           this.stopAgent(runtimeId, signal ? { signal } : undefined),
         teamConfigRegistry: this.teamConfigRegistry,
+        dbPath,
       });
     const db = this.runtimeRegistry?.db || this.eventLog?.db || null;
     this.sideEffectLog = db ? new SideEffectLog(db) : null;

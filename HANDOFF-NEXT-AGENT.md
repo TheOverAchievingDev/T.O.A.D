@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-04-30 local session (plan-before-code — checklist §2)
+Last updated: 2026-04-30 local session (diagnostics — checklist §25)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,52 @@ Important files:
 
 ## Latest Completed Slices
 
-### 1. Plan-Before-Code — Checklist §2 (latest)
+### 0. Diagnostics — Checklist §25 (latest)
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-diagnostics.md`
+
+Provides a single read-only command that re-runs the enforcement checks the orchestrator already depends on, so an operator can answer "is the system genuinely safe vs. agent-claimed safe?" before launching a team.
+
+New files:
+
+- `src/diagnostics/runDiagnostics.js` — pure function. Returns `{ checks: [{ id, label, status: 'pass'|'warning'|'fail', evidence, suggestedFix? }], summary: { pass, warning, fail } }`. Tests inject `spawnValidation` + `teamConfigRegistry`; the runtime injects real ones via the facade.
+- `test/runDiagnostics.test.js` — 17 unit tests covering shape, every check, and summary tally.
+
+Modified files:
+
+- `src/commands/command-contract.js` — new `COMMANDS.DIAGNOSTICS_RUN` (read-only, not in `MUTATING_COMMANDS` so no idempotency key required).
+- `src/security/roleAuthority.js` — `'diagnostics_run'` added to `COMMON_READ_TOOLS` so every role can call it.
+- `src/mcp/localToolDefinitions.js` — new `diagnostics_run` tool def with empty schema.
+- `src/tools/localToolFacade.js` — accepts `dbPath` constructor option; new `#diagnosticsRun()` handler invokes `runDiagnostics({ teamConfigRegistry, spawnValidation, dbPath })`.
+- `src/app/LocalToadRuntime.js` — passes `dbPath` through to the facade so the persistence check has something concrete to look at.
+- `test/localToolFacade.test.js` — 2 new tests (now 51 total): dispatch returns the structured report; every role can call.
+- `test/localMcpToolDefinitions.test.js` — `diagnostics_run` added to expected tool name list.
+- `docs/CHECKLIST_GAP_MATRIX.md` — §25 flipped from MISSING to REAL (partial).
+
+Check suite (eight, all initial scope):
+
+| id | what | pass criterion |
+|---|---|---|
+| `state_machine_invalid_transitions_rejected` | `validateTaskStatusTransition({ from: 'done', to: 'in_progress' })` | `ok === false` |
+| `state_machine_legal_transitions_allowed` | `validateTaskStatusTransition({ from: 'ready', to: 'planned' })` | `ok === true` |
+| `role_authority_denies_developer_agent_launch` | `assertRoleCanCallTool({ role: 'developer', toolName: 'agent_launch' })` | throws |
+| `role_authority_unknown_role_denied` | `assertRoleCanCallTool({ role: 'phantom', toolName: 'task_list' })` | throws |
+| `validation_commands_configured` | scan `teamConfigRegistry.listTeams()` | every team has non-null `validation` (warning if registry empty) |
+| `provider_claude_detected` | `spawnValidation('claude --version')` | `exitCode === 0` |
+| `provider_claude_authenticated` | `spawnValidation('claude auth status --json')` | parses JSON with `loggedIn:true` |
+| `dbpath_persistent` | inspect `dbPath` | warning on `null`/`':memory:'`, pass on real path |
+
+Out of scope (depend on slices not yet built):
+
+- §13 stuck/zombie detector (needs runtime registry heartbeat semantics)
+- §15 session→task pinning probe (needs session-tracking slice)
+- §7/§8 git/worktree presence (needs git integration)
+
+Tests pass: 31 backend test files, 0 fail.
+
+### 1. Plan-Before-Code — Checklist §2
 
 Plan file:
 
@@ -1485,8 +1530,8 @@ Anchored to the checklist's own priority order (full detail in `docs/CHECKLIST_G
 1. ✅ Role authority (§5 + §26) — done with permissive default for backward compat.
 2. ✅ Test artifacts + CI gates (§6 + §18) — done. Validation config on TeamConfig; `validation_run` MCP tool; `task.validations[]` projection; `testing → merge_ready` gated on passing test verdict.
 3. ✅ Plan-before-code (§2) — done. Three plan tools, projection, gate, self-approval prevention.
-4. **Diagnostics (§25) — NEXT.** `diagnostics_run` MCP tool returning `{ check, status: PASS/WARNING/FAIL, evidence, suggestedFix }[]`. Now that the four critical enforcement layers (§3 state machine, §5/§26 role authority, §6/§18 CI gates, §2 plan-before-code) all have real bite, the diagnostic surface is the natural way to surface "is the system genuinely safe vs. agent-claimed safe?".
-5. **Worktree enforcement (§8) → diff tracking (§7 finished) → merge workflow (§19).** Bigger lift because of git integration.
+4. ✅ Diagnostics (§25) — done. `diagnostics_run` read-only MCP tool runs eight self-checks (state-machine deny + allow paths, role-authority developer-deny + unknown-role-deny, validation-commands-configured per team, claude CLI detected, claude CLI authenticated, dbpath persistence) and returns `{ checks: [{ id, label, status, evidence, suggestedFix? }], summary: { pass, warning, fail } }`. Available to every role.
+5. **Worktree enforcement (§8) → diff tracking (§7 finished) → merge workflow (§19) — NEXT.** Bigger lift because of git integration. Diagnostics already has placeholder slots for `worktree_present_per_task` once §8 lands.
 6. **Per-transition role guards.** Now that roles exist, extend `validateTaskStatusTransition` to check role against the move (e.g. only `lead` can do `merge_ready → done`). Cleanly stacks on the state machine + role auth slices.
 7. **`tool_call_denied` event emission.** §26 says every denied tool call should be logged. Currently the throw bubbles to `/api/call` but doesn't land in `runtime_events`. Small follow-up.
 8. Smaller follow-ups: failure detection (§13), WIP limits (§9), dependency enforcement (§10), notifications, knowledge propagation.

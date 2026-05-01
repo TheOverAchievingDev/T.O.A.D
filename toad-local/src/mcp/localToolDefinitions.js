@@ -352,6 +352,13 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
       reason: { type: 'string' },
     },
   }),
+  makeTool({
+    name: COMMANDS.DIAGNOSTICS_RUN,
+    title: 'Run System Diagnostics',
+    description: 'Read-only self-check. Re-runs the enforcement gates (state machine, role authority, plan/CI gates), inspects team validation wiring, probes the Claude CLI, and reports DB persistence. Returns a structured report of pass/warning/fail checks. Available to every role.',
+    required: [],
+    properties: {},
+  }),
 ]);
 
 export function listLocalMcpTools() {

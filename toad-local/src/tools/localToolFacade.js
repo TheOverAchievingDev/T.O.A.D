@@ -10,9 +10,10 @@ import { formatCrossTeamText, CROSS_TEAM_SOURCE, CROSS_TEAM_SENT_SOURCE } from '
 import { TeamConfig } from '../team/teamConfig.js';
 import { validateTaskStatusTransition } from '../task/taskLifecycle.js';
 import { assertRoleCanCallTool } from '../security/roleAuthority.js';
+import { runDiagnostics } from '../diagnostics/runDiagnostics.js';
 
 export class LocalToolFacade {
-  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, spawnValidation = null }) {
+  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, spawnValidation = null, dbPath = null }) {
     if (!broker) throw new TypeError('broker is required');
     if (!taskBoard) throw new TypeError('taskBoard is required');
     this.broker = broker;
@@ -26,6 +27,7 @@ export class LocalToolFacade {
     this.stopAgent = typeof stopAgent === 'function' ? stopAgent : null;
     this.teamConfigRegistry = teamConfigRegistry;
     this.spawnValidation = typeof spawnValidation === 'function' ? spawnValidation : defaultSpawnValidation;
+    this.dbPath = typeof dbPath === 'string' && dbPath.length > 0 ? dbPath : null;
   }
 
   execute(command) {
@@ -94,6 +96,8 @@ export class LocalToolFacade {
         return this.#taskPlanDecide(actor, command.idempotencyKey, args, 'approved');
       case COMMANDS.TASK_PLAN_REJECT:
         return this.#taskPlanDecide(actor, command.idempotencyKey, args, 'rejected');
+      case COMMANDS.DIAGNOSTICS_RUN:
+        return this.#diagnosticsRun();
       default:
         throw new Error(`unsupported command: ${commandName}`);
     }
@@ -690,6 +694,14 @@ export class LocalToolFacade {
       }
     }
     return { teamId, members: results };
+  }
+
+  #diagnosticsRun() {
+    return runDiagnostics({
+      teamConfigRegistry: this.teamConfigRegistry,
+      spawnValidation: this.spawnValidation,
+      dbPath: this.dbPath,
+    });
   }
 }
 
