@@ -196,6 +196,16 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
       providerId: { type: 'string', minLength: 1 },
     },
   }),
+  makeTool({
+    name: COMMANDS.AGENT_STOP,
+    title: 'Stop Agent Runtime',
+    description: 'Stop a running agent runtime by ID. The supervisor sends the requested signal (default SIGTERM) and unregisters the adapter.',
+    required: ['runtimeId'],
+    properties: {
+      runtimeId: { type: 'string', minLength: 1 },
+      signal: { type: 'string', enum: ['SIGTERM', 'SIGINT', 'SIGKILL'] },
+    },
+  }),
 ]);
 
 export function listLocalMcpTools() {

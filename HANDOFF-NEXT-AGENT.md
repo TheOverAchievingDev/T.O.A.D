@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-04-30 local session (agent_launch MCP tool + dashboard launcher)
+Last updated: 2026-04-30 local session (agent_stop MCP tool)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,26 @@ Important files:
 
 ## Latest Completed Slices
 
-### 1. `agent_launch` MCP Tool + Dashboard Launcher (latest)
+### 1. `agent_stop` MCP Tool (latest)
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-agent-stop-tool.md`
+
+Mirrors the `agent_launch` slice exactly — backend-only, no UI surface this round (per the user's current backend-first focus; UI is being prototyped in parallel by another tool). Closes the runtime lifecycle pair so an operator can stop runtimes via `/api/call`, not just spawn them.
+
+Modified files:
+
+- `src/commands/command-contract.js` — adds `AGENT_STOP` to `COMMANDS` and `MUTATING_COMMANDS`.
+- `src/mcp/localToolDefinitions.js` — new `agent_stop` tool definition with required `runtimeId`, optional `signal` enum (`SIGTERM` / `SIGINT` / `SIGKILL`).
+- `src/tools/localToolFacade.js` — accepts a new `stopAgent` callback; routes `COMMANDS.AGENT_STOP` to a new `#agentStop` handler that unpacks `{ runtimeId, signal }` and forwards.
+- `src/app/LocalToadRuntime.js` — passes `({ runtimeId, signal }) => this.stopAgent(runtimeId, signal ? { signal } : undefined)` to the facade so the runtime's `adapters.delete(runtimeId)` step still runs.
+- `test/localToolFacade.test.js` — 3 new tests (forwarding with signal, missing-callback rejection, sync idempotencyKey requirement). 18 total.
+- `test/localMcpToolDefinitions.test.js` — `agent_stop` added to expected names list and mutating-tools assertion.
+
+All 27 backend test files green.
+
+### 2. `agent_launch` MCP Tool + Dashboard Launcher
 
 Plan file:
 
@@ -1167,9 +1186,12 @@ Remaining gaps worth tracking:
 Recommended next slice (pick one):
 
 1. **Subscription quota / plan-usage indicator** — parked. The user wants a "circle indicator" on startup showing Claude (and eventually Codex) plan usage. Investigation found that `--print "/usage"` is a $0 client-side slash command but only returns an auth-status string — the rich quota panel is rendered by the interactive TUI from an undocumented Anthropic API call. `~/.claude/stats-cache.json` has historical activity but not subscription windows. The user is independently investigating reliable data sources before this slice resumes.
-2. **`agent_stop` MCP tool / dashboard stop button** — `LocalToadRuntime.stopAgent` exists but is not yet API-exposed. Companion to the launch slice: lets the operator stop runtimes from the UI.
-3. **Optional `--bare` smoke variant** — add a parallel smoke path that uses `--bare` when `ANTHROPIC_API_KEY` is set in the environment, for users on direct API auth. The current smoke covers the subscription-OAuth path; the `--bare` path covers API-key auth.
-4. **Codex provider integration** — TOAD currently only spawns Claude runtimes. The legacy app had a full `codex-account` feature (rate-limit windows, ChatGPT auth, model selection). Adding Codex as a runtime provider is a much larger scoped slice.
+2. **Team lifecycle (`team_create` / `team_launch` / `team_stop` / `team_list` / `team_delete`)** — TOAD has individual `agent_launch`/`agent_stop` plus a `TeamConfig` registry, but no MCP tools to manage a team as a unit. Legacy `TEAM_CREATE` / `TEAM_LAUNCH` / `TEAM_STOP` / `TEAM_DELETE` orchestrate provisioning the lead + teammates together. Architectural slice — defines what a "team launch" means in TOAD's broker/supervisor model.
+3. **Code review with diffs** — legacy `review.ts` stores per-task diff content and supports file-level accept/reject. TOAD's `review_request` / `review_decide` work on task IDs only. Needs a diff-content store + new tool surface.
+4. **Notifications** — legacy `notifications.ts` defines typed alert categories (task completion, agent attention, errors). TOAD has the raw event bus; needs a notification projection on top.
+5. **`team_process_send`** — legacy lets you send a message to a specific runtime's stdin. TOAD's adapters expose this internally; small slice to wrap it.
+6. **Optional `--bare` smoke variant** — add a parallel smoke path that uses `--bare` when `ANTHROPIC_API_KEY` is set in the environment, for users on direct API auth.
+7. **Codex provider integration** — TOAD only spawns Claude runtimes. The legacy app had a full `codex-account` feature (rate-limit windows, ChatGPT auth, model selection). Much larger scoped slice.
 
 Workflow reminders:
 
@@ -1324,6 +1346,7 @@ rg -n "permission|control_request|approval|runtime adapter|watcher|relay" C:\Pro
 - `C:\Project-TOAD\toad-local\test\localToolFacade.test.js`
 - `C:\Project-TOAD\toad-local\test\localMcpToolDefinitions.test.js`
 - `C:\Project-TOAD\toad-local\ui\src\components\Dashboard.jsx`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-agent-stop-tool.md`
 
 ## Suggested Opening Move For Next Agent
 

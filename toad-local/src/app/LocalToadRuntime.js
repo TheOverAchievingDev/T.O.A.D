@@ -82,6 +82,8 @@ export class LocalToadRuntime {
         projectCwd,
         readModel: this.readModel,
         launchAgent: (input) => this.launchAgent(input),
+        stopAgent: ({ runtimeId, signal } = {}) =>
+          this.stopAgent(runtimeId, signal ? { signal } : undefined),
       });
     const db = this.runtimeRegistry?.db || this.eventLog?.db || null;
     this.sideEffectLog = db ? new SideEffectLog(db) : null;

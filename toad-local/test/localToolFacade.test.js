@@ -500,6 +500,61 @@ test('LocalToolFacade rejects agent_launch when no launchAgent callback is confi
   );
 });
 
+test('LocalToolFacade routes agent_stop to the stopAgent callback', async () => {
+  const calls = [];
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    stopAgent(input) {
+      calls.push(input);
+      return Promise.resolve({ runtimeId: input.runtimeId, status: 'stopped', signal: input.signal });
+    },
+  });
+
+  const result = await facade.execute({
+    commandName: COMMANDS.AGENT_STOP,
+    idempotencyKey: 'stop-1',
+    actor: { teamId: 'team-a', agentId: 'operator' },
+    args: { runtimeId: 'runtime-lead-1', signal: 'SIGTERM' },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0], { runtimeId: 'runtime-lead-1', signal: 'SIGTERM' });
+  assert.deepEqual(result, { runtimeId: 'runtime-lead-1', status: 'stopped', signal: 'SIGTERM' });
+});
+
+test('LocalToolFacade rejects agent_stop when no stopAgent callback is configured', async () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  await assert.rejects(
+    () => facade.execute({
+      commandName: COMMANDS.AGENT_STOP,
+      idempotencyKey: 'stop-fail',
+      actor: { teamId: 'team-a', agentId: 'operator' },
+      args: { runtimeId: 'runtime-lead-1' },
+    }),
+    /agent_stop is not configured/,
+  );
+});
+
+test('LocalToolFacade requires idempotencyKey for agent_stop', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    stopAgent: () => ({ runtimeId: 'r', status: 'stopped' }),
+  });
+  assert.throws(
+    () => facade.execute({
+      commandName: COMMANDS.AGENT_STOP,
+      actor: { teamId: 'team-a', agentId: 'operator' },
+      args: { runtimeId: 'runtime-lead-1' },
+    }),
+    /idempotencyKey/,
+  );
+});
+
 test('LocalToolFacade requires idempotencyKey for agent_launch', () => {
   const facade = new LocalToolFacade({
     broker: new InMemoryBroker(),

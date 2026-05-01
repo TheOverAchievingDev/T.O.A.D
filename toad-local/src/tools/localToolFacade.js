@@ -8,7 +8,7 @@ import { applyPermissionSuggestions } from '../runtime/claudeSettingsWriter.js';
 import { formatCrossTeamText, CROSS_TEAM_SOURCE, CROSS_TEAM_SENT_SOURCE } from '../protocol/crossTeam.js';
 
 export class LocalToolFacade {
-  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null }) {
+  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null }) {
     if (!broker) throw new TypeError('broker is required');
     if (!taskBoard) throw new TypeError('taskBoard is required');
     this.broker = broker;
@@ -19,6 +19,7 @@ export class LocalToolFacade {
     this.projectCwd = projectCwd;
     this.readModel = readModel;
     this.launchAgent = typeof launchAgent === 'function' ? launchAgent : null;
+    this.stopAgent = typeof stopAgent === 'function' ? stopAgent : null;
   }
 
   execute(command) {
@@ -62,6 +63,8 @@ export class LocalToolFacade {
         return this.#crossTeamSend(actor, command.idempotencyKey, args);
       case COMMANDS.AGENT_LAUNCH:
         return this.#agentLaunch(actor, args);
+      case COMMANDS.AGENT_STOP:
+        return this.#agentStop(actor, args);
       default:
         throw new Error(`unsupported command: ${commandName}`);
     }
@@ -372,6 +375,16 @@ export class LocalToolFacade {
     if (args.env && typeof args.env === 'object' && !Array.isArray(args.env)) input.env = args.env;
     if (typeof args.providerId === 'string' && args.providerId.length > 0) input.providerId = args.providerId;
     return this.launchAgent(input);
+  }
+
+  async #agentStop(actor, args) {
+    if (!this.stopAgent) {
+      throw new Error('agent_stop is not configured on this facade');
+    }
+    const runtimeId = requireString(args.runtimeId, 'args.runtimeId');
+    const input = { runtimeId };
+    if (typeof args.signal === 'string' && args.signal.length > 0) input.signal = args.signal;
+    return this.stopAgent(input);
   }
 }
 
