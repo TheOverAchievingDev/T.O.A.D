@@ -29,6 +29,7 @@ test('listLocalMcpTools exposes MCP-shaped local command tools', () => {
     'task_comment',
     'task_create',
     'task_history_export',
+    'task_human_approve',
     'task_list',
     'task_plan_approve',
     'task_plan_propose',
@@ -87,12 +88,35 @@ test('mutating MCP tools require idempotencyKey in their schemas', () => {
     assert.ok(getLocalMcpTool(t).inputSchema.required.includes('idempotencyKey'), t);
     assert.equal(getLocalMcpTool(t).annotations.destructiveHint, false, t);
   }
+  assert.ok(getLocalMcpTool('task_human_approve').inputSchema.required.includes('idempotencyKey'));
+  assert.equal(getLocalMcpTool('task_human_approve').annotations.destructiveHint, false);
 
   // Read-only tools
   for (const name of ['task_list', 'agent_status', 'approval_list', 'runtime_events', 'cross_team_messages', 'tool_activity', 'health_status', 'team_list', 'review_list']) {
     assert.ok(!getLocalMcpTool(name).inputSchema.required.includes('idempotencyKey'), name);
     assert.equal(getLocalMcpTool(name).annotations.readOnlyHint, true, `${name} should be readOnly`);
   }
+});
+
+test('task_create MCP schema exposes task risk contract fields', () => {
+  const properties = getLocalMcpTool('task_create').inputSchema.properties;
+  assert.deepEqual(properties.allowedFiles, {
+    type: 'array',
+    items: { type: 'string', minLength: 1 },
+  });
+  assert.deepEqual(properties.forbiddenFiles, {
+    type: 'array',
+    items: { type: 'string', minLength: 1 },
+  });
+  assert.deepEqual(properties.acceptanceCriteria, {
+    type: 'array',
+    items: { type: 'string', minLength: 1 },
+  });
+  assert.deepEqual(properties.riskLevel, {
+    type: 'string',
+    enum: ['low', 'medium', 'high', 'critical'],
+  });
+  assert.deepEqual(properties.requiresHumanApproval, { type: 'boolean' });
 });
 
 test('callLocalMcpTool executes a local facade command and returns MCP content', async () => {

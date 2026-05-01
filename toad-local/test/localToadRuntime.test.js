@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
@@ -54,6 +54,119 @@ test('LocalToadRuntime launches an agent and sends a delivered message through i
   assert.equal(result.message.text, 'Plan the next task.');
   assert.equal(result.delivery.status, 'committed');
   assert.equal(JSON.parse(child.stdin.writes[0]).message.content[0].text, 'Plan the next task.');
+});
+
+test('LocalToadRuntime injects a TOAD MCP config into Claude launches', async () => {
+  const child = createFakeChild();
+  const projectCwd = mkdtempSync(join(tmpdir(), 'toad-runtime-mcp-'));
+  const dbPath = join(projectCwd, '.toad', 'toad.db');
+  let captured = null;
+  const runtime = new LocalToadRuntime({
+    projectCwd,
+    dbPath,
+    spawnProcess(command, args, options) {
+      captured = { command, args, options };
+      return child;
+    },
+  });
+
+  try {
+    await runtime.launchAgent({
+      teamId: 'team-a',
+      agentId: 'dev-1',
+      runtimeId: 'runtime-dev-1',
+      command: 'claude',
+      args: ['--output-format', 'stream-json'],
+      cwd: projectCwd,
+      role: 'developer',
+      taskId: 'task-1',
+    });
+
+    const flagIndex = captured.args.indexOf('--mcp-config');
+    assert.notEqual(flagIndex, -1);
+    const configPath = captured.args[flagIndex + 1];
+    assert.equal(existsSync(configPath), true);
+
+    const config = JSON.parse(readFileSync(configPath, 'utf8'));
+    const server = config.mcpServers['toad-local'];
+    assert.equal(server.command, process.execPath);
+    assert.equal(server.env.TOAD_DB_PATH, dbPath);
+    assert.equal(server.env.TOAD_PROJECT_CWD, projectCwd);
+    assert.equal(server.env.TOAD_TEAM_ID, 'team-a');
+    assert.equal(server.env.TOAD_AGENT_ID, 'dev-1');
+    assert.equal(server.env.TOAD_AGENT_ROLE, 'developer');
+    assert.equal(server.env.TOAD_TASK_ID, 'task-1');
+    assert.equal(server.args.at(-1).endsWith(join('src', 'mcp', 'stdioServer.js')), true);
+    assert.equal(captured.args.includes('--dangerously-skip-permissions'), true);
+    assert.equal(captured.args[captured.args.indexOf('--permission-mode') + 1], 'bypassPermissions');
+  } finally {
+    await runtime.close();
+    rmSync(projectCwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+test('LocalToadRuntime replaces acceptEdits with bypassPermissions for generated MCP launches', async () => {
+  const child = createFakeChild();
+  const projectCwd = mkdtempSync(join(tmpdir(), 'toad-runtime-mcp-perms-'));
+  const dbPath = join(projectCwd, '.toad', 'toad.db');
+  let captured = null;
+  const runtime = new LocalToadRuntime({
+    projectCwd,
+    dbPath,
+    spawnProcess(command, args, options) {
+      captured = { command, args, options };
+      return child;
+    },
+  });
+
+  try {
+    await runtime.launchAgent({
+      teamId: 'team-a',
+      agentId: 'dev-1',
+      runtimeId: 'runtime-dev-1',
+      command: 'claude',
+      args: ['--permission-mode', 'acceptEdits'],
+      cwd: projectCwd,
+    });
+
+    assert.equal(captured.args.includes('acceptEdits'), false);
+    assert.equal(captured.args.includes('--dangerously-skip-permissions'), true);
+    assert.equal(captured.args[captured.args.indexOf('--permission-mode') + 1], 'bypassPermissions');
+  } finally {
+    await runtime.close();
+    rmSync(projectCwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+test('LocalToadRuntime preserves caller-provided MCP config args', async () => {
+  const child = createFakeChild();
+  const projectCwd = mkdtempSync(join(tmpdir(), 'toad-runtime-mcp-existing-'));
+  const dbPath = join(projectCwd, '.toad', 'toad.db');
+  let captured = null;
+  const runtime = new LocalToadRuntime({
+    projectCwd,
+    dbPath,
+    spawnProcess(command, args, options) {
+      captured = { command, args, options };
+      return child;
+    },
+  });
+
+  try {
+    await runtime.launchAgent({
+      teamId: 'team-a',
+      agentId: 'dev-1',
+      runtimeId: 'runtime-dev-1',
+      command: 'claude',
+      args: ['--mcp-config', 'existing.json'],
+      cwd: projectCwd,
+    });
+
+    assert.deepEqual(captured.args, ['--mcp-config', 'existing.json']);
+  } finally {
+    await runtime.close();
+    rmSync(projectCwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
 });
 
 test('LocalToadRuntime ingests runtime events and exposes a team overview', async () => {
@@ -728,4 +841,36 @@ test('LocalToadRuntime returns approval responses to a live Claude runtime adapt
       response: { behavior: 'allow', updatedInput: {} },
     },
   });
+});
+
+test('LocalToadRuntime loads .toad/risk-policy.json from projectCwd and passes it to the facade', async (t) => {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'toad-risk-policy-runtime-'));
+  t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+  mkdirSync(join(tmpDir, '.toad'), { recursive: true });
+  writeFileSync(join(tmpDir, '.toad', 'risk-policy.json'), JSON.stringify({
+    rules: [
+      { pattern: '.env*', riskLevel: 'critical', requiresHumanApproval: true },
+    ],
+  }));
+  const dbPath = join(tmpDir, '.toad', 'toad.db');
+  const runtime = new LocalToadRuntime({ port: 0, dbPath, projectCwd: tmpDir });
+  try {
+    assert.ok(runtime.riskPolicy, 'runtime should have loaded risk policy');
+    assert.equal(runtime.riskPolicy.rules.length, 1);
+    assert.equal(runtime.toolFacade.riskPolicy, runtime.riskPolicy, 'facade should share the same policy reference');
+  } finally {
+    await runtime.close();
+  }
+});
+
+test('LocalToadRuntime leaves riskPolicy null when projectCwd has no policy file', async (t) => {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'toad-risk-policy-none-'));
+  t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+  const dbPath = join(tmpDir, '.toad', 'toad.db');
+  const runtime = new LocalToadRuntime({ port: 0, dbPath, projectCwd: tmpDir });
+  try {
+    assert.equal(runtime.riskPolicy, null);
+  } finally {
+    await runtime.close();
+  }
 });

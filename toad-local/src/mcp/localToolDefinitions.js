@@ -1,4 +1,5 @@
 import { COMMANDS, commandRequiresIdempotency } from '../commands/command-contract.js';
+import { TASK_RISK_LEVELS } from '../task/inMemoryTaskBoard.js';
 
 const RECIPIENT_SCHEMA = Object.freeze({
   type: 'object',
@@ -24,6 +25,11 @@ const TEAM_MEMBER_SCHEMA = Object.freeze({
     providerId: { type: 'string', minLength: 1 },
     prompt: { type: 'string' },
   },
+});
+
+const STRING_LIST_SCHEMA = Object.freeze({
+  type: 'array',
+  items: { type: 'string', minLength: 1 },
 });
 
 const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
@@ -95,6 +101,11 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
       status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'deleted'] },
       baseRef: { type: 'string', minLength: 1 },
       baseBranch: { type: 'string', minLength: 1 },
+      allowedFiles: STRING_LIST_SCHEMA,
+      forbiddenFiles: STRING_LIST_SCHEMA,
+      acceptanceCriteria: STRING_LIST_SCHEMA,
+      riskLevel: { type: 'string', enum: TASK_RISK_LEVELS },
+      requiresHumanApproval: { type: 'boolean' },
     },
   }),
   makeTool({
@@ -233,6 +244,8 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
       cwd: { type: 'string', minLength: 1 },
       env: { type: 'object', additionalProperties: { type: 'string' } },
       providerId: { type: 'string', minLength: 1 },
+      role: { type: 'string', enum: ['lead', 'architect', 'developer', 'reviewer', 'tester', 'human'] },
+      skipPermissions: { type: 'boolean' },
       taskId: { type: 'string', minLength: 1 },
     },
   }),
@@ -369,6 +382,16 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
     required: ['taskId'],
     properties: {
       taskId: { type: 'string', minLength: 1 },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.TASK_HUMAN_APPROVE,
+    title: 'Human-Approve Task',
+    description: 'Record an explicit human approval on a task. Required to clear the §14 human-approval gate before merge_ready → done when the task has requiresHumanApproval=true (set by operator at task_create or auto-elevated by the risk-policy classifier on review_request). Restricted to lead and human roles.',
+    required: ['taskId'],
+    properties: {
+      taskId: { type: 'string', minLength: 1 },
+      reason: { type: 'string' },
     },
   }),
 ]);

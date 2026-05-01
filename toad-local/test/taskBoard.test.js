@@ -364,6 +364,47 @@ test('projectTask leaves task.baseRef and task.baseBranch null when not supplied
   assert.equal(task.baseBranch, null);
 });
 
+test('projectTask captures task risk contract fields from CREATED payload', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'risk-1',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead',
+    payload: {
+      subject: 'risk contract',
+      allowedFiles: [' src/app.js ', '', 42, 'docs/spec.md'],
+      forbiddenFiles: ['.env', null, 'secrets/**'],
+      acceptanceCriteria: ['tests pass', ' docs updated '],
+      riskLevel: 'high',
+      requiresHumanApproval: true,
+    },
+  });
+  const task = board.getTask({ teamId: 'team-a', taskId: 'risk-1' });
+  assert.deepEqual(task.allowedFiles, ['src/app.js', 'docs/spec.md']);
+  assert.deepEqual(task.forbiddenFiles, ['.env', 'secrets/**']);
+  assert.deepEqual(task.acceptanceCriteria, ['tests pass', 'docs updated']);
+  assert.equal(task.riskLevel, 'high');
+  assert.equal(task.requiresHumanApproval, true);
+});
+
+test('projectTask defaults task risk contract fields when not supplied', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'risk-2',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead',
+    payload: { subject: 'default risk contract' },
+  });
+  const task = board.getTask({ teamId: 'team-a', taskId: 'risk-2' });
+  assert.deepEqual(task.allowedFiles, []);
+  assert.deepEqual(task.forbiddenFiles, []);
+  assert.deepEqual(task.acceptanceCriteria, []);
+  assert.equal(task.riskLevel, null);
+  assert.equal(task.requiresHumanApproval, false);
+});
+
 test('projectTask counts consecutive failed test runs from VALIDATION_RUN events', () => {
   const board = new InMemoryTaskBoard();
   board.appendEvent({
@@ -458,6 +499,91 @@ test('projectTask ignores non-test validation runs when counting failures', () =
   assert.equal(task.consecutiveTestFailures, 2);
 });
 
+test('task.humanApproval defaults to { approved: false }', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'h-1',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead',
+    payload: { subject: 'x' },
+  });
+  const task = board.getTask({ teamId: 'team-a', taskId: 'h-1' });
+  assert.deepEqual(task.humanApproval, { approved: false });
+});
+
+test('HUMAN_APPROVED event populates task.humanApproval with approver + reason + time', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'h-2',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead',
+    payload: { subject: 'x', riskLevel: 'high', requiresHumanApproval: true },
+  });
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'h-2',
+    eventType: TASK_EVENT_TYPES.HUMAN_APPROVED,
+    actorId: 'lead',
+    createdAt: '2026-05-01T20:30:00.000Z',
+    payload: { reason: 'reviewed offline' },
+  });
+  const task = board.getTask({ teamId: 'team-a', taskId: 'h-2' });
+  assert.equal(task.humanApproval.approved, true);
+  assert.equal(task.humanApproval.approvedBy, 'lead');
+  assert.equal(task.humanApproval.approvedAt, '2026-05-01T20:30:00.000Z');
+  assert.equal(task.humanApproval.reason, 'reviewed offline');
+});
+
+test('RISK_CLASSIFIED event elevates riskLevel and flips requiresHumanApproval', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'r-1',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead',
+    payload: { subject: 'x', riskLevel: 'low', requiresHumanApproval: false },
+  });
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'r-1',
+    eventType: TASK_EVENT_TYPES.RISK_CLASSIFIED,
+    actorId: 'lead',
+    payload: {
+      riskLevel: 'critical',
+      requiresHumanApproval: true,
+      matchedRules: [{ pattern: '.env*', riskLevel: 'critical', requiresHumanApproval: true }],
+      source: 'risk_policy',
+    },
+  });
+  const task = board.getTask({ teamId: 'team-a', taskId: 'r-1' });
+  assert.equal(task.riskLevel, 'critical');
+  assert.equal(task.requiresHumanApproval, true);
+});
+
+test('RISK_CLASSIFIED never demotes baseline riskLevel', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'r-2',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead',
+    payload: { subject: 'x', riskLevel: 'critical', requiresHumanApproval: true },
+  });
+  // Bogus elevation event proposes 'low' — must be ignored
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'r-2',
+    eventType: TASK_EVENT_TYPES.RISK_CLASSIFIED,
+    actorId: 'lead',
+    payload: { riskLevel: 'low', requiresHumanApproval: false, matchedRules: [], source: 'risk_policy' },
+  });
+  const task = board.getTask({ teamId: 'team-a', taskId: 'r-2' });
+  assert.equal(task.riskLevel, 'critical');
+  assert.equal(task.requiresHumanApproval, true);
+});
+
 test('projectTask captures WORKTREE_REMOVED and updates task.worktree.status to "removed"', () => {
   const board = new InMemoryTaskBoard();
   board.appendEvent({
@@ -543,4 +669,3 @@ test('task events are idempotent by idempotencyKey', () => {
   assert.equal(second.inserted, false);
   assert.equal(second.event.eventId, first.event.eventId);
 });
-

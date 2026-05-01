@@ -3,6 +3,7 @@ import { COMMANDS, commandRequiresIdempotency } from '../commands/command-contra
 import { MESSAGE_KINDS } from '../protocol/envelopes.js';
 import {
   TASK_EVENT_TYPES,
+  TASK_RISK_LEVELS,
   TASK_STATUS,
 } from '../task/inMemoryTaskBoard.js';
 import { applyPermissionSuggestions } from '../runtime/claudeSettingsWriter.js';
@@ -11,10 +12,11 @@ import { TeamConfig } from '../team/teamConfig.js';
 import { validateTaskStatusTransition } from '../task/taskLifecycle.js';
 import { assertRoleCanCallTool } from '../security/roleAuthority.js';
 import { runDiagnostics } from '../diagnostics/runDiagnostics.js';
+import { classify as classifyRisk } from '../policy/riskClassifier.js';
 import { computeDiff as defaultComputeDiff } from '../task/diffComputer.js';
 
 export class LocalToolFacade {
-  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null }) {
+  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null, riskPolicy = null }) {
     if (!broker) throw new TypeError('broker is required');
     if (!taskBoard) throw new TypeError('taskBoard is required');
     this.broker = broker;
@@ -35,6 +37,8 @@ export class LocalToolFacade {
       ? diffComputer
       : { computeDiff: defaultComputeDiff };
     this.mergeChecker = mergeChecker && typeof mergeChecker.checkForConflicts === 'function' ? mergeChecker : null;
+    // §14: project-local risk policy. Null = no auto-classification (back-compat).
+    this.riskPolicy = riskPolicy && Array.isArray(riskPolicy.rules) ? riskPolicy : null;
   }
 
   execute(command) {
@@ -112,6 +116,8 @@ export class LocalToolFacade {
         return this.#diagnosticsRun();
       case COMMANDS.TASK_HISTORY_EXPORT:
         return this.#taskHistoryExport(actor, args);
+      case COMMANDS.TASK_HUMAN_APPROVE:
+        return this.#humanApprove(actor, command.idempotencyKey, args);
       default:
         throw new Error(`unsupported command: ${commandName}`);
     }
@@ -148,6 +154,7 @@ export class LocalToolFacade {
         // §8 slice 4: optional explicit baseRef / baseBranch.
         ...(typeof args.baseRef === 'string' && args.baseRef.length > 0 ? { baseRef: args.baseRef } : {}),
         ...(typeof args.baseBranch === 'string' && args.baseBranch.length > 0 ? { baseBranch: args.baseBranch } : {}),
+        ...normalizeTaskRiskContractArgs(args),
       },
     });
     return this.taskBoard.getTask({ teamId: actor.teamId, taskId });
@@ -236,6 +243,17 @@ export class LocalToolFacade {
               `task_update: merge_ready → done blocked: ${verdict.error || 'merge check failed'}`,
             );
           }
+        }
+      }
+      // Human-approval gate (§14): merge_ready → done is blocked when the
+      // task has requiresHumanApproval=true and no HUMAN_APPROVED event has
+      // landed. Either the operator set the flag at task_create OR the
+      // risk classifier elevated it during review_request.
+      if (fromStatus === 'merge_ready' && args.status === 'done') {
+        if (current?.requiresHumanApproval === true && current?.humanApproval?.approved !== true) {
+          throw new Error(
+            `task_update: merge_ready → done blocked by human-approval gate (riskLevel: ${current.riskLevel || 'unspecified'}). Run task_human_approve before transitioning.`,
+          );
         }
       }
       const payload = { status: args.status, from: fromStatus };
@@ -377,12 +395,43 @@ export class LocalToolFacade {
     // flagged for the reviewer. Empty plan list (or no plan) → no flagging,
     // no false positives. Reviewer ultimately decides what to do with drift.
     if (Array.isArray(payload.files) && payload.files.length > 0) {
+      enforceReviewFileContract(taskBeforeReview, payload.files);
       const expected = Array.isArray(taskBeforeReview?.plan?.filesExpectedToChange)
         ? taskBeforeReview.plan.filesExpectedToChange
         : [];
       if (expected.length > 0) {
         const drift = payload.files.filter((file) => !matchesAny(file, expected));
         if (drift.length > 0) payload.scopeDrift = drift;
+      }
+      // §14: configurable risk-policy classifier. Apply against the changed
+      // files; if the result elevates riskLevel or flips requiresHumanApproval,
+      // emit a RISK_CLASSIFIED event BEFORE the REVIEW_REQUESTED event so the
+      // projection sees the elevated values when downstream consumers read.
+      // Classifier never demotes — operator-supplied baselines are preserved.
+      if (this.riskPolicy) {
+        const classification = classifyRisk({
+          files: payload.files,
+          policy: this.riskPolicy,
+          currentRiskLevel: taskBeforeReview?.riskLevel ?? null,
+          currentRequiresHumanApproval: taskBeforeReview?.requiresHumanApproval === true,
+        });
+        const elevatedLevel = classification.riskLevel !== (taskBeforeReview?.riskLevel ?? null);
+        const elevatedFlag = classification.requiresHumanApproval !== (taskBeforeReview?.requiresHumanApproval === true);
+        if (elevatedLevel || elevatedFlag) {
+          this.taskBoard.appendEvent({
+            teamId: actor.teamId,
+            taskId,
+            idempotencyKey: `${idempotencyKey}:risk_classified`,
+            eventType: TASK_EVENT_TYPES.RISK_CLASSIFIED,
+            actorId: actor.agentId,
+            payload: {
+              riskLevel: classification.riskLevel,
+              requiresHumanApproval: classification.requiresHumanApproval,
+              matchedRules: classification.matchedRules,
+              source: 'risk_policy',
+            },
+          });
+        }
       }
     }
     this.taskBoard.appendEvent({
@@ -627,6 +676,8 @@ export class LocalToolFacade {
     if (typeof args.cwd === 'string' && args.cwd.length > 0) input.cwd = args.cwd;
     if (args.env && typeof args.env === 'object' && !Array.isArray(args.env)) input.env = args.env;
     if (typeof args.providerId === 'string' && args.providerId.length > 0) input.providerId = args.providerId;
+    if (typeof args.role === 'string' && args.role.length > 0) input.role = args.role;
+    if (typeof args.skipPermissions === 'boolean') input.skipPermissions = args.skipPermissions;
 
     // §8 slice 2: enforce worktree cwd when args.taskId points to a task with
     // a created worktree. Caller can either omit cwd (we auto-set) or pass the
@@ -723,6 +774,8 @@ export class LocalToolFacade {
         if (typeof member.cwd === 'string' && member.cwd.length > 0) launchInput.cwd = member.cwd;
         if (member.env && typeof member.env === 'object' && Object.keys(member.env).length > 0) launchInput.env = member.env;
         if (typeof member.providerId === 'string' && member.providerId.length > 0) launchInput.providerId = member.providerId;
+        if (typeof member.role === 'string' && member.role.length > 0) launchInput.role = member.role;
+        if (typeof member.skipPermissions === 'boolean') launchInput.skipPermissions = member.skipPermissions;
         const runtime = await this.launchAgent(launchInput);
         results.push({ runtimeId, agentId: member.agentId, status: runtime?.status || 'starting' });
       } catch (err) {
@@ -931,6 +984,25 @@ export class LocalToolFacade {
     return { task, taskEvents, runtimeEvents };
   }
 
+  /**
+   * §14: human approval signal. Emits TASK_HUMAN_APPROVED. Restricted to
+   * `lead` and `human` via roleAuthority (the four other roles are not in
+   * the explicit allowlist and the wildcard catches lead+human).
+   */
+  #humanApprove(actor, idempotencyKey, args) {
+    const taskId = requireString(args.taskId, 'args.taskId');
+    const reason = typeof args.reason === 'string' && args.reason.length > 0 ? args.reason : null;
+    this.taskBoard.appendEvent({
+      teamId: actor.teamId,
+      taskId,
+      idempotencyKey,
+      eventType: TASK_EVENT_TYPES.HUMAN_APPROVED,
+      actorId: actor.agentId,
+      payload: reason ? { reason } : {},
+    });
+    return this.taskBoard.getTask({ teamId: actor.teamId, taskId });
+  }
+
   #emitToolCallDenied(actor, commandName, err) {
     if (!this.eventLog) return;
     // Best-effort audit. The original error always re-throws; a broken event log
@@ -985,6 +1057,24 @@ function matchesAny(file, patterns) {
   return false;
 }
 
+function enforceReviewFileContract(task, files) {
+  if (!task || !Array.isArray(files) || files.length === 0) return;
+  const forbidden = Array.isArray(task.forbiddenFiles) ? task.forbiddenFiles : [];
+  if (forbidden.length > 0) {
+    const violations = files.filter((file) => matchesAny(file, forbidden));
+    if (violations.length > 0) {
+      throw new Error(`review_request: changed files include forbidden paths: ${violations.join(', ')}`);
+    }
+  }
+  const allowed = Array.isArray(task.allowedFiles) ? task.allowedFiles : [];
+  if (allowed.length > 0) {
+    const violations = files.filter((file) => !matchesAny(file, allowed));
+    if (violations.length > 0) {
+      throw new Error(`review_request: changed files outside allowedFiles: ${violations.join(', ')}`);
+    }
+  }
+}
+
 function defaultSpawnValidation(command, { cwd } = {}) {
   // Returns { exitCode, stdout, stderr, durationMs }. Sync via spawnSync because
   // validation runs are blocking by intent — the caller awaits the result. Tests
@@ -1002,6 +1092,34 @@ function defaultSpawnValidation(command, { cwd } = {}) {
     stderr: typeof result.stderr === 'string' ? result.stderr : '',
     durationMs: Date.now() - start,
   };
+}
+
+function normalizeTaskRiskContractArgs(args) {
+  const payload = {};
+  const allowedFiles = normalizeStringList(args.allowedFiles);
+  if (allowedFiles) payload.allowedFiles = allowedFiles;
+  const forbiddenFiles = normalizeStringList(args.forbiddenFiles);
+  if (forbiddenFiles) payload.forbiddenFiles = forbiddenFiles;
+  const acceptanceCriteria = normalizeStringList(args.acceptanceCriteria);
+  if (acceptanceCriteria) payload.acceptanceCriteria = acceptanceCriteria;
+  if (typeof args.riskLevel === 'string' && args.riskLevel.trim().length > 0) {
+    const riskLevel = args.riskLevel.trim();
+    if (!TASK_RISK_LEVELS.includes(riskLevel)) {
+      throw new Error(`task_create: unsupported riskLevel ${riskLevel}`);
+    }
+    payload.riskLevel = riskLevel;
+  }
+  if (typeof args.requiresHumanApproval === 'boolean') {
+    payload.requiresHumanApproval = args.requiresHumanApproval;
+  }
+  return payload;
+}
+
+function normalizeStringList(value) {
+  if (!Array.isArray(value)) return null;
+  return value
+    .filter((entry) => typeof entry === 'string' && entry.trim().length > 0)
+    .map((entry) => entry.trim());
 }
 
 function normalizeActor(actor) {

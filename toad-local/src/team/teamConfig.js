@@ -8,6 +8,8 @@ function normalizeMember(member, fallbackAgentId) {
     cwd: typeof m.cwd === 'string' && m.cwd.trim() ? m.cwd.trim() : null,
     env: m.env && typeof m.env === 'object' && !Array.isArray(m.env) ? { ...m.env } : {},
     providerId: typeof m.providerId === 'string' && m.providerId.trim() ? m.providerId.trim() : 'claude',
+    role: typeof m.role === 'string' && m.role.trim() ? m.role.trim() : null,
+    skipPermissions: typeof m.skipPermissions === 'boolean' ? m.skipPermissions : true,
     prompt: typeof m.prompt === 'string' ? m.prompt : '',
   };
 }

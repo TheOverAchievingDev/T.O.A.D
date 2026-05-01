@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { InMemoryBroker } from '../src/broker/inMemoryBroker.js';
 import { COMMANDS } from '../src/commands/command-contract.js';
-import { InMemoryTaskBoard, TASK_STATUS } from '../src/task/inMemoryTaskBoard.js';
+import { InMemoryTaskBoard, TASK_EVENT_TYPES, TASK_STATUS } from '../src/task/inMemoryTaskBoard.js';
 import { LocalToolFacade } from '../src/tools/localToolFacade.js';
 
 function createFacade() {
@@ -2547,6 +2547,135 @@ test('review_request leaves scopeDrift empty when plan has no filesExpectedToCha
 
 // --- §7 finished: review_request auto-computes diff against task worktree ---
 
+test('review_request rejects files that match task.forbiddenFiles', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'fc-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: {
+      taskId: 'fc-1',
+      subject: 'file contract',
+      forbiddenFiles: ['secrets/**', '.env'],
+    },
+  });
+  assert.throws(
+    () =>
+      facade.execute({
+        commandName: COMMANDS.REVIEW_REQUEST,
+        idempotencyKey: 'fc-review',
+        actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+        args: { taskId: 'fc-1', files: ['src/app.js', 'secrets/token.txt'] },
+      }),
+    /review_request: changed files include forbidden paths: secrets\/token\.txt/
+  );
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'fc-1' });
+  assert.equal(task.review, null);
+});
+
+test('review_request rejects files outside task.allowedFiles when the task has an explicit allowlist', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'fc2-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: {
+      taskId: 'fc-2',
+      subject: 'file contract',
+      allowedFiles: ['src/**', 'package.json'],
+    },
+  });
+  assert.throws(
+    () =>
+      facade.execute({
+        commandName: COMMANDS.REVIEW_REQUEST,
+        idempotencyKey: 'fc2-review',
+        actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+        args: { taskId: 'fc-2', files: ['src/app.js', 'README.md'] },
+      }),
+    /review_request: changed files outside allowedFiles: README\.md/
+  );
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'fc-2' });
+  assert.equal(task.review, null);
+});
+
+test('review_request allows files that satisfy task.allowedFiles and avoid forbiddenFiles', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'fc3-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: {
+      taskId: 'fc-3',
+      subject: 'file contract',
+      allowedFiles: ['src/**', 'package.json'],
+      forbiddenFiles: ['src/secrets/**'],
+    },
+  });
+  facade.execute({
+    commandName: COMMANDS.REVIEW_REQUEST,
+    idempotencyKey: 'fc3-review',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'fc-3', files: ['src/app.js', 'package.json'] },
+  });
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'fc-3' });
+  assert.deepEqual(task.review.files, ['src/app.js', 'package.json']);
+});
+
+test('review_request enforces task file contract against orchestrator-computed diff files', () => {
+  const fakeDiffComputer = {
+    computeDiff: () => ({ diff: 'diff --git a/secrets/token.txt b/secrets/token.txt', files: ['secrets/token.txt'] }),
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    diffComputer: fakeDiffComputer,
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'fc4-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: {
+      taskId: 'fc-4',
+      subject: 'computed file contract',
+      forbiddenFiles: ['secrets/**'],
+    },
+  });
+  facade.taskBoard.appendEvent({
+    teamId: 'team-a',
+    taskId: 'fc-4',
+    eventType: TASK_EVENT_TYPES.WORKTREE_CREATED,
+    actorId: 'lead',
+    payload: {
+      status: 'created',
+      path: '/tmp/fc-4',
+      branch: 'toad/team-a/fc-4',
+      baseRef: 'base-sha',
+    },
+  });
+  assert.throws(
+    () =>
+      facade.execute({
+        commandName: COMMANDS.REVIEW_REQUEST,
+        idempotencyKey: 'fc4-review',
+        actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+        args: { taskId: 'fc-4' },
+      }),
+    /review_request: changed files include forbidden paths: secrets\/token\.txt/
+  );
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'fc-4' });
+  assert.equal(task.review, null);
+});
+
 test('review_request auto-computes diff and files when task has worktree and caller omits both', async () => {
   const fakeWorktreeManager = {
     createForTask({ teamId, taskId }) {
@@ -2932,6 +3061,53 @@ test('task_create accepts baseRef + baseBranch and surfaces them on the projecti
   assert.equal(task.baseBranch, 'develop');
 });
 
+test('task_create accepts task risk contract fields and surfaces them on the projection', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  const task = facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'risk-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: {
+      taskId: 'risk-1',
+      subject: 'risk task',
+      allowedFiles: [' src/** ', 'docs/spec.md', ''],
+      forbiddenFiles: ['.env', 'secrets/**'],
+      acceptanceCriteria: ['test passes', 'review approved'],
+      riskLevel: 'critical',
+      requiresHumanApproval: true,
+    },
+  });
+  assert.deepEqual(task.allowedFiles, ['src/**', 'docs/spec.md']);
+  assert.deepEqual(task.forbiddenFiles, ['.env', 'secrets/**']);
+  assert.deepEqual(task.acceptanceCriteria, ['test passes', 'review approved']);
+  assert.equal(task.riskLevel, 'critical');
+  assert.equal(task.requiresHumanApproval, true);
+});
+
+test('task_create rejects unsupported riskLevel values', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  assert.throws(
+    () =>
+      facade.execute({
+        commandName: COMMANDS.TASK_CREATE,
+        idempotencyKey: 'risk-bad',
+        actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+        args: {
+          taskId: 'risk-bad',
+          subject: 'bad risk',
+          riskLevel: 'severe',
+        },
+      }),
+    /task_create: unsupported riskLevel severe/
+  );
+});
+
 test('worktreeManager.createForTask receives task.baseRef from facade hook on ready→planned', () => {
   const seen = [];
   const fakeWorktreeManager = {
@@ -3267,4 +3443,287 @@ test('LocalToolFacade blocks blocked → in_progress for developer/reviewer/test
   });
   const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'b-1' });
   assert.equal(task.status, 'in_progress');
+});
+
+// --- §14: human-approval gate + risk-policy classifier ---
+
+function buildHumanGateFacade({ riskPolicy = null, diffComputer = null, mergeChecker = null } = {}) {
+  return new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    spawnValidation: () => ({ exitCode: 0, stdout: 'pass', stderr: '', durationMs: 1 }),
+    teamConfigRegistry: new (class {
+      teams = new Map();
+      registerTeam(c) { this.teams.set(c.teamId, c); }
+      getTeam(id) { return this.teams.get(id) || null; }
+      listTeams() { return Array.from(this.teams.values()); }
+    })(),
+    riskPolicy,
+    ...(diffComputer ? { diffComputer } : {}),
+    ...(mergeChecker ? { mergeChecker } : {}),
+  });
+}
+
+test('task_human_approve records HUMAN_APPROVED event + populates task.humanApproval', () => {
+  const facade = buildHumanGateFacade();
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'ha-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'ha-1', subject: 'risky', riskLevel: 'high', requiresHumanApproval: true },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_HUMAN_APPROVE,
+    idempotencyKey: 'ha-approve',
+    actor: { teamId: 'team-a', agentId: 'kayden', role: 'human' },
+    args: { taskId: 'ha-1', reason: 'reviewed offline' },
+  });
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'ha-1' });
+  assert.equal(task.humanApproval.approved, true);
+  assert.equal(task.humanApproval.approvedBy, 'kayden');
+  assert.equal(task.humanApproval.reason, 'reviewed offline');
+});
+
+test('task_human_approve denies developer/reviewer/tester/architect roles', () => {
+  const facade = buildHumanGateFacade();
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'ha2-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'ha-2', subject: 'risky' },
+  });
+  for (const role of ['developer', 'reviewer', 'tester', 'architect']) {
+    assert.throws(
+      () => facade.execute({
+        commandName: COMMANDS.TASK_HUMAN_APPROVE,
+        idempotencyKey: `ha2-deny-${role}`,
+        actor: { teamId: 'team-a', agentId: `${role}-1`, role },
+        args: { taskId: 'ha-2' },
+      }),
+      /role authority: .* cannot call task_human_approve/,
+      `expected ${role} to be denied`,
+    );
+  }
+});
+
+test('merge_ready → done is BLOCKED when requiresHumanApproval and no human approval recorded', async () => {
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  const facade = buildHumanGateFacade({});
+  facade.teamConfigRegistry.registerTeam(new TeamConfig({ teamId: 'team-a', validation: { testCommand: 'noop' } }));
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'g-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'g-1', subject: 'risky', riskLevel: 'high', requiresHumanApproval: true, status: 'testing' },
+  });
+  await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN,
+    idempotencyKey: 'g-val',
+    actor: { teamId: 'team-a', agentId: 'tester-1', role: 'tester' },
+    args: { taskId: 'g-1', kind: 'test' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'g-mr',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'g-1', status: 'merge_ready' },
+  });
+  assert.throws(
+    () => facade.execute({
+      commandName: COMMANDS.TASK_UPDATE,
+      idempotencyKey: 'g-done',
+      actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+      args: { taskId: 'g-1', status: 'done' },
+    }),
+    /merge_ready . done blocked by human-approval gate.*riskLevel: high/,
+  );
+});
+
+test('merge_ready → done is allowed once task_human_approve runs', async () => {
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  const facade = buildHumanGateFacade({});
+  facade.teamConfigRegistry.registerTeam(new TeamConfig({ teamId: 'team-a', validation: { testCommand: 'noop' } }));
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'g2-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'g-2', subject: 'risky', riskLevel: 'high', requiresHumanApproval: true, status: 'testing' },
+  });
+  await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN,
+    idempotencyKey: 'g2-val',
+    actor: { teamId: 'team-a', agentId: 'tester-1', role: 'tester' },
+    args: { taskId: 'g-2', kind: 'test' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'g2-mr',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'g-2', status: 'merge_ready' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_HUMAN_APPROVE,
+    idempotencyKey: 'g2-approve',
+    actor: { teamId: 'team-a', agentId: 'kayden', role: 'human' },
+    args: { taskId: 'g-2' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'g2-done',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'g-2', status: 'done' },
+  });
+  const t = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'g-2' });
+  assert.equal(t.status, 'done');
+});
+
+test('merge_ready → done is unaffected when requiresHumanApproval is false', async () => {
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  const facade = buildHumanGateFacade({});
+  facade.teamConfigRegistry.registerTeam(new TeamConfig({ teamId: 'team-a', validation: { testCommand: 'noop' } }));
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'g3-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'g-3', subject: 'low risk', riskLevel: 'low', requiresHumanApproval: false, status: 'testing' },
+  });
+  await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN,
+    idempotencyKey: 'g3-val',
+    actor: { teamId: 'team-a', agentId: 'tester-1', role: 'tester' },
+    args: { taskId: 'g-3', kind: 'test' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'g3-mr',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'g-3', status: 'merge_ready' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'g3-done',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'g-3', status: 'done' },
+  });
+  assert.equal(facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'g-3' }).status, 'done');
+});
+
+test('review_request runs the risk classifier and emits RISK_CLASSIFIED when policy matches', () => {
+  const policy = { rules: [{ pattern: '.env*', riskLevel: 'critical', requiresHumanApproval: true }] };
+  const facade = buildHumanGateFacade({ riskPolicy: policy });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'rc-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'rc-1', subject: 'edits .env' },
+  });
+  facade.execute({
+    commandName: COMMANDS.REVIEW_REQUEST,
+    idempotencyKey: 'rc-rev',
+    actor: { teamId: 'team-a', agentId: 'dev', role: 'developer' },
+    args: { taskId: 'rc-1', summary: 'edits env', files: ['.env.production'] },
+  });
+  const t = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'rc-1' });
+  assert.equal(t.riskLevel, 'critical');
+  assert.equal(t.requiresHumanApproval, true);
+  const riskEvents = t.history.filter((e) => e.eventType === 'task.risk_classified');
+  assert.equal(riskEvents.length, 1);
+  assert.equal(riskEvents[0].payload.source, 'risk_policy');
+});
+
+test('review_request does NOT emit RISK_CLASSIFIED when no rule matches', () => {
+  const policy = { rules: [{ pattern: 'src/secrets/**', riskLevel: 'critical', requiresHumanApproval: true }] };
+  const facade = buildHumanGateFacade({ riskPolicy: policy });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'rc3-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'rc-3', subject: 'safe edit' },
+  });
+  facade.execute({
+    commandName: COMMANDS.REVIEW_REQUEST,
+    idempotencyKey: 'rc3-rev',
+    actor: { teamId: 'team-a', agentId: 'dev', role: 'developer' },
+    args: { taskId: 'rc-3', summary: 's', files: ['README.md'] },
+  });
+  const t = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'rc-3' });
+  const riskEvents = t.history.filter((e) => e.eventType === 'task.risk_classified');
+  assert.equal(riskEvents.length, 0);
+});
+
+test('review_request does NOT emit RISK_CLASSIFIED when policy is null (back-compat)', () => {
+  const facade = buildHumanGateFacade({ riskPolicy: null });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'rc2-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'rc-2', subject: 'no policy' },
+  });
+  facade.execute({
+    commandName: COMMANDS.REVIEW_REQUEST,
+    idempotencyKey: 'rc2-rev',
+    actor: { teamId: 'team-a', agentId: 'dev', role: 'developer' },
+    args: { taskId: 'rc-2', summary: 's', files: ['.env.production'] },
+  });
+  const t = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'rc-2' });
+  const riskEvents = t.history.filter((e) => e.eventType === 'task.risk_classified');
+  assert.equal(riskEvents.length, 0);
+  assert.equal(t.requiresHumanApproval, false);
+});
+
+test('classifier-driven elevation triggers the human-approval gate (end-to-end)', async () => {
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  const policy = { rules: [{ pattern: '.env*', riskLevel: 'critical', requiresHumanApproval: true }] };
+  const facade = buildHumanGateFacade({ riskPolicy: policy });
+  facade.teamConfigRegistry.registerTeam(new TeamConfig({ teamId: 'team-a', validation: { testCommand: 'noop' } }));
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'e2e-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'e2e-1', subject: 'env edit', status: 'in_progress' },
+  });
+  // Agent claims the dangerous file
+  facade.execute({
+    commandName: COMMANDS.REVIEW_REQUEST,
+    idempotencyKey: 'e2e-rev',
+    actor: { teamId: 'team-a', agentId: 'dev', role: 'developer' },
+    args: { taskId: 'e2e-1', summary: 's', files: ['.env.production'] },
+  });
+  const elevated = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'e2e-1' });
+  assert.equal(elevated.requiresHumanApproval, true, 'classifier should have elevated');
+  // Walk in_progress → review → testing
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'e2e-rev-status',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'e2e-1', status: 'review' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'e2e-test',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'e2e-1', status: 'testing' },
+  });
+  await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN,
+    idempotencyKey: 'e2e-val',
+    actor: { teamId: 'team-a', agentId: 'tester', role: 'tester' },
+    args: { taskId: 'e2e-1', kind: 'test' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'e2e-mr',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'e2e-1', status: 'merge_ready' },
+  });
+  // Done is blocked even though operator never set requiresHumanApproval directly
+  assert.throws(
+    () => facade.execute({
+      commandName: COMMANDS.TASK_UPDATE,
+      idempotencyKey: 'e2e-done',
+      actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+      args: { taskId: 'e2e-1', status: 'done' },
+    }),
+    /human-approval gate/,
+  );
 });

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { createLocalMcpHandler } from './localMcpServer.js';
+import { createMcpActorFromEnv, createMcpRuntimeFromEnv } from './stdioRuntime.js';
 
+const runtime = createMcpRuntimeFromEnv(process.env);
 const handler = createLocalMcpHandler({
-  actor: {
-    teamId: process.env.TOAD_TEAM_ID || 'local',
-    agentId: process.env.TOAD_AGENT_ID || 'operator',
-  },
+  runtime,
+  actor: createMcpActorFromEnv(process.env),
 });
 
 let buffer = '';

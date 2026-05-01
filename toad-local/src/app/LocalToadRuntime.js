@@ -17,6 +17,8 @@ import { checkForConflicts } from '../task/mergeChecker.js';
 import { ApiServer } from '../transport/apiServer.js';
 import { SideEffectLog } from '../delivery/sideEffectLog.js';
 import { resolveApiToken } from '../runtime/resolveApiToken.js';
+import { shouldInjectToadMcpConfig, withClaudeMcpPermissions, writeToadMcpConfig } from '../mcp/toadMcpConfig.js';
+import { loadRiskPolicy } from '../policy/loadRiskPolicy.js';
 
 export class LocalToadRuntime {
   constructor({
@@ -91,6 +93,13 @@ export class LocalToadRuntime {
       || (typeof projectCwd === 'string' && projectCwd.length > 0
         ? { checkForConflicts }
         : null);
+    // §14: load `.toad/risk-policy.json` once at construction. Null when
+    // missing/unparseable — the facade's classifier hook is a no-op in that
+    // case (back-compat for projects that never opt in).
+    this.riskPolicy =
+      typeof projectCwd === 'string' && projectCwd.length > 0
+        ? loadRiskPolicy({ projectCwd })
+        : null;
     this.toolFacade =
       toolFacade ||
       new LocalToolFacade({
@@ -109,6 +118,7 @@ export class LocalToadRuntime {
         eventLog: this.eventLog,
         worktreeManager: this.worktreeManager,
         mergeChecker: this.mergeChecker,
+        riskPolicy: this.riskPolicy,
       });
     const db = this.runtimeRegistry?.db || this.eventLog?.db || null;
     this.sideEffectLog = db ? new SideEffectLog(db) : null;
@@ -194,7 +204,8 @@ export class LocalToadRuntime {
   }
 
   async launchAgent(input) {
-    const runtime = await this.supervisor.launchAgent(input);
+    const launchInput = this.#withToadMcpConfig(input);
+    const runtime = await this.supervisor.launchAgent(launchInput);
     const adapter = this.supervisor.getAdapter(runtime.runtimeId);
     if (adapter) {
       this.adapters.set(runtime.runtimeId, adapter);
@@ -216,6 +227,35 @@ export class LocalToadRuntime {
       }
     }
     return runtime;
+  }
+
+  #withToadMcpConfig(input) {
+    const args = Array.isArray(input?.args) ? input.args.map(String) : [];
+    if (!shouldInjectToadMcpConfig({
+      command: input?.command,
+      args,
+      dbPath: this.dbPath,
+      projectCwd: this.projectCwd,
+    })) {
+      return input;
+    }
+
+    const mcpConfigPath = writeToadMcpConfig({
+      projectCwd: this.projectCwd,
+      dbPath: this.dbPath,
+      teamId: input.teamId,
+      agentId: input.agentId,
+      role: resolveLaunchRole(input),
+      taskId: input.taskId,
+      runtimeId: input.runtimeId,
+    });
+
+    return {
+      ...input,
+      args: withClaudeMcpPermissions([...args, '--mcp-config', mcpConfigPath], {
+        skipPermissions: input.skipPermissions,
+      }),
+    };
   }
 
   async stopAgent(runtimeId, options) {
@@ -288,6 +328,13 @@ function closeIfSupported(component) {
   if (component && typeof component.close === 'function') {
     component.close();
   }
+}
+
+function resolveLaunchRole(input = {}) {
+  if (typeof input.role === 'string' && input.role.trim().length > 0) {
+    return input.role.trim();
+  }
+  return input.agentId === 'lead' ? 'lead' : 'developer';
 }
 
 function parseRetentionDaysEnv(raw) {

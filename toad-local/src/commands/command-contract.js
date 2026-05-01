@@ -29,6 +29,7 @@ export const COMMANDS = Object.freeze({
   TASK_PLAN_REJECT: 'task_plan_reject',
   DIAGNOSTICS_RUN: 'diagnostics_run',
   TASK_HISTORY_EXPORT: 'task_history_export',
+  TASK_HUMAN_APPROVE: 'task_human_approve',
 });
 
 export const MUTATING_COMMANDS = Object.freeze([
@@ -51,6 +52,7 @@ export const MUTATING_COMMANDS = Object.freeze([
   COMMANDS.TASK_PLAN_PROPOSE,
   COMMANDS.TASK_PLAN_APPROVE,
   COMMANDS.TASK_PLAN_REJECT,
+  COMMANDS.TASK_HUMAN_APPROVE,
 ]);
 
 export function commandRequiresIdempotency(commandName) {

@@ -15,6 +15,8 @@ export const TASK_EVENT_TYPES = Object.freeze({
   PLAN_REJECTED: 'task.plan_rejected',
   WORKTREE_CREATED: 'task.worktree_created',
   WORKTREE_REMOVED: 'task.worktree_removed',
+  RISK_CLASSIFIED: 'task.risk_classified',
+  HUMAN_APPROVED: 'task.human_approved',
 });
 
 export const TASK_STATUS = Object.freeze({
@@ -30,6 +32,8 @@ export const REVIEW_STATE = Object.freeze({
   NEEDS_FIX: 'needs_fix',
   APPROVED: 'approved',
 });
+
+export const TASK_RISK_LEVELS = Object.freeze(['low', 'medium', 'high', 'critical']);
 
 export class InMemoryTaskBoard {
   #events = [];
@@ -108,6 +112,12 @@ export function projectTask(events) {
     worktree: null,
     baseRef: null,
     baseBranch: null,
+    allowedFiles: [],
+    forbiddenFiles: [],
+    acceptanceCriteria: [],
+    riskLevel: null,
+    requiresHumanApproval: false,
+    humanApproval: { approved: false },
     validations: [],
     latestValidation: {},
     consecutiveTestFailures: 0,
@@ -135,6 +145,11 @@ export function projectTask(events) {
       if (typeof event.payload.baseBranch === 'string' && event.payload.baseBranch.length > 0) {
         task.baseBranch = event.payload.baseBranch;
       }
+      task.allowedFiles = normalizeStringList(event.payload.allowedFiles);
+      task.forbiddenFiles = normalizeStringList(event.payload.forbiddenFiles);
+      task.acceptanceCriteria = normalizeStringList(event.payload.acceptanceCriteria);
+      task.riskLevel = normalizeRiskLevel(event.payload.riskLevel);
+      task.requiresHumanApproval = event.payload.requiresHumanApproval === true;
     }
     if (event.eventType === TASK_EVENT_TYPES.ASSIGNED) {
       task.ownerId = event.payload.ownerId || null;
@@ -240,6 +255,30 @@ export function projectTask(events) {
         ...(typeof p.reason === 'string' ? { reason: p.reason } : {}),
       };
     }
+    if (event.eventType === TASK_EVENT_TYPES.RISK_CLASSIFIED) {
+      // §14: classifier may only ELEVATE riskLevel and FLIP requiresHumanApproval
+      // to true. Demotion via this event is ignored (the classifier is monotonic
+      // upward; an event that proposes a lower level is treated as a no-op).
+      const p = event.payload || {};
+      const proposedLevel = typeof p.riskLevel === 'string' ? p.riskLevel : null;
+      const currentRank = TASK_RISK_LEVELS.indexOf(task.riskLevel);
+      const proposedRank = TASK_RISK_LEVELS.indexOf(proposedLevel);
+      if (proposedRank > currentRank) {
+        task.riskLevel = proposedLevel;
+      }
+      if (p.requiresHumanApproval === true) {
+        task.requiresHumanApproval = true;
+      }
+    }
+    if (event.eventType === TASK_EVENT_TYPES.HUMAN_APPROVED) {
+      const p = event.payload || {};
+      task.humanApproval = {
+        approved: true,
+        approvedBy: event.actorId,
+        approvedAt: event.createdAt,
+        ...(typeof p.reason === 'string' && p.reason.length > 0 ? { reason: p.reason } : {}),
+      };
+    }
     if (event.eventType === TASK_EVENT_TYPES.VALIDATION_RUN) {
       const payload = event.payload || {};
       const kind = typeof payload.kind === 'string' ? payload.kind : null;
@@ -303,3 +342,14 @@ export function projectTask(events) {
   return task;
 }
 
+function normalizeStringList(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry) => typeof entry === 'string' && entry.trim().length > 0)
+    .map((entry) => entry.trim());
+}
+
+function normalizeRiskLevel(value) {
+  if (typeof value !== 'string') return null;
+  return TASK_RISK_LEVELS.includes(value) ? value : null;
+}
