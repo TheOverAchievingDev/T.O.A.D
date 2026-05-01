@@ -11,9 +11,10 @@ import { TeamConfig } from '../team/teamConfig.js';
 import { validateTaskStatusTransition } from '../task/taskLifecycle.js';
 import { assertRoleCanCallTool } from '../security/roleAuthority.js';
 import { runDiagnostics } from '../diagnostics/runDiagnostics.js';
+import { computeDiff as defaultComputeDiff } from '../task/diffComputer.js';
 
 export class LocalToolFacade {
-  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null }) {
+  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null }) {
     if (!broker) throw new TypeError('broker is required');
     if (!taskBoard) throw new TypeError('taskBoard is required');
     this.broker = broker;
@@ -30,6 +31,9 @@ export class LocalToolFacade {
     this.dbPath = typeof dbPath === 'string' && dbPath.length > 0 ? dbPath : null;
     this.eventLog = eventLog && typeof eventLog.appendEvent === 'function' ? eventLog : null;
     this.worktreeManager = worktreeManager && typeof worktreeManager.createForTask === 'function' ? worktreeManager : null;
+    this.diffComputer = diffComputer && typeof diffComputer.computeDiff === 'function'
+      ? diffComputer
+      : { computeDiff: defaultComputeDiff };
   }
 
   execute(command) {
@@ -291,6 +295,26 @@ export class LocalToolFacade {
     if (Array.isArray(args.files)) {
       const cleaned = args.files.filter((f) => typeof f === 'string' && f.length > 0);
       if (cleaned.length > 0) payload.files = cleaned;
+    }
+    // §7 finished: when caller didn't supply diff/files AND the task has an
+    // active worktree, ask the orchestrator to compute the real diff against
+    // the base ref. Operator-supplied diff always wins (covers cases like
+    // squash-rebase summaries the orchestrator can't reconstruct).
+    if (!payload.diff && !payload.files) {
+      const task = this.taskBoard.getTask({ teamId: actor.teamId, taskId });
+      const wt = task?.worktree;
+      if (wt && wt.status === 'created' && wt.path && wt.baseRef) {
+        let computed;
+        try {
+          computed = this.diffComputer.computeDiff({ worktreePath: wt.path, baseRef: wt.baseRef });
+        } catch (err) {
+          computed = { diff: null, files: [], error: err && err.message ? err.message : String(err) };
+        }
+        if (computed && typeof computed.diff === 'string') payload.diff = computed.diff;
+        if (computed && Array.isArray(computed.files) && computed.files.length > 0) {
+          payload.files = computed.files;
+        }
+      }
     }
     this.taskBoard.appendEvent({
       teamId: actor.teamId,

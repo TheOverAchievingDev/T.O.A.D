@@ -1855,6 +1855,193 @@ test('LocalToolFacade does not trigger worktree creation when no manager is conf
   assert.equal(task.worktree, null);
 });
 
+// --- §7 finished: review_request auto-computes diff against task worktree ---
+
+test('review_request auto-computes diff and files when task has worktree and caller omits both', async () => {
+  const fakeWorktreeManager = {
+    createForTask({ teamId, taskId }) {
+      return {
+        status: 'created',
+        path: `/tmp/wt/${teamId}/${taskId}`,
+        branch: `toad/${teamId}/${taskId}`,
+        baseRef: 'base-sha',
+        createdAt: '2026-05-01T00:00:00.000Z',
+      };
+    },
+  };
+  const fakeDiffComputer = {
+    computeDiff({ worktreePath, baseRef }) {
+      assert.equal(worktreePath, '/tmp/wt/team-a/dx-1');
+      assert.equal(baseRef, 'base-sha');
+      return { diff: 'diff --git a/x.js ...', files: ['x.js', 'y.js'] };
+    },
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    worktreeManager: fakeWorktreeManager,
+    diffComputer: fakeDiffComputer,
+  });
+  // Walk task to a state where review_request makes sense
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'dx-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'dx-1', subject: 'diff', status: 'pending' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'dx-ready',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'dx-1', status: 'ready' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_PROPOSE,
+    idempotencyKey: 'dx-plan',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'dx-1', summary: 's' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_APPROVE,
+    idempotencyKey: 'dx-app',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'dx-1' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'dx-planned',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'dx-1', status: 'planned' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'dx-ip',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'dx-1', status: 'in_progress' },
+  });
+  // No diff or files supplied — orchestrator computes them
+  facade.execute({
+    commandName: COMMANDS.REVIEW_REQUEST,
+    idempotencyKey: 'dx-rev',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'dx-1', summary: 'please review' },
+  });
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'dx-1' });
+  assert.equal(task.review.diff, 'diff --git a/x.js ...');
+  assert.deepEqual(task.review.files, ['x.js', 'y.js']);
+});
+
+test('review_request preserves caller-supplied diff/files (operator override wins)', () => {
+  const fakeDiffComputer = {
+    computeDiff() {
+      // Should not be called when caller supplies diff
+      throw new Error('diff computer should not run when caller provides diff');
+    },
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    diffComputer: fakeDiffComputer,
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'dx2-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'dx-2', subject: 'diff2' },
+  });
+  facade.execute({
+    commandName: COMMANDS.REVIEW_REQUEST,
+    idempotencyKey: 'dx2-rev',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'dx-2', diff: 'caller diff', files: ['caller.js'] },
+  });
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'dx-2' });
+  assert.equal(task.review.diff, 'caller diff');
+  assert.deepEqual(task.review.files, ['caller.js']);
+});
+
+test('review_request without worktree leaves diff/files unset (no auto-compute)', () => {
+  const fakeDiffComputer = {
+    computeDiff() {
+      throw new Error('should not be called when no worktree');
+    },
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    diffComputer: fakeDiffComputer,
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'dx3-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'dx-3', subject: 'no wt' },
+  });
+  facade.execute({
+    commandName: COMMANDS.REVIEW_REQUEST,
+    idempotencyKey: 'dx3-rev',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'dx-3', summary: 's' },
+  });
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'dx-3' });
+  assert.equal(task.review.diff, null);
+  assert.deepEqual(task.review.files, []);
+});
+
+test('review_request tolerates diffComputer errors (best-effort, no diff/files attached)', () => {
+  const fakeWorktreeManager = {
+    createForTask: ({ teamId, taskId }) => ({
+      status: 'created', path: `/tmp/${teamId}/${taskId}`, branch: 'b', baseRef: 'r', createdAt: 'now',
+    }),
+  };
+  const fakeDiffComputer = {
+    computeDiff() {
+      return { diff: null, files: [], error: 'git is busted' };
+    },
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    worktreeManager: fakeWorktreeManager,
+    diffComputer: fakeDiffComputer,
+  });
+  // Quick path to a task with worktree
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'dx4-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'dx-4', subject: 's', status: 'ready' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_PROPOSE,
+    idempotencyKey: 'dx4-plan',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'dx-4', summary: 's' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_APPROVE,
+    idempotencyKey: 'dx4-app',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'dx-4' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'dx4-planned',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'dx-4', status: 'planned' },
+  });
+  // Should not throw despite diff error
+  facade.execute({
+    commandName: COMMANDS.REVIEW_REQUEST,
+    idempotencyKey: 'dx4-rev',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'dx-4', summary: 's' },
+  });
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'dx-4' });
+  assert.equal(task.review.diff, null);
+  assert.deepEqual(task.review.files, []);
+});
+
 // --- §8 slice 3: worktree removal on done ---
 
 test('LocalToolFacade calls worktreeManager.removeForTask when a task transitions merge_ready → done', async () => {

@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-05-01 local session (worktree-per-task slice 3 — checklist §8)
+Last updated: 2026-05-01 local session (diff tracking finished — checklist §7)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,33 @@ Important files:
 
 ## Latest Completed Slices
 
-### 0. Worktree per Task — Checklist §8, slice 3 (latest)
+### 0. Diff Tracking — Checklist §7 finished (latest)
+
+Now that worktrees exist (§8), the orchestrator can compute the real diff itself rather than trusting whatever the agent passes in. The `review_request` tool now auto-attaches `diff` + `files` from `git diff baseRef..HEAD` inside the task's worktree when the caller omits them.
+
+New files:
+
+- `src/task/diffComputer.js` — `computeDiff({ worktreePath, baseRef, runGit })`. Runs `git diff baseRef..HEAD --name-only` then `git diff baseRef..HEAD`, both with `cwd: worktreePath`. Returns `{ diff, files }` on success or `{ diff: null, files: [], error }` on failure. Best-effort — input validation returns errors rather than throwing.
+- `test/diffComputer.test.js` — 6 unit tests: name-only + full diff, empty result, name-list failure, missing worktreePath, missing baseRef, blank-line filtering.
+
+Modified files:
+
+- `src/tools/localToolFacade.js`:
+  - Constructor accepts optional `diffComputer` (defaults to `{ computeDiff: defaultComputeDiff }` from `diffComputer.js`).
+  - `#reviewRequest`: when caller passes neither `diff` nor `files` AND the task projection shows `worktree.status === 'created'` with a `path` and `baseRef`, calls the diff computer and attaches the result. Caller-supplied diff always wins (operator override). Wraps the call in try/catch — a thrown computer is treated as an error result, transition still completes.
+- `test/localToolFacade.test.js` — 4 new tests (now 71 total): auto-compute when caller omits both, caller override preserved, no auto-compute without worktree, best-effort tolerance of computer errors.
+- `package.json` — `diffComputer.test.js` added to npm test chain.
+- `docs/CHECKLIST_GAP_MATRIX.md` — §7 flipped from PARTIAL to REAL (partial). Out-of-scope file flagging deferred (depends on §1 `allowedFiles`).
+
+Why orchestrator-computed:
+
+- Trust boundary: the agent describes intent ("I changed parser.js to fix unicode"), the orchestrator describes reality ("here's the actual git diff"). They can disagree.
+- Audit completeness: `task.review.diff` and `task.review.files` are now provably the real diff, not a self-report.
+- Scope drift detection (§13 future): a future failure detector can compare `task.review.files` against `task.plan.filesExpectedToChange` and flag mismatches.
+
+Tests pass: 35 backend test files, 373 individual tests, 0 fail.
+
+### 1. Worktree per Task — Checklist §8, slice 3
 
 Worktree cleanup half. When a task completes (`merge_ready → done`), the orchestrator runs `git worktree remove --force` on the task's worktree. The branch (`toad/${teamId}/${taskId}`) is preserved so merge history stays reachable from the mainline ref. **`rejected` does NOT auto-remove** — the operator may want to triage WIP before deletion; a future manual cleanup tool will handle that case.
 
@@ -1659,8 +1685,9 @@ Anchored to the checklist's own priority order (full detail in `docs/CHECKLIST_G
 7. ✅ Worktree-per-task slice 1 (§8) — done. Creation half: orchestrator runs `git worktree add` on `ready → planned`; projection picks up `task.worktree`.
 8. ✅ Worktree-per-task slice 2 (§8) — done. `agent_launch` cwd enforcement: auto-set or reject based on `task.worktree.path`.
 9. ✅ Worktree-per-task slice 3 (§8) — done. `removeForTask` runs `git worktree remove --force` on `done`. Branch preserved. `rejected` does not auto-remove.
-10. **Worktree slice 4 — NEXT.** Explicit `task.baseRef` at task creation (currently HEAD-at-planning). Smaller than the previous three.
-11. **Diff tracking (§7 finished) → merge workflow (§19).** Now unblocked by §8.
+10. ✅ Diff tracking (§7 finished) — done. `computeDiff` runs `git diff baseRef..HEAD` inside the worktree; `review_request` auto-attaches when caller omits.
+11. **Worktree slice 4 — NEXT.** Explicit `task.baseRef` at task creation (currently HEAD-at-planning).
+12. **Merge workflow (§19).** Orchestrator-run rebase + merge on `merge_ready → done`, with conflict detection.
 10. Smaller follow-ups: failure detection (§13), WIP limits (§9), dependency enforcement (§10), notifications, knowledge propagation.
 
 Parked / out of scope now:
