@@ -10,6 +10,7 @@ import { RuntimeSupervisor } from '../runtime/RuntimeSupervisor.js';
 import { SqliteRuntimeEventLog } from '../runtime/sqliteRuntimeEventLog.js';
 import { SqliteRuntimeRegistry } from '../runtime/sqliteRuntimeRegistry.js';
 import { SqliteTaskBoard } from '../task/sqliteTaskBoard.js';
+import { SqliteTeamConfigRegistry } from '../team/sqliteTeamConfigRegistry.js';
 import { LocalToolFacade } from '../tools/localToolFacade.js';
 import { ApiServer } from '../transport/apiServer.js';
 import { SideEffectLog } from '../delivery/sideEffectLog.js';
@@ -23,6 +24,7 @@ export class LocalToadRuntime {
     runtimeDirectory = new RuntimeDirectory(),
     runtimeRegistry = null,
     eventLog = null,
+    teamConfigRegistry = null,
     adapters = new Map(),
     projectCwd = null,
     spawnProcess,
@@ -43,6 +45,7 @@ export class LocalToadRuntime {
     this.runtimeDirectory = runtimeDirectory;
     this.runtimeRegistry = runtimeRegistry || new SqliteRuntimeRegistry({ filePath: dbPath });
     this.eventLog = eventLog || new SqliteRuntimeEventLog({ filePath: dbPath });
+    this.teamConfigRegistry = teamConfigRegistry || new SqliteTeamConfigRegistry({ filePath: dbPath });
     this.adapters = adapters;
     this.projectCwd = projectCwd;
     this.dbPath = dbPath;
@@ -84,6 +87,7 @@ export class LocalToadRuntime {
         launchAgent: (input) => this.launchAgent(input),
         stopAgent: ({ runtimeId, signal } = {}) =>
           this.stopAgent(runtimeId, signal ? { signal } : undefined),
+        teamConfigRegistry: this.teamConfigRegistry,
       });
     const db = this.runtimeRegistry?.db || this.eventLog?.db || null;
     this.sideEffectLog = db ? new SideEffectLog(db) : null;
@@ -237,6 +241,7 @@ export class LocalToadRuntime {
     closeIfSupported(this.eventLog);
     closeIfSupported(this.runtimeRegistry);
     closeIfSupported(this.approvalBroker);
+    closeIfSupported(this.teamConfigRegistry);
     closeIfSupported(this.taskBoard);
     closeIfSupported(this.broker);
   }

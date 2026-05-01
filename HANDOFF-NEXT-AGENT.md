@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-04-30 local session (agent_stop MCP tool)
+Last updated: 2026-04-30 local session (persistent team config + CRUD tools)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,40 @@ Important files:
 
 ## Latest Completed Slices
 
-### 1. `agent_stop` MCP Tool (latest)
+### 1. Persistent Team Config + CRUD Tools (latest)
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-persistent-team-config.md`
+
+First slice of the team-lifecycle decomposition. Foundation work: extend the team-config schema to include actual launch parameters, add a SQLite-backed registry, expose the three CRUD tools. The orchestration pair (`team_launch` / `team_stop`) is the next slice — kept separate because it adds new failure modes (partial-launch idempotency) that deserve their own design pass.
+
+Modified files:
+
+- `src/team/teamConfig.js` — `TeamConfig` member schema extended with `command`, `args`, `cwd`, `env`, `providerId`, `prompt` (plus a `toJSON()` for round-trip persistence). Backward-compatible defaults; the existing teamConfig.test.js cases keep working.
+- `src/team/sqliteTeamConfigRegistry.js` — NEW. Mirrors the existing SqliteBroker / SqliteTaskBoard / SqliteApprovalBroker shape. `registerTeam` upserts on conflict (legacy parity — operators iterate without a delete-then-create dance). Adds `deleteTeam` + `close` beyond the in-memory registry's API.
+- `src/storage/schema.sql` — new `team_configs(team_id, config_json, created_at, updated_at)` table.
+- `src/commands/command-contract.js` — `TEAM_CREATE`, `TEAM_LIST`, `TEAM_DELETE`. Create + Delete are mutating.
+- `src/mcp/localToolDefinitions.js` — three new tool defs plus a shared `TEAM_MEMBER_SCHEMA` constant.
+- `src/tools/localToolFacade.js` — accepts `teamConfigRegistry`; routes the three commands through new `#teamCreate` / `#teamList` / `#teamDelete` handlers.
+- `src/app/LocalToadRuntime.js` — constructs `SqliteTeamConfigRegistry({ filePath: dbPath })` by default; passes it to the facade and closes it on shutdown.
+- `test/teamConfig.test.js` — 2 new tests (now 7 total) for the extended schema.
+- `test/sqliteTeamConfigRegistry.test.js` — NEW with 7 tests including a persistence round-trip across two instances against the same dbPath.
+- `test/localToolFacade.test.js` — 2 new tests (now 22 total) for the team-tool routing.
+- `test/localMcpToolDefinitions.test.js` — three new tools added to the expected names list and the mutating/read-only assertions.
+- `package.json` — adds `node test/sqliteTeamConfigRegistry.test.js` to the test chain (now 28 test files).
+
+Verification during slice:
+
+```powershell
+node test/teamConfig.test.js
+node test/sqliteTeamConfigRegistry.test.js
+node test/localToolFacade.test.js
+node test/localMcpToolDefinitions.test.js
+npm.cmd test
+```
+
+### 2. `agent_stop` MCP Tool
 
 Plan file:
 
@@ -1186,7 +1219,7 @@ Remaining gaps worth tracking:
 Recommended next slice (pick one):
 
 1. **Subscription quota / plan-usage indicator** — parked. The user wants a "circle indicator" on startup showing Claude (and eventually Codex) plan usage. Investigation found that `--print "/usage"` is a $0 client-side slash command but only returns an auth-status string — the rich quota panel is rendered by the interactive TUI from an undocumented Anthropic API call. `~/.claude/stats-cache.json` has historical activity but not subscription windows. The user is independently investigating reliable data sources before this slice resumes.
-2. **Team lifecycle (`team_create` / `team_launch` / `team_stop` / `team_list` / `team_delete`)** — TOAD has individual `agent_launch`/`agent_stop` plus a `TeamConfig` registry, but no MCP tools to manage a team as a unit. Legacy `TEAM_CREATE` / `TEAM_LAUNCH` / `TEAM_STOP` / `TEAM_DELETE` orchestrate provisioning the lead + teammates together. Architectural slice — defines what a "team launch" means in TOAD's broker/supervisor model.
+2. **Team orchestration (`team_launch` / `team_stop`)** — the CRUD half of team lifecycle is now in place (`team_create`/`team_list`/`team_delete` against a persistent SqliteTeamConfigRegistry). The remaining half is launching/stopping all members of a team as a unit. Implementation will loop over `agent_launch` for the lead + teammates, with deterministic `runtime-<teamId>-<agentId>` IDs derived at launch time. Failure modes worth designing carefully: partial launches (lead succeeds, teammate fails) and idempotency on retry.
 3. **Code review with diffs** — legacy `review.ts` stores per-task diff content and supports file-level accept/reject. TOAD's `review_request` / `review_decide` work on task IDs only. Needs a diff-content store + new tool surface.
 4. **Notifications** — legacy `notifications.ts` defines typed alert categories (task completion, agent attention, errors). TOAD has the raw event bus; needs a notification projection on top.
 5. **`team_process_send`** — legacy lets you send a message to a specific runtime's stdin. TOAD's adapters expose this internally; small slice to wrap it.
@@ -1347,6 +1380,10 @@ rg -n "permission|control_request|approval|runtime adapter|watcher|relay" C:\Pro
 - `C:\Project-TOAD\toad-local\test\localMcpToolDefinitions.test.js`
 - `C:\Project-TOAD\toad-local\ui\src\components\Dashboard.jsx`
 - `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-agent-stop-tool.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-persistent-team-config.md`
+- `C:\Project-TOAD\toad-local\src\team\teamConfig.js`
+- `C:\Project-TOAD\toad-local\src\team\sqliteTeamConfigRegistry.js`
+- `C:\Project-TOAD\toad-local\test\sqliteTeamConfigRegistry.test.js`
 
 ## Suggested Opening Move For Next Agent
 

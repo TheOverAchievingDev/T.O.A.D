@@ -174,3 +174,10 @@ CREATE TABLE IF NOT EXISTS side_effect_deliveries (
   created_at     TEXT NOT NULL,
   delivered_at   TEXT
 );
+
+CREATE TABLE IF NOT EXISTS team_configs (
+  team_id     TEXT PRIMARY KEY,
+  config_json TEXT NOT NULL,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);

@@ -16,6 +16,9 @@ export const COMMANDS = Object.freeze({
   CROSS_TEAM_SEND: 'cross_team_send',
   AGENT_LAUNCH: 'agent_launch',
   AGENT_STOP: 'agent_stop',
+  TEAM_CREATE: 'team_create',
+  TEAM_LIST: 'team_list',
+  TEAM_DELETE: 'team_delete',
 });
 
 export const MUTATING_COMMANDS = Object.freeze([
@@ -29,6 +32,8 @@ export const MUTATING_COMMANDS = Object.freeze([
   COMMANDS.CROSS_TEAM_SEND,
   COMMANDS.AGENT_LAUNCH,
   COMMANDS.AGENT_STOP,
+  COMMANDS.TEAM_CREATE,
+  COMMANDS.TEAM_DELETE,
 ]);
 
 export function commandRequiresIdempotency(commandName) {

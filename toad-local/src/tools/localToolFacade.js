@@ -6,9 +6,10 @@ import {
 } from '../task/inMemoryTaskBoard.js';
 import { applyPermissionSuggestions } from '../runtime/claudeSettingsWriter.js';
 import { formatCrossTeamText, CROSS_TEAM_SOURCE, CROSS_TEAM_SENT_SOURCE } from '../protocol/crossTeam.js';
+import { TeamConfig } from '../team/teamConfig.js';
 
 export class LocalToolFacade {
-  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null }) {
+  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null }) {
     if (!broker) throw new TypeError('broker is required');
     if (!taskBoard) throw new TypeError('taskBoard is required');
     this.broker = broker;
@@ -20,6 +21,7 @@ export class LocalToolFacade {
     this.readModel = readModel;
     this.launchAgent = typeof launchAgent === 'function' ? launchAgent : null;
     this.stopAgent = typeof stopAgent === 'function' ? stopAgent : null;
+    this.teamConfigRegistry = teamConfigRegistry;
   }
 
   execute(command) {
@@ -65,6 +67,12 @@ export class LocalToolFacade {
         return this.#agentLaunch(actor, args);
       case COMMANDS.AGENT_STOP:
         return this.#agentStop(actor, args);
+      case COMMANDS.TEAM_CREATE:
+        return this.#teamCreate(actor, args);
+      case COMMANDS.TEAM_LIST:
+        return this.#teamList(actor);
+      case COMMANDS.TEAM_DELETE:
+        return this.#teamDelete(actor, args);
       default:
         throw new Error(`unsupported command: ${commandName}`);
     }
@@ -385,6 +393,37 @@ export class LocalToolFacade {
     const input = { runtimeId };
     if (typeof args.signal === 'string' && args.signal.length > 0) input.signal = args.signal;
     return this.stopAgent(input);
+  }
+
+  #teamCreate(actor, args) {
+    if (!this.teamConfigRegistry) {
+      throw new Error('teamConfigRegistry is not configured on this facade');
+    }
+    const config = new TeamConfig({
+      teamId: requireString(args.teamId, 'args.teamId'),
+      lead: args.lead || {},
+      teammates: Array.isArray(args.teammates) ? args.teammates : [],
+    });
+    this.teamConfigRegistry.registerTeam(config);
+    return config.toJSON ? config.toJSON() : { teamId: config.teamId, lead: config.lead, teammates: config.teammates };
+  }
+
+  #teamList(actor) {
+    if (!this.teamConfigRegistry) {
+      throw new Error('teamConfigRegistry is not configured on this facade');
+    }
+    return this.teamConfigRegistry.listTeams().map((c) =>
+      c.toJSON ? c.toJSON() : { teamId: c.teamId, lead: c.lead, teammates: c.teammates },
+    );
+  }
+
+  #teamDelete(actor, args) {
+    if (!this.teamConfigRegistry) {
+      throw new Error('teamConfigRegistry is not configured on this facade');
+    }
+    const teamId = requireString(args.teamId, 'args.teamId');
+    const deleted = this.teamConfigRegistry.deleteTeam(teamId);
+    return { teamId, deleted };
   }
 }
 

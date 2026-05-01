@@ -11,6 +11,21 @@ const RECIPIENT_SCHEMA = Object.freeze({
   },
 });
 
+const TEAM_MEMBER_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  required: ['agentId'],
+  properties: {
+    agentId: { type: 'string', minLength: 1 },
+    command: { type: 'string', minLength: 1 },
+    args: { type: 'array', items: { type: 'string' } },
+    cwd: { type: 'string', minLength: 1 },
+    env: { type: 'object', additionalProperties: { type: 'string' } },
+    providerId: { type: 'string', minLength: 1 },
+    prompt: { type: 'string' },
+  },
+});
+
 const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
   makeTool({
     name: COMMANDS.AGENT_STATUS,
@@ -204,6 +219,36 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
     properties: {
       runtimeId: { type: 'string', minLength: 1 },
       signal: { type: 'string', enum: ['SIGTERM', 'SIGINT', 'SIGKILL'] },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.TEAM_CREATE,
+    title: 'Create / Update Team Config',
+    description: 'Persist a team configuration (lead + teammates with their launch parameters). Upserts on teamId.',
+    required: ['teamId'],
+    properties: {
+      teamId: { type: 'string', minLength: 1 },
+      lead: TEAM_MEMBER_SCHEMA,
+      teammates: {
+        type: 'array',
+        items: TEAM_MEMBER_SCHEMA,
+      },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.TEAM_LIST,
+    title: 'List Team Configs',
+    description: 'Return all persisted team configurations.',
+    required: [],
+    properties: {},
+  }),
+  makeTool({
+    name: COMMANDS.TEAM_DELETE,
+    title: 'Delete Team Config',
+    description: 'Remove a team configuration. Does not stop running runtimes — call agent_stop / team_stop first.',
+    required: ['teamId'],
+    properties: {
+      teamId: { type: 'string', minLength: 1 },
     },
   }),
 ]);

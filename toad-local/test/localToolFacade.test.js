@@ -500,6 +500,70 @@ test('LocalToolFacade rejects agent_launch when no launchAgent callback is confi
   );
 });
 
+test('LocalToolFacade routes team_create / team_list / team_delete through the team config registry', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    teamConfigRegistry: new (class {
+      teams = new Map();
+      registerTeam(config) { this.teams.set(config.teamId, config); }
+      getTeam(teamId) { return this.teams.get(teamId) || null; }
+      listTeams() { return [...this.teams.values()]; }
+      deleteTeam(teamId) { return this.teams.delete(teamId); }
+    })(),
+  });
+
+  // Create
+  const created = facade.execute({
+    commandName: COMMANDS.TEAM_CREATE,
+    idempotencyKey: 'team-create-1',
+    actor: { teamId: 'team-a', agentId: 'operator' },
+    args: {
+      teamId: 'team-alpha',
+      lead: { agentId: 'lead', command: 'claude', prompt: 'be brief' },
+      teammates: [{ agentId: 'worker-1' }],
+    },
+  });
+  assert.equal(created.teamId, 'team-alpha');
+  assert.equal(created.lead.command, 'claude');
+  assert.equal(created.teammates[0].agentId, 'worker-1');
+
+  // List
+  const list = facade.execute({
+    commandName: COMMANDS.TEAM_LIST,
+    actor: { teamId: 'team-a', agentId: 'operator' },
+  });
+  assert.equal(list.length, 1);
+  assert.equal(list[0].teamId, 'team-alpha');
+
+  // Delete
+  const deleteResult = facade.execute({
+    commandName: COMMANDS.TEAM_DELETE,
+    idempotencyKey: 'team-delete-1',
+    actor: { teamId: 'team-a', agentId: 'operator' },
+    args: { teamId: 'team-alpha' },
+  });
+  assert.equal(deleteResult.deleted, true);
+  assert.equal(facade.execute({
+    commandName: COMMANDS.TEAM_LIST,
+    actor: { teamId: 'team-a', agentId: 'operator' },
+  }).length, 0);
+});
+
+test('LocalToolFacade rejects team_* commands when no teamConfigRegistry is configured', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  assert.throws(
+    () => facade.execute({
+      commandName: COMMANDS.TEAM_LIST,
+      actor: { teamId: 'team-a', agentId: 'operator' },
+    }),
+    /teamConfigRegistry is not configured/,
+  );
+});
+
 test('LocalToolFacade routes agent_stop to the stopAgent callback', async () => {
   const calls = [];
   const facade = new LocalToolFacade({
