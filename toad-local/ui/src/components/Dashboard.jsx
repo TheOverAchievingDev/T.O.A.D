@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useToadEvents } from '../hooks/useToadEvents';
 import { useToadApi } from '../hooks/useToadApi';
-import { Activity, Server, Check, CheckCircle, MessageSquare, Send, ShieldAlert, Trash2, Wrench, X, Zap, Clock } from 'lucide-react';
+import { Activity, Database, Server, Check, CheckCircle, MessageSquare, Send, ShieldAlert, Trash2, Wrench, X, Zap, Clock } from 'lucide-react';
 
 export default function Dashboard() {
   const { connected, events, lastEvent } = useToadEvents();
@@ -53,6 +53,10 @@ export default function Dashboard() {
   );
   const lastPrune = useMemo(
     () => events.find(event => event?.type === 'side_effects_pruned') || null,
+    [events],
+  );
+  const lastVacuum = useMemo(
+    () => events.find(event => event?.type === 'database_vacuumed') || null,
     [events],
   );
   const selectedRuntime = runtimes.find(runtime => runtime.runtimeId === selectedRuntimeId) || null;
@@ -247,7 +251,7 @@ export default function Dashboard() {
             updates on each <code>start()</code>
           </span>
         </div>
-        <div style={{ padding: '1rem 1.5rem', display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
+        <div style={{ padding: '1rem 1.5rem', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
           <HousekeepingCell
             icon={<Trash2 size={16} />}
             label="Last restart cleanup"
@@ -262,6 +266,7 @@ export default function Dashboard() {
             unit="row"
             emptyText="No prune events this session"
           />
+          <VacuumCell event={lastVacuum} />
         </div>
       </div>
 
@@ -711,6 +716,37 @@ function HousekeepingCell({ icon, label, event, unit, emptyText }) {
       </div>
       <div className="stat-value">{count}</div>
       <div className="stat-label">{unitLabel} · {formatRelativeTime(event.createdAt)}</div>
+    </div>
+  );
+}
+
+function VacuumCell({ event }) {
+  if (!event) {
+    return (
+      <div className="glass-card" style={{ padding: '1rem' }}>
+        <div className="card-header" style={{ marginBottom: '0.5rem' }}>
+          <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Database size={16} /> Last database vacuum
+          </span>
+        </div>
+        <div className="empty-state" style={{ padding: '0.5rem 0' }}>
+          <p style={{ margin: 0 }}>No vacuum events this session</p>
+        </div>
+      </div>
+    );
+  }
+  const before = Number.isFinite(event.freelistBefore) ? event.freelistBefore : 0;
+  const after = Number.isFinite(event.freelistAfter) ? event.freelistAfter : 0;
+  const reclaimed = Math.max(0, before - after);
+  return (
+    <div className="glass-card" style={{ padding: '1rem' }}>
+      <div className="card-header" style={{ marginBottom: '0.5rem' }}>
+        <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Database size={16} /> Last database vacuum
+        </span>
+      </div>
+      <div className="stat-value">{reclaimed}</div>
+      <div className="stat-label">freelist {reclaimed === 1 ? 'page' : 'pages'} reclaimed · {formatRelativeTime(event.createdAt)}</div>
     </div>
   );
 }

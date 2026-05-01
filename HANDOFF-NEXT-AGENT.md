@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-04-30 local session (broker/taskBoard durability swap)
+Last updated: 2026-04-30 local session (VACUUM on retention)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,36 @@ Important files:
 
 ## Latest Completed Slices
 
-### 1. Broker / TaskBoard Durability Swap (latest)
+### 1. VACUUM On Retention (latest)
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-vacuum-on-retention.md`
+
+Modified files:
+
+- `src/app/LocalToadRuntime.js` — new `vacuumDatabase()` method that returns `{ vacuumed, reason, freelistBefore, freelistAfter }`; runs `VACUUM` on the registry/eventLog/approvalBroker SQLite connection (whichever is available). `start()` now invokes it after a non-zero `pruneSideEffectLog()` and emits a `database_vacuumed` `runtime_event`.
+- `test/localToadRuntime.test.js` — 3 new tests (now 23 total): freelist_count drops to 0 after vacuum on a seeded-then-deleted real DB; in-memory dbPath returns `{ vacuumed: false, reason: 'in_memory' }`; `start()` emits `database_vacuumed` when prune did non-zero work.
+- `ui/src/components/Dashboard.jsx` — System Housekeeping panel widened from 2 to 3 columns; new `VacuumCell` displays freelist pages reclaimed and relative time of the last vacuum.
+
+Behavior:
+
+- After `pruneSideEffectLog()` deletes rows, those pages move to SQLite's freelist but the file does not shrink. `VACUUM` reclaims them. Without this, a long-running install's `<projectCwd>/.toad/toad.db` grew monotonically.
+- VACUUM only runs when prune actually deleted rows — clean restarts are silent.
+- `:memory:` and stub-injected setups skip cleanly with explicit reason codes.
+- The new event flows through the existing SSE bus and into the dashboard's housekeeping panel automatically.
+
+Verification during slice:
+
+```powershell
+node test/localToadRuntime.test.js
+npm.cmd test
+cd ui
+npm.cmd run lint
+npm.cmd run build
+```
+
+### 2. Broker / TaskBoard Durability Swap
 
 Plan file:
 
@@ -1073,10 +1102,9 @@ Remaining gaps worth tracking:
 Recommended next slice (pick one):
 
 1. **Subscription quota / plan-usage indicator** — parked. The user wants a "circle indicator" on startup showing Claude (and eventually Codex) plan usage. Investigation found that `--print "/usage"` is a $0 client-side slash command but only returns an auth-status string — the rich quota panel is rendered by the interactive TUI from an undocumented Anthropic API call. `~/.claude/stats-cache.json` has historical activity but not subscription windows. The user is independently investigating reliable data sources before this slice resumes.
-2. **VACUUM on retention** — `DELETE` releases SQLite pages to the freelist but does not shrink the file. Now that all five storage surfaces write to a real `<projectCwd>/.toad/toad.db`, periodic `VACUUM` (or `PRAGMA auto_vacuum = INCREMENTAL` + `PRAGMA incremental_vacuum`) is meaningfully impactful and can be invoked from `LocalToadRuntime.start()` after `pruneSideEffectLog()`.
-3. **Backend secret rotation / token-on-disk** — `TOAD_API_TOKEN` lives in shell env. For long-running daemons, persisting the token in a config file with a rotate command would be more ergonomic.
-4. **Optional `--bare` smoke variant** — add a parallel smoke path that uses `--bare` when `ANTHROPIC_API_KEY` is set in the environment, for users on direct API auth. The current smoke covers the subscription-OAuth path; the `--bare` path covers API-key auth.
-5. **Codex provider integration** — TOAD currently only spawns Claude runtimes. The legacy app had a full `codex-account` feature (rate-limit windows, ChatGPT auth, model selection). Adding Codex as a runtime provider is a much larger scoped slice.
+2. **Backend secret rotation / token-on-disk** — `TOAD_API_TOKEN` lives in shell env. For long-running daemons, persisting the token in a config file with a rotate command would be more ergonomic.
+3. **Optional `--bare` smoke variant** — add a parallel smoke path that uses `--bare` when `ANTHROPIC_API_KEY` is set in the environment, for users on direct API auth. The current smoke covers the subscription-OAuth path; the `--bare` path covers API-key auth.
+4. **Codex provider integration** — TOAD currently only spawns Claude runtimes. The legacy app had a full `codex-account` feature (rate-limit windows, ChatGPT auth, model selection). Adding Codex as a runtime provider is a much larger scoped slice.
 
 Workflow reminders:
 
@@ -1218,6 +1246,7 @@ rg -n "permission|control_request|approval|runtime adapter|watcher|relay" C:\Pro
 - `C:\Project-TOAD\toad-local\.gitignore`
 - `C:\Project-TOAD\toad-local\README.md`
 - `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-broker-taskboard-durability.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-vacuum-on-retention.md`
 
 ## Suggested Opening Move For Next Agent
 

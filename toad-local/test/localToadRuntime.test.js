@@ -460,6 +460,79 @@ test('LocalToadRuntime.close() does not throw when start() was never called', as
   await runtime.close();
 });
 
+test('LocalToadRuntime.vacuumDatabase reduces freelist_count to 0 on a real DB', async (t) => {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'toad-vacuum-'));
+  const dbPath = join(tmpDir, 'toad.db');
+  t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+
+  const runtime = new LocalToadRuntime({ port: 0, dbPath });
+  // Seed enough rows that deletion produces freelist pages.
+  for (let i = 0; i < 200; i++) {
+    runtime.sideEffectLog.markPending({
+      deliveryId: `d-${i}`,
+      idempotencyKey: `tool-result:vacuum-${i}`,
+      kind: 'tool_result',
+      runtimeId: 'r1',
+    });
+    runtime.sideEffectLog.markDelivered(`tool-result:vacuum-${i}`);
+  }
+  // Delete them so pages move to the freelist.
+  runtime.runtimeRegistry.db.exec(`DELETE FROM side_effect_deliveries`);
+
+  const freelistBefore = runtime.runtimeRegistry.db
+    .prepare('PRAGMA freelist_count')
+    .get();
+  assert.ok(freelistBefore.freelist_count > 0, 'freelist must contain pages after deletes');
+
+  const result = runtime.vacuumDatabase();
+
+  assert.equal(result.vacuumed, true);
+  assert.equal(result.reason, 'success');
+  const freelistAfter = runtime.runtimeRegistry.db
+    .prepare('PRAGMA freelist_count')
+    .get();
+  assert.equal(freelistAfter.freelist_count, 0, 'VACUUM must release freelist pages');
+  await runtime.close();
+});
+
+test('LocalToadRuntime.vacuumDatabase is a no-op when dbPath is :memory:', () => {
+  const runtime = new LocalToadRuntime({ port: 0 });
+  const result = runtime.vacuumDatabase();
+  assert.equal(result.vacuumed, false);
+  assert.equal(result.reason, 'in_memory');
+});
+
+test('LocalToadRuntime.start() emits database_vacuumed when prune did non-zero work', async (t) => {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'toad-vac-emit-'));
+  const dbPath = join(tmpDir, 'toad.db');
+  t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+
+  const runtime = new LocalToadRuntime({ port: 0, dbPath, sideEffectRetentionDays: 7 });
+  runtime.sideEffectLog.markPending({
+    deliveryId: 'd1',
+    idempotencyKey: 'tool-result:vac-emit',
+    kind: 'tool_result',
+    runtimeId: 'r1',
+  });
+  runtime.sideEffectLog.markDelivered('tool-result:vac-emit');
+  const longAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  runtime.runtimeRegistry.db
+    .prepare(`UPDATE side_effect_deliveries SET delivered_at = ? WHERE idempotency_key = 'tool-result:vac-emit'`)
+    .run(longAgo);
+
+  const seen = [];
+  const unsubscribe = runtime.eventBus.subscribe('runtime_event', (event) => seen.push(event));
+  try {
+    await runtime.start();
+    const vacuumEvents = seen.filter((event) => event.type === 'database_vacuumed');
+    assert.equal(vacuumEvents.length, 1);
+    assert.equal(vacuumEvents[0].deleted, 1);
+  } finally {
+    unsubscribe();
+    await runtime.close();
+  }
+});
+
 test('LocalToadRuntime persists messages and tasks across construction when dbPath is a real file', async (t) => {
   const tmpDir = mkdtempSync(join(tmpdir(), 'toad-msg-task-'));
   const dbPath = join(tmpDir, 'toad.db');

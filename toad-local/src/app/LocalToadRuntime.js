@@ -114,6 +114,16 @@ export class LocalToadRuntime {
         count: prune.deleted,
         createdAt: new Date().toISOString(),
       });
+      const vacuum = this.vacuumDatabase();
+      if (vacuum.vacuumed) {
+        this.eventBus.emit('runtime_event', {
+          type: 'database_vacuumed',
+          deleted: prune.deleted,
+          freelistBefore: vacuum.freelistBefore,
+          freelistAfter: vacuum.freelistAfter,
+          createdAt: new Date().toISOString(),
+        });
+      }
     }
     await this.apiServer.start();
   }
@@ -133,6 +143,16 @@ export class LocalToadRuntime {
       ? olderThan
       : new Date(Date.now() - this.sideEffectRetentionDays * 86_400_000);
     return { deleted: this.sideEffectLog.pruneOlderThan(cutoff) };
+  }
+
+  vacuumDatabase() {
+    if (this.dbPath === ':memory:') return { vacuumed: false, reason: 'in_memory' };
+    const db = this.runtimeRegistry?.db || this.eventLog?.db || this.approvalBroker?.db || null;
+    if (!db) return { vacuumed: false, reason: 'no_db_handle' };
+    const freelistBefore = db.prepare('PRAGMA freelist_count').get().freelist_count;
+    db.exec('VACUUM');
+    const freelistAfter = db.prepare('PRAGMA freelist_count').get().freelist_count;
+    return { vacuumed: true, reason: 'success', freelistBefore, freelistAfter };
   }
 
   async launchAgent(input) {
