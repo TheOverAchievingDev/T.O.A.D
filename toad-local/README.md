@@ -73,14 +73,26 @@ $env:VITE_TOAD_API_BASE_URL='http://127.0.0.1:3001'
 
 ### API Token (Optional)
 
-By default the local API has no authentication — anything that can reach the loopback port can drive the runtime. To require a shared-secret bearer token, set the same value on both sides before starting:
+By default the local API has no authentication — anything that can reach the loopback port can drive the runtime. To require a shared-secret bearer token, you have two options:
+
+**Option A — Generate and persist (recommended):**
+
+```powershell
+npm.cmd run token:generate
+# Token written to <projectCwd>/.toad/api-token (user-only on Unix, user-owned dir on Windows).
+# The script also prints the matching VITE_TOAD_API_TOKEN export for the UI side.
+```
+
+The orchestrator picks up `<projectCwd>/.toad/api-token` automatically on every `api:dev` run.
+
+**Option B — Per-shell environment:**
 
 ```powershell
 $env:TOAD_API_TOKEN='<your-secret>'           # backend (api:dev / LocalToadRuntime)
 $env:VITE_TOAD_API_TOKEN='<your-secret>'      # UI (Vite dev/build)
 ```
 
-When `TOAD_API_TOKEN` is unset the server runs in the existing no-auth mode.
+`TOAD_API_TOKEN` env wins over the on-disk file when both are set. With neither set and no on-disk token, the server runs in the existing no-auth mode.
 
 When set:
 

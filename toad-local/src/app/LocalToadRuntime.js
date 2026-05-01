@@ -13,6 +13,7 @@ import { SqliteTaskBoard } from '../task/sqliteTaskBoard.js';
 import { LocalToolFacade } from '../tools/localToolFacade.js';
 import { ApiServer } from '../transport/apiServer.js';
 import { SideEffectLog } from '../delivery/sideEffectLog.js';
+import { resolveApiToken } from '../runtime/resolveApiToken.js';
 
 export class LocalToadRuntime {
   constructor({
@@ -34,6 +35,7 @@ export class LocalToadRuntime {
     port = process.env.TOAD_API_PORT ? parseInt(process.env.TOAD_API_PORT, 10) : 3001,
     sideEffectRetentionDays = parseRetentionDaysEnv(process.env.TOAD_SIDE_EFFECT_RETENTION_DAYS),
     dbPath = ':memory:',
+    apiToken = null,
   } = {}) {
     this.broker = broker || new SqliteBroker({ filePath: dbPath });
     this.taskBoard = taskBoard || new SqliteTaskBoard({ filePath: dbPath });
@@ -80,7 +82,7 @@ export class LocalToadRuntime {
       eventBus: this.eventBus,
       toolFacade: this.toolFacade,
       port,
-      token: process.env.TOAD_API_TOKEN || null,
+      token: resolveApiToken({ explicit: apiToken, projectCwd }),
       allowedOrigins: parseAllowedOriginsEnv(process.env.TOAD_API_ALLOWED_ORIGINS),
     });
     this.eventIngestor =

@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-04-30 local session (VACUUM on retention)
+Last updated: 2026-04-30 local session (API token on disk)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,39 @@ Important files:
 
 ## Latest Completed Slices
 
-### 1. VACUUM On Retention (latest)
+### 1. API Token On Disk (latest)
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-api-token-on-disk.md`
+
+New files:
+
+- `src/runtime/resolveApiToken.js` — `resolveApiToken({ explicit, projectCwd })` with three-layer precedence: explicit DI > `process.env.TOAD_API_TOKEN` > `<projectCwd>/.toad/api-token` > null.
+- `scripts/generate-api-token.mjs` — `crypto.randomBytes(32).toString('hex')`, writes to `<projectCwd>/.toad/api-token`, sets `0o600` on Unix, prints PowerShell- and bash-friendly export commands for the UI side.
+- `test/resolveApiToken.test.js` — 5 unit tests covering all four precedence branches plus the "no projectCwd, file lookup skipped" case.
+
+Modified files:
+
+- `src/app/LocalToadRuntime.js` — new `apiToken` constructor option; `ApiServer` token now sourced from `resolveApiToken({ explicit: apiToken, projectCwd })`.
+- `package.json` — adds `npm run token:generate`; adds the new test to the test chain (now 27 total).
+- `README.md` — documents Option A (generate-and-persist, recommended) and Option B (per-shell env var).
+
+Behavior:
+
+- Default `LocalToadRuntime()` (no projectCwd) is unchanged — still falls through to env-or-null. Tests stay hermetic; no accidental disk reads.
+- `npm run token:generate` is idempotent-friendly: re-running rotates the token. Stop the orchestrator before rotating so live SSE clients aren't left holding a stale token.
+- The dashboard's Vite build still requires `VITE_TOAD_API_TOKEN` at build time; the script prints exactly the export command needed.
+
+Verification during slice:
+
+```powershell
+node test/resolveApiToken.test.js
+npm.cmd test
+npm.cmd run token:generate   # one-time setup or rotation
+```
+
+### 2. VACUUM On Retention
 
 Plan file:
 
@@ -1102,9 +1134,9 @@ Remaining gaps worth tracking:
 Recommended next slice (pick one):
 
 1. **Subscription quota / plan-usage indicator** — parked. The user wants a "circle indicator" on startup showing Claude (and eventually Codex) plan usage. Investigation found that `--print "/usage"` is a $0 client-side slash command but only returns an auth-status string — the rich quota panel is rendered by the interactive TUI from an undocumented Anthropic API call. `~/.claude/stats-cache.json` has historical activity but not subscription windows. The user is independently investigating reliable data sources before this slice resumes.
-2. **Backend secret rotation / token-on-disk** — `TOAD_API_TOKEN` lives in shell env. For long-running daemons, persisting the token in a config file with a rotate command would be more ergonomic.
-3. **Optional `--bare` smoke variant** — add a parallel smoke path that uses `--bare` when `ANTHROPIC_API_KEY` is set in the environment, for users on direct API auth. The current smoke covers the subscription-OAuth path; the `--bare` path covers API-key auth.
-4. **Codex provider integration** — TOAD currently only spawns Claude runtimes. The legacy app had a full `codex-account` feature (rate-limit windows, ChatGPT auth, model selection). Adding Codex as a runtime provider is a much larger scoped slice.
+2. **Optional `--bare` smoke variant** — add a parallel smoke path that uses `--bare` when `ANTHROPIC_API_KEY` is set in the environment, for users on direct API auth. The current smoke covers the subscription-OAuth path; the `--bare` path covers API-key auth.
+3. **Codex provider integration** — TOAD currently only spawns Claude runtimes. The legacy app had a full `codex-account` feature (rate-limit windows, ChatGPT auth, model selection). Adding Codex as a runtime provider is a much larger scoped slice.
+4. **`agent_launch` MCP tool / dashboard launcher** — the dashboard observes runtimes but cannot create new ones from the UI. Exposing `LocalToadRuntime.launchAgent()` via a new MCP tool plus a "Launch agent" form on the dashboard would close the gap between observation and orchestration.
 
 Workflow reminders:
 
@@ -1247,6 +1279,10 @@ rg -n "permission|control_request|approval|runtime adapter|watcher|relay" C:\Pro
 - `C:\Project-TOAD\toad-local\README.md`
 - `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-broker-taskboard-durability.md`
 - `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-vacuum-on-retention.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-api-token-on-disk.md`
+- `C:\Project-TOAD\toad-local\src\runtime\resolveApiToken.js`
+- `C:\Project-TOAD\toad-local\test\resolveApiToken.test.js`
+- `C:\Project-TOAD\toad-local\scripts\generate-api-token.mjs`
 
 ## Suggested Opening Move For Next Agent
 
