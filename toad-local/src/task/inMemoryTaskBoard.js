@@ -10,6 +10,9 @@ export const TASK_EVENT_TYPES = Object.freeze({
   REVIEW_STARTED: 'task.review_started',
   REVIEW_DECIDED: 'task.review_decided',
   VALIDATION_RUN: 'task.validation_run',
+  PLAN_PROPOSED: 'task.plan_proposed',
+  PLAN_APPROVED: 'task.plan_approved',
+  PLAN_REJECTED: 'task.plan_rejected',
 });
 
 export const TASK_STATUS = Object.freeze({
@@ -99,6 +102,7 @@ export function projectTask(events) {
     status: TASK_STATUS.PENDING,
     reviewState: REVIEW_STATE.NONE,
     review: null,
+    plan: null,
     validations: [],
     latestValidation: {},
     comments: [],
@@ -150,6 +154,44 @@ export function projectTask(events) {
     }
     if (event.eventType === TASK_EVENT_TYPES.REVIEW_STARTED) {
       task.reviewState = REVIEW_STATE.REVIEW;
+    }
+    if (event.eventType === TASK_EVENT_TYPES.PLAN_PROPOSED) {
+      const p = event.payload || {};
+      task.plan = {
+        state: 'proposed',
+        summary: typeof p.summary === 'string' ? p.summary : null,
+        filesExpectedToChange: Array.isArray(p.filesExpectedToChange)
+          ? p.filesExpectedToChange.filter((f) => typeof f === 'string')
+          : [],
+        approach: Array.isArray(p.approach) ? p.approach.filter((s) => typeof s === 'string') : [],
+        risks: Array.isArray(p.risks) ? p.risks.filter((s) => typeof s === 'string') : [],
+        validationPlan: Array.isArray(p.validationPlan) ? p.validationPlan.filter((s) => typeof s === 'string') : [],
+        requiresApproval: typeof p.requiresApproval === 'boolean' ? p.requiresApproval : true,
+        proposedBy: event.actorId,
+        proposedAt: event.createdAt,
+      };
+    }
+    if (event.eventType === TASK_EVENT_TYPES.PLAN_APPROVED) {
+      if (task.plan) {
+        task.plan = {
+          ...task.plan,
+          state: 'approved',
+          decidedBy: event.actorId,
+          decidedAt: event.createdAt,
+          reason: typeof event.payload?.reason === 'string' ? event.payload.reason : null,
+        };
+      }
+    }
+    if (event.eventType === TASK_EVENT_TYPES.PLAN_REJECTED) {
+      if (task.plan) {
+        task.plan = {
+          ...task.plan,
+          state: 'rejected',
+          decidedBy: event.actorId,
+          decidedAt: event.createdAt,
+          reason: typeof event.payload?.reason === 'string' ? event.payload.reason : null,
+        };
+      }
     }
     if (event.eventType === TASK_EVENT_TYPES.VALIDATION_RUN) {
       const payload = event.payload || {};

@@ -88,6 +88,12 @@ export class LocalToolFacade {
         return this.#runtimeSendInput(actor, args);
       case COMMANDS.VALIDATION_RUN:
         return this.#validationRun(actor, command.idempotencyKey, args);
+      case COMMANDS.TASK_PLAN_PROPOSE:
+        return this.#taskPlanPropose(actor, command.idempotencyKey, args);
+      case COMMANDS.TASK_PLAN_APPROVE:
+        return this.#taskPlanDecide(actor, command.idempotencyKey, args, 'approved');
+      case COMMANDS.TASK_PLAN_REJECT:
+        return this.#taskPlanDecide(actor, command.idempotencyKey, args, 'rejected');
       default:
         throw new Error(`unsupported command: ${commandName}`);
     }
@@ -169,6 +175,16 @@ export class LocalToolFacade {
           const detail = latestTest ? `latest: ${latestTest.verdict}` : 'no test run';
           throw new Error(
             `task_update: testing → merge_ready requires a passing test verdict (${detail})`,
+          );
+        }
+      }
+      // Plan-before-code gate: ready → planned requires an approved plan.
+      // Implements checklist §2 ("no implementation before plan exists").
+      if (fromStatus === 'ready' && args.status === 'planned') {
+        const planState = current?.plan?.state || 'none';
+        if (planState !== 'approved') {
+          throw new Error(
+            `task_update: ready → planned requires an approved plan (current: ${planState})`,
           );
         }
       }
@@ -527,6 +543,54 @@ export class LocalToolFacade {
       }
     }
     return { teamId, members: results };
+  }
+
+  #taskPlanPropose(actor, idempotencyKey, args) {
+    const taskId = requireString(args.taskId, 'args.taskId');
+    const payload = {};
+    if (typeof args.summary === 'string' && args.summary.length > 0) payload.summary = args.summary;
+    if (Array.isArray(args.filesExpectedToChange)) {
+      payload.filesExpectedToChange = args.filesExpectedToChange.filter(
+        (f) => typeof f === 'string' && f.length > 0,
+      );
+    }
+    if (Array.isArray(args.approach)) payload.approach = args.approach.filter((s) => typeof s === 'string');
+    if (Array.isArray(args.risks)) payload.risks = args.risks.filter((s) => typeof s === 'string');
+    if (Array.isArray(args.validationPlan)) payload.validationPlan = args.validationPlan.filter((s) => typeof s === 'string');
+    if (typeof args.requiresApproval === 'boolean') payload.requiresApproval = args.requiresApproval;
+    this.taskBoard.appendEvent({
+      teamId: actor.teamId,
+      taskId,
+      idempotencyKey,
+      eventType: TASK_EVENT_TYPES.PLAN_PROPOSED,
+      actorId: actor.agentId,
+      payload,
+    });
+    return this.taskBoard.getTask({ teamId: actor.teamId, taskId });
+  }
+
+  #taskPlanDecide(actor, idempotencyKey, args, decision) {
+    const taskId = requireString(args.taskId, 'args.taskId');
+    const current = this.taskBoard.getTask({ teamId: actor.teamId, taskId });
+    if (current?.plan?.proposedBy && current.plan.proposedBy === actor.agentId) {
+      throw new Error(
+        decision === 'approved'
+          ? 'task_plan_approve: same agent cannot approve own plan'
+          : 'task_plan_reject: same agent cannot reject own plan',
+      );
+    }
+    const payload = {};
+    if (typeof args.reason === 'string' && args.reason.length > 0) payload.reason = args.reason;
+    const eventType = decision === 'approved' ? TASK_EVENT_TYPES.PLAN_APPROVED : TASK_EVENT_TYPES.PLAN_REJECTED;
+    this.taskBoard.appendEvent({
+      teamId: actor.teamId,
+      taskId,
+      idempotencyKey,
+      eventType,
+      actorId: actor.agentId,
+      payload,
+    });
+    return this.taskBoard.getTask({ teamId: actor.teamId, taskId });
   }
 
   async #validationRun(actor, idempotencyKey, args) {

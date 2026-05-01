@@ -317,6 +317,41 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
       cwd: { type: 'string', minLength: 1 },
     },
   }),
+  makeTool({
+    name: COMMANDS.TASK_PLAN_PROPOSE,
+    title: 'Propose Task Plan',
+    description: 'Submit a structured plan before implementing a task. Required before ready → planned. Plan revisions reset the plan back to "proposed".',
+    required: ['taskId'],
+    properties: {
+      taskId: { type: 'string', minLength: 1 },
+      summary: { type: 'string', minLength: 1 },
+      filesExpectedToChange: { type: 'array', items: { type: 'string', minLength: 1 } },
+      approach: { type: 'array', items: { type: 'string' } },
+      risks: { type: 'array', items: { type: 'string' } },
+      validationPlan: { type: 'array', items: { type: 'string' } },
+      requiresApproval: { type: 'boolean' },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.TASK_PLAN_APPROVE,
+    title: 'Approve Task Plan',
+    description: 'Approve a proposed plan. The proposing agent cannot approve their own plan. Restricted to lead / architect / human.',
+    required: ['taskId'],
+    properties: {
+      taskId: { type: 'string', minLength: 1 },
+      reason: { type: 'string' },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.TASK_PLAN_REJECT,
+    title: 'Reject Task Plan',
+    description: 'Reject a proposed plan and request changes. The proposing agent cannot reject their own plan. Restricted to lead / architect / human.',
+    required: ['taskId'],
+    properties: {
+      taskId: { type: 'string', minLength: 1 },
+      reason: { type: 'string' },
+    },
+  }),
 ]);
 
 export function listLocalMcpTools() {

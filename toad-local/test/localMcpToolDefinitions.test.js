@@ -28,6 +28,9 @@ test('listLocalMcpTools exposes MCP-shaped local command tools', () => {
     'task_comment',
     'task_create',
     'task_list',
+    'task_plan_approve',
+    'task_plan_propose',
+    'task_plan_reject',
     'task_update',
     'team_create',
     'team_delete',
@@ -78,6 +81,10 @@ test('mutating MCP tools require idempotencyKey in their schemas', () => {
   assert.equal(getLocalMcpTool('runtime_send_input').annotations.destructiveHint, false);
   assert.ok(getLocalMcpTool('validation_run').inputSchema.required.includes('idempotencyKey'));
   assert.equal(getLocalMcpTool('validation_run').annotations.destructiveHint, false);
+  for (const t of ['task_plan_propose', 'task_plan_approve', 'task_plan_reject']) {
+    assert.ok(getLocalMcpTool(t).inputSchema.required.includes('idempotencyKey'), t);
+    assert.equal(getLocalMcpTool(t).annotations.destructiveHint, false, t);
+  }
 
   // Read-only tools
   for (const name of ['task_list', 'agent_status', 'approval_list', 'runtime_events', 'cross_team_messages', 'tool_activity', 'health_status', 'team_list', 'review_list']) {

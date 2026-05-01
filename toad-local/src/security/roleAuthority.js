@@ -37,6 +37,9 @@ export const ROLE_TOOLS = Object.freeze({
     'cross_team_send',
     'review_request',
     'review_decide',
+    'task_plan_propose',
+    'task_plan_approve',
+    'task_plan_reject',
   ]),
   developer: Object.freeze([
     ...COMMON_READ_TOOLS,
@@ -44,6 +47,7 @@ export const ROLE_TOOLS = Object.freeze({
     'review_request',
     'runtime_send_input',
     'validation_run',
+    'task_plan_propose',
   ]),
   reviewer: Object.freeze([
     ...COMMON_READ_TOOLS,

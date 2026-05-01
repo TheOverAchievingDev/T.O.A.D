@@ -225,6 +225,83 @@ test('projectTask collects VALIDATION_RUN events into task.validations[] and tas
   assert.equal(task.latestValidation.lint.verdict, 'passed');
 });
 
+test('projectTask builds task.plan from PLAN_PROPOSED then merges APPROVED/REJECTED', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'p-1',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead',
+    payload: { subject: 'plan' },
+  });
+  // Proposal #1
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'p-1',
+    eventType: TASK_EVENT_TYPES.PLAN_PROPOSED,
+    actorId: 'worker-1',
+    payload: {
+      summary: 'add the parser',
+      filesExpectedToChange: ['parser.js'],
+      approach: ['LL(1)', 'recursive descent'],
+      risks: ['unicode'],
+      validationPlan: ['npm test'],
+      requiresApproval: true,
+    },
+  });
+  let task = board.getTask({ teamId: 'team-a', taskId: 'p-1' });
+  assert.equal(task.plan.state, 'proposed');
+  assert.equal(task.plan.summary, 'add the parser');
+  assert.deepEqual(task.plan.filesExpectedToChange, ['parser.js']);
+  assert.equal(task.plan.proposedBy, 'worker-1');
+
+  // Rejection (request changes)
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'p-1',
+    eventType: TASK_EVENT_TYPES.PLAN_REJECTED,
+    actorId: 'lead',
+    payload: { reason: 'add edge cases' },
+  });
+  task = board.getTask({ teamId: 'team-a', taskId: 'p-1' });
+  assert.equal(task.plan.state, 'rejected');
+  assert.equal(task.plan.decidedBy, 'lead');
+  assert.equal(task.plan.reason, 'add edge cases');
+  // Original proposal fields preserved
+  assert.deepEqual(task.plan.filesExpectedToChange, ['parser.js']);
+
+  // Revised proposal — state resets to 'proposed'
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'p-1',
+    eventType: TASK_EVENT_TYPES.PLAN_PROPOSED,
+    actorId: 'worker-1',
+    payload: {
+      summary: 'parser v2',
+      filesExpectedToChange: ['parser.js', 'parser.test.js'],
+      approach: ['recursive descent'],
+      risks: [],
+      validationPlan: ['npm test'],
+    },
+  });
+  task = board.getTask({ teamId: 'team-a', taskId: 'p-1' });
+  assert.equal(task.plan.state, 'proposed');
+  assert.equal(task.plan.summary, 'parser v2');
+  assert.equal(task.plan.decidedBy, undefined, 'decidedBy resets on re-proposal');
+
+  // Approval
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'p-1',
+    eventType: TASK_EVENT_TYPES.PLAN_APPROVED,
+    actorId: 'lead',
+    payload: { reason: 'lgtm' },
+  });
+  task = board.getTask({ teamId: 'team-a', taskId: 'p-1' });
+  assert.equal(task.plan.state, 'approved');
+  assert.equal(task.plan.decidedBy, 'lead');
+});
+
 test('task events are idempotent by idempotencyKey', () => {
   const board = new InMemoryTaskBoard();
   const first = board.appendEvent({

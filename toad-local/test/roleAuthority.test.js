@@ -81,6 +81,36 @@ test('reviewer can call review_decide, review_list, task_comment', () => {
   }
 });
 
+test('developer can call task_plan_propose; architect / lead / human can approve/reject; developer cannot approve', () => {
+  // Propose
+  assertRoleCanCallTool({ role: 'developer', toolName: 'task_plan_propose' });
+  assertRoleCanCallTool({ role: 'architect', toolName: 'task_plan_propose' });  // architect can revise as well
+  assert.throws(
+    () => assertRoleCanCallTool({ role: 'reviewer', toolName: 'task_plan_propose' }),
+    /reviewer cannot call task_plan_propose/,
+  );
+  assert.throws(
+    () => assertRoleCanCallTool({ role: 'tester', toolName: 'task_plan_propose' }),
+    /tester cannot call task_plan_propose/,
+  );
+
+  // Approve / reject — restricted to architect / lead / human
+  for (const role of ['architect', 'lead', 'human']) {
+    assertRoleCanCallTool({ role, toolName: 'task_plan_approve' });
+    assertRoleCanCallTool({ role, toolName: 'task_plan_reject' });
+  }
+  for (const role of ['developer', 'reviewer', 'tester']) {
+    assert.throws(
+      () => assertRoleCanCallTool({ role, toolName: 'task_plan_approve' }),
+      new RegExp(`${role} cannot call task_plan_approve`),
+    );
+    assert.throws(
+      () => assertRoleCanCallTool({ role, toolName: 'task_plan_reject' }),
+      new RegExp(`${role} cannot call task_plan_reject`),
+    );
+  }
+});
+
 test('developer and tester can call validation_run; reviewer and architect cannot', () => {
   assertRoleCanCallTool({ role: 'developer', toolName: 'validation_run' });
   assertRoleCanCallTool({ role: 'tester', toolName: 'validation_run' });

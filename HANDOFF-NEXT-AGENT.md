@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-04-30 local session (test artifacts + CI gates — checklist §6 + §18)
+Last updated: 2026-04-30 local session (plan-before-code — checklist §2)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,48 @@ Important files:
 
 ## Latest Completed Slices
 
-### 1. Test Artifacts + CI Gates — Checklist §6 + §18 (latest)
+### 1. Plan-Before-Code — Checklist §2 (latest)
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-plan-before-code.md`
+
+Continues the v2 hardening pass. Builds on state machine (§3), role authority (§5/§26), and CI gates (§6/§18).
+
+Modified files:
+
+- `src/task/inMemoryTaskBoard.js` — three new `TASK_EVENT_TYPES.PLAN_*` constants. `projectTask` builds `task.plan` from `PLAN_PROPOSED` then merges `APPROVED`/`REJECTED` decisions. Re-proposal resets state to `proposed`.
+- `src/commands/command-contract.js` — `TASK_PLAN_PROPOSE` / `TASK_PLAN_APPROVE` / `TASK_PLAN_REJECT`, all mutating.
+- `src/mcp/localToolDefinitions.js` — three new tool defs. `task_plan_propose` accepts `summary`, `filesExpectedToChange`, `approach`, `risks`, `validationPlan`, `requiresApproval`.
+- `src/tools/localToolFacade.js`:
+  - New `#taskPlanPropose` and `#taskPlanDecide` handlers (the latter shared between approve and reject via a `decision` arg).
+  - Self-approval prevention: throws when `actor.agentId === task.plan.proposedBy` for both approve and reject. Mirrors the self-review check on `review_decide`.
+  - **Plan-before-code gate** in `#taskUpdate`: `ready → planned` blocked unless `task.plan?.state === 'approved'`. Error names the current plan state.
+- `src/security/roleAuthority.js` — `task_plan_propose` added to `developer` and `architect`; `task_plan_approve` and `task_plan_reject` added to `architect` only (lead + human are wildcard so they get all three for free). Reviewer + tester explicitly cannot approve/reject.
+- `test/taskBoard.test.js` — projection test covering proposed → rejected → re-proposed → approved cycle (now 8 tests).
+- `test/localToolFacade.test.js` — 4 new tests (now 49 total): roundtrip propose+approve, self-approval rejected, ready→planned blocked without plan, ready→planned allowed once approved.
+- `test/roleAuthority.test.js` — assertions for the three new tools across all six roles.
+- `test/localMcpToolDefinitions.test.js` — three new tools added to expected names + mutating-tools assertion.
+
+Behavior decisions:
+
+- **Re-proposal resets state.** Once a plan is rejected, the developer can submit a revised plan; the projection drops `decidedBy`/`decidedAt` and the gate goes back to "needs approval". Matches the legacy "request changes → revise" loop.
+- **`planned → in_progress` does not require a plan.** The gate sits at the `ready → planned` boundary where the plan transitions from "approved" to "actively being worked". Adding a second gate at `planned → in_progress` would just block work on tasks that the operator already approved.
+- **`requiresApproval` field is recorded but not yet enforced.** Per the plan doc this is a follow-up gated on §14 risk policy.
+
+Verification during slice:
+
+```powershell
+node test/taskBoard.test.js
+node test/localToolFacade.test.js
+node test/roleAuthority.test.js
+node test/localMcpToolDefinitions.test.js
+npm.cmd test
+```
+
+All 30 backend test files pass.
+
+### 2. Test Artifacts + CI Gates — Checklist §6 + §18
 
 Plan file:
 
@@ -1443,8 +1484,8 @@ Anchored to the checklist's own priority order (full detail in `docs/CHECKLIST_G
 
 1. ✅ Role authority (§5 + §26) — done with permissive default for backward compat.
 2. ✅ Test artifacts + CI gates (§6 + §18) — done. Validation config on TeamConfig; `validation_run` MCP tool; `task.validations[]` projection; `testing → merge_ready` gated on passing test verdict.
-3. **Plan-before-code (§2) — NEXT.** New `task_plan_propose` / `task_plan_approve` MCP tools backed by `PLAN_PROPOSED` / `PLAN_APPROVED` events. Tied to the `ready → planned` transition.
-4. **Diagnostics (§25).** `diagnostics_run` MCP tool returning `{ check, status: PASS/WARNING/FAIL, evidence, suggestedFix }[]`.
+3. ✅ Plan-before-code (§2) — done. Three plan tools, projection, gate, self-approval prevention.
+4. **Diagnostics (§25) — NEXT.** `diagnostics_run` MCP tool returning `{ check, status: PASS/WARNING/FAIL, evidence, suggestedFix }[]`. Now that the four critical enforcement layers (§3 state machine, §5/§26 role authority, §6/§18 CI gates, §2 plan-before-code) all have real bite, the diagnostic surface is the natural way to surface "is the system genuinely safe vs. agent-claimed safe?".
 5. **Worktree enforcement (§8) → diff tracking (§7 finished) → merge workflow (§19).** Bigger lift because of git integration.
 6. **Per-transition role guards.** Now that roles exist, extend `validateTaskStatusTransition` to check role against the move (e.g. only `lead` can do `merge_ready → done`). Cleanly stacks on the state machine + role auth slices.
 7. **`tool_call_denied` event emission.** §26 says every denied tool call should be logged. Currently the throw bubbles to `/api/call` but doesn't land in `runtime_events`. Small follow-up.
@@ -1625,6 +1666,7 @@ rg -n "permission|control_request|approval|runtime adapter|watcher|relay" C:\Pro
 - `C:\Project-TOAD\toad-local\src\security\roleAuthority.js`
 - `C:\Project-TOAD\toad-local\test\roleAuthority.test.js`
 - `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-test-artifacts-ci-gates.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-plan-before-code.md`
 
 ## Suggested Opening Move For Next Agent
 

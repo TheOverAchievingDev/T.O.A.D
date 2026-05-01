@@ -500,6 +500,148 @@ test('LocalToolFacade rejects agent_launch when no launchAgent callback is confi
   );
 });
 
+test('LocalToolFacade task_plan_propose → task_plan_approve roundtrip populates task.plan', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'plan-c',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'plan-1', subject: 'planned' },
+  });
+
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_PROPOSE,
+    idempotencyKey: 'plan-prop',
+    actor: { teamId: 'team-a', agentId: 'worker-1', role: 'developer' },
+    args: {
+      taskId: 'plan-1',
+      summary: 'do the thing',
+      filesExpectedToChange: ['x.js'],
+      approach: ['step a', 'step b'],
+      risks: ['none'],
+      validationPlan: ['npm test'],
+    },
+  });
+
+  let task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'plan-1' });
+  assert.equal(task.plan.state, 'proposed');
+  assert.equal(task.plan.summary, 'do the thing');
+  assert.equal(task.plan.proposedBy, 'worker-1');
+
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_APPROVE,
+    idempotencyKey: 'plan-app',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'plan-1', reason: 'lgtm' },
+  });
+
+  task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'plan-1' });
+  assert.equal(task.plan.state, 'approved');
+  assert.equal(task.plan.decidedBy, 'lead');
+  assert.equal(task.plan.reason, 'lgtm');
+});
+
+test('LocalToolFacade task_plan_approve refuses when the proposer is the approver', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'sa-c',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'sa-1', subject: 'self-approve' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_PROPOSE,
+    idempotencyKey: 'sa-prop',
+    actor: { teamId: 'team-a', agentId: 'worker-1' },
+    args: { taskId: 'sa-1', summary: 'do it' },
+  });
+  // Same agent tries to approve own plan — should be rejected regardless of role
+  assert.throws(
+    () => facade.execute({
+      commandName: COMMANDS.TASK_PLAN_APPROVE,
+      idempotencyKey: 'sa-app',
+      actor: { teamId: 'team-a', agentId: 'worker-1', role: 'lead' },
+      args: { taskId: 'sa-1' },
+    }),
+    /same agent cannot approve own plan/,
+  );
+});
+
+test('LocalToolFacade ready → planned is blocked without an approved plan', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'gate-c',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'gate-plan-1', subject: 'gate', status: 'pending' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'gate-u-ready',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'gate-plan-1', status: 'ready' },
+  });
+
+  assert.throws(
+    () => facade.execute({
+      commandName: COMMANDS.TASK_UPDATE,
+      idempotencyKey: 'gate-u-planned',
+      actor: { teamId: 'team-a', agentId: 'lead' },
+      args: { taskId: 'gate-plan-1', status: 'planned' },
+    }),
+    /requires an approved plan/,
+  );
+});
+
+test('LocalToolFacade ready → planned is allowed once a plan is approved', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'gate2-c',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'gate-plan-2', subject: 'gate2', status: 'pending' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'gate2-u-ready',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'gate-plan-2', status: 'ready' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_PROPOSE,
+    idempotencyKey: 'gate2-prop',
+    actor: { teamId: 'team-a', agentId: 'worker-1' },
+    args: { taskId: 'gate-plan-2', summary: 'do it' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_APPROVE,
+    idempotencyKey: 'gate2-app',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'gate-plan-2' },
+  });
+  // Now ready → planned should be allowed
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'gate2-u-planned',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'gate-plan-2', status: 'planned' },
+  });
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'gate-plan-2' });
+  assert.equal(task.status, 'planned');
+});
+
 test('LocalToolFacade blocks testing → merge_ready when no passing test verdict exists', async () => {
   const facade = new LocalToolFacade({
     broker: new InMemoryBroker(),
