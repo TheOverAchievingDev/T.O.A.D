@@ -143,6 +143,9 @@ export class LocalToolFacade {
         ...(typeof args.description === 'string' ? { description: args.description } : {}),
         ...(typeof args.ownerId === 'string' ? { ownerId: args.ownerId } : {}),
         status: args.status || TASK_STATUS.PENDING,
+        // §8 slice 4: optional explicit baseRef / baseBranch.
+        ...(typeof args.baseRef === 'string' && args.baseRef.length > 0 ? { baseRef: args.baseRef } : {}),
+        ...(typeof args.baseBranch === 'string' && args.baseBranch.length > 0 ? { baseBranch: args.baseBranch } : {}),
       },
     });
     return this.taskBoard.getTask({ teamId: actor.teamId, taskId });
@@ -268,8 +271,19 @@ export class LocalToolFacade {
 
   #triggerWorktreeCreation(actor, idempotencyKey, taskId) {
     let result;
+    // §8 slice 4: forward task.baseRef (operator-supplied at creation) so the
+    // manager can pin the worktree to a specific commit instead of always
+    // taking HEAD-at-planning. Undefined when the task didn't capture one.
+    const taskNow = this.taskBoard.getTask({ teamId: actor.teamId, taskId });
+    const explicitBaseRef = typeof taskNow?.baseRef === 'string' && taskNow.baseRef.length > 0
+      ? taskNow.baseRef
+      : undefined;
     try {
-      result = this.worktreeManager.createForTask({ teamId: actor.teamId, taskId });
+      result = this.worktreeManager.createForTask({
+        teamId: actor.teamId,
+        taskId,
+        ...(explicitBaseRef ? { baseRef: explicitBaseRef } : {}),
+      });
     } catch (err) {
       result = {
         status: 'skipped',

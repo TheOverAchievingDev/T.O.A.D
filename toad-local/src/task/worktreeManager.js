@@ -31,7 +31,7 @@ export class WorktreeManager {
     return `toad/${teamId}/${taskId}`;
   }
 
-  createForTask({ teamId, taskId }) {
+  createForTask({ teamId, taskId, baseRef: explicitBaseRef = null }) {
     if (typeof teamId !== 'string' || teamId.length === 0) {
       throw new TypeError('teamId must be a non-empty string');
     }
@@ -44,15 +44,22 @@ export class WorktreeManager {
       return { status: 'skipped', reason: 'not_in_git_repo' };
     }
 
-    const headResult = this.runGit(['rev-parse', 'HEAD'], { cwd: this.projectCwd });
-    if (headResult.exitCode !== 0) {
-      return {
-        status: 'skipped',
-        reason: 'git_command_failed',
-        stderr: headResult.stderr || 'rev-parse HEAD failed',
-      };
+    // §8 slice 4: prefer the operator-supplied baseRef. Falls back to
+    // rev-parse HEAD only when the task didn't capture one at creation time.
+    let baseRef;
+    if (typeof explicitBaseRef === 'string' && explicitBaseRef.length > 0) {
+      baseRef = explicitBaseRef;
+    } else {
+      const headResult = this.runGit(['rev-parse', 'HEAD'], { cwd: this.projectCwd });
+      if (headResult.exitCode !== 0) {
+        return {
+          status: 'skipped',
+          reason: 'git_command_failed',
+          stderr: headResult.stderr || 'rev-parse HEAD failed',
+        };
+      }
+      baseRef = headResult.stdout.trim();
     }
-    const baseRef = headResult.stdout.trim();
 
     const path = this.worktreePathFor({ teamId, taskId });
     const branch = this.branchNameFor({ teamId, taskId });

@@ -141,6 +141,48 @@ test('WorktreeManager.createForTask uses deterministic path under .toad/worktree
   }
 });
 
+// --- explicit baseRef (slice 4) ---
+
+test('WorktreeManager.createForTask uses an explicit baseRef when provided, skipping rev-parse HEAD', () => {
+  const tmp = makeTmpProject();
+  try {
+    const runGit = fakeRunGit([
+      [['rev-parse', '--is-inside-work-tree'], { exitCode: 0, stdout: 'true\n', stderr: '' }],
+      [['worktree', 'add'], { exitCode: 0, stdout: '', stderr: '' }],
+    ]);
+    const mgr = new WorktreeManager({ projectCwd: tmp.dir, runGit });
+    const result = mgr.createForTask({ teamId: 'team-a', taskId: 'task-br', baseRef: 'explicit-sha' });
+    assert.equal(result.status, 'created');
+    assert.equal(result.baseRef, 'explicit-sha');
+    // No rev-parse HEAD call should appear
+    const headCalls = runGit.calls.filter((c) => c.args[0] === 'rev-parse' && c.args[1] === 'HEAD');
+    assert.equal(headCalls.length, 0);
+    // worktree add should use the explicit baseRef
+    const addCall = runGit.calls.find((c) => c.args[0] === 'worktree' && c.args[1] === 'add');
+    assert.equal(addCall.args[5], 'explicit-sha');
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('WorktreeManager.createForTask falls back to rev-parse HEAD when baseRef is omitted', () => {
+  const tmp = makeTmpProject();
+  try {
+    const runGit = fakeRunGit([
+      [['rev-parse', '--is-inside-work-tree'], { exitCode: 0, stdout: 'true\n', stderr: '' }],
+      [['rev-parse', 'HEAD'], { exitCode: 0, stdout: 'head-sha\n', stderr: '' }],
+      [['worktree', 'add'], { exitCode: 0, stdout: '', stderr: '' }],
+    ]);
+    const mgr = new WorktreeManager({ projectCwd: tmp.dir, runGit });
+    const result = mgr.createForTask({ teamId: 'team-a', taskId: 'task-fb' });
+    assert.equal(result.baseRef, 'head-sha');
+    const headCalls = runGit.calls.filter((c) => c.args[0] === 'rev-parse' && c.args[1] === 'HEAD');
+    assert.equal(headCalls.length, 1);
+  } finally {
+    tmp.cleanup();
+  }
+});
+
 // --- removeForTask (slice 3) ---
 
 test('WorktreeManager.removeForTask runs git worktree remove --force at the deterministic path', () => {

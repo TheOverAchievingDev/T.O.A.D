@@ -85,7 +85,7 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
   makeTool({
     name: COMMANDS.TASK_CREATE,
     title: 'Create Task',
-    description: 'Create a task on the current team task board.',
+    description: 'Create a task on the current team task board. Optional `baseRef` pins the task worktree to a specific commit; otherwise it defaults to HEAD at planning time. `baseBranch` records the integration target name for §19 merge workflow.',
     required: ['taskId', 'subject'],
     properties: {
       taskId: { type: 'string', minLength: 1 },
@@ -93,6 +93,8 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
       description: { type: 'string' },
       ownerId: { type: 'string', minLength: 1 },
       status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'deleted'] },
+      baseRef: { type: 'string', minLength: 1 },
+      baseBranch: { type: 'string', minLength: 1 },
     },
   }),
   makeTool({

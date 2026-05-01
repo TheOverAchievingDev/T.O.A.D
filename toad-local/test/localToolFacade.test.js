@@ -2716,6 +2716,106 @@ test('LocalToolFacade tolerates worktreeManager.removeForTask throwing (best-eff
   assert.equal(task.status, 'done');
 });
 
+// --- §8 slice 4: explicit baseRef from task_create flows into worktree creation ---
+
+test('task_create accepts baseRef + baseBranch and surfaces them on the projection', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'br-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'br-1', subject: 'baseref task', baseRef: 'feature-anchor', baseBranch: 'develop' },
+  });
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'br-1' });
+  assert.equal(task.baseRef, 'feature-anchor');
+  assert.equal(task.baseBranch, 'develop');
+});
+
+test('worktreeManager.createForTask receives task.baseRef from facade hook on ready→planned', () => {
+  const seen = [];
+  const fakeWorktreeManager = {
+    createForTask({ teamId, taskId, baseRef }) {
+      seen.push({ teamId, taskId, baseRef });
+      return { status: 'created', path: `/tmp/${teamId}/${taskId}`, branch: 'b', baseRef: baseRef || 'fallback', createdAt: 'now' };
+    },
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    worktreeManager: fakeWorktreeManager,
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'br2-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'br-2', subject: 's', baseRef: 'pinned-sha', status: 'ready' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_PROPOSE,
+    idempotencyKey: 'br2-plan',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'br-2', summary: 's' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_APPROVE,
+    idempotencyKey: 'br2-app',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'br-2' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'br2-planned',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'br-2', status: 'planned' },
+  });
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].baseRef, 'pinned-sha');
+});
+
+test('worktreeManager.createForTask receives undefined baseRef when task did not capture one (HEAD fallback)', () => {
+  const seen = [];
+  const fakeWorktreeManager = {
+    createForTask({ teamId, taskId, baseRef }) {
+      seen.push({ baseRef });
+      return { status: 'created', path: '/tmp/x', branch: 'b', baseRef: 'fb', createdAt: 'now' };
+    },
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    worktreeManager: fakeWorktreeManager,
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'br3-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'br-3', subject: 's', status: 'ready' /* no baseRef */ },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_PROPOSE,
+    idempotencyKey: 'br3-plan',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'br-3', summary: 's' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_APPROVE,
+    idempotencyKey: 'br3-app',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'br-3' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'br3-planned',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'br-3', status: 'planned' },
+  });
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].baseRef, undefined);
+});
+
 // --- §8 slice 2: agent_launch cwd enforcement against task worktree ---
 
 function setupTaskWithWorktree(facade, taskId = 'cwd-1') {

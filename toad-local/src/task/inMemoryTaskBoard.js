@@ -106,6 +106,8 @@ export function projectTask(events) {
     review: null,
     plan: null,
     worktree: null,
+    baseRef: null,
+    baseBranch: null,
     validations: [],
     latestValidation: {},
     consecutiveTestFailures: 0,
@@ -125,6 +127,14 @@ export function projectTask(events) {
         typeof event.payload.description === 'string' ? event.payload.description : task.subject;
       task.ownerId = typeof event.payload.ownerId === 'string' ? event.payload.ownerId : null;
       task.status = event.payload.status || TASK_STATUS.PENDING;
+      // §8 slice 4: explicit baseRef + baseBranch capture at task creation.
+      // Operator-supplied; replaces the HEAD-at-planning fallback when set.
+      if (typeof event.payload.baseRef === 'string' && event.payload.baseRef.length > 0) {
+        task.baseRef = event.payload.baseRef;
+      }
+      if (typeof event.payload.baseBranch === 'string' && event.payload.baseBranch.length > 0) {
+        task.baseBranch = event.payload.baseBranch;
+      }
     }
     if (event.eventType === TASK_EVENT_TYPES.ASSIGNED) {
       task.ownerId = event.payload.ownerId || null;

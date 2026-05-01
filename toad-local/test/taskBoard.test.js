@@ -332,6 +332,38 @@ test('projectTask captures WORKTREE_CREATED into task.worktree (status: created)
   assert.equal(task.worktree.baseRef, 'abc123');
 });
 
+test('projectTask captures task.baseRef and task.baseBranch from CREATED payload (§8 slice 4)', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'br-1',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead',
+    payload: {
+      subject: 'baseref',
+      baseRef: 'abc123def',
+      baseBranch: 'main',
+    },
+  });
+  const task = board.getTask({ teamId: 'team-a', taskId: 'br-1' });
+  assert.equal(task.baseRef, 'abc123def');
+  assert.equal(task.baseBranch, 'main');
+});
+
+test('projectTask leaves task.baseRef and task.baseBranch null when not supplied', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'br-2',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead',
+    payload: { subject: 'no baseref' },
+  });
+  const task = board.getTask({ teamId: 'team-a', taskId: 'br-2' });
+  assert.equal(task.baseRef, null);
+  assert.equal(task.baseBranch, null);
+});
+
 test('projectTask counts consecutive failed test runs from VALIDATION_RUN events', () => {
   const board = new InMemoryTaskBoard();
   board.appendEvent({

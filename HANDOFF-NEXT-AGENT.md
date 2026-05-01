@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-05-01 local session (repeated-test-failure detector — checklist §13 partial)
+Last updated: 2026-05-01 local session (explicit baseRef — checklist §8 slice 4)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,31 @@ Important files:
 
 ## Latest Completed Slices
 
-### 0. Repeated Test-Failure Detector — Checklist §13 partial (latest)
+### 0. Explicit baseRef — Checklist §8 slice 4 (latest)
+
+The fourth and final §8 slice. Tasks can now anchor their worktree to a specific commit (and record an integration target branch name) at creation time, instead of relying on the HEAD-at-planning fallback. §8 is now fully REAL.
+
+Modified files:
+
+- `src/task/inMemoryTaskBoard.js` — initial task projection gains `baseRef: null`, `baseBranch: null`. CREATED handler captures both when present in payload.
+- `src/tools/localToolFacade.js`:
+  - `#taskCreate` accepts optional `args.baseRef` and `args.baseBranch`, threads them into the CREATED event payload.
+  - `#triggerWorktreeCreation` re-reads the task projection to pick up `task.baseRef`, then forwards it as `createForTask({ baseRef })`. Undefined when the task didn't capture one (back-compat with HEAD-at-planning).
+- `src/task/worktreeManager.js` — `createForTask({ teamId, taskId, baseRef })` accepts an explicit `baseRef`. When set, skips `git rev-parse HEAD`. When omitted, behaves exactly as before.
+- `src/mcp/localToolDefinitions.js` — `task_create` MCP tool def gains `baseRef` and `baseBranch` properties with documentation noting their purpose.
+- `test/taskBoard.test.js` — 2 new tests (now 17 total): baseRef + baseBranch captured on projection; null when not supplied.
+- `test/worktreeManager.test.js` — 2 new tests (now 10 total): explicit override skips rev-parse HEAD, omission falls back to HEAD.
+- `test/localToolFacade.test.js` — 3 new tests (now 87 total): task_create surfaces baseRef on projection, facade forwards it on planned trigger, undefined when omitted.
+
+Why both `baseRef` and `baseBranch`:
+
+- `baseRef` is a SHA — pins the worktree creation commit, stable against branch movement.
+- `baseBranch` is a name — needed by §19 slice 2 (the actual integration commit). The merge target is "this branch", not "this SHA".
+- Today's gates only use baseRef (worktree creation, diff computation, conflict check). baseBranch is captured but unused — it's already in the data so §19 slice 2 doesn't need a schema change.
+
+Tests pass: 36 backend test files, 401 individual tests, 0 fail.
+
+### 1. Repeated Test-Failure Detector — Checklist §13 partial
 
 Third §13 detector, this one purely derived from existing data. After all events have been folded into the projection, count the trailing streak of test verdicts that came back `failed`. A passing run resets the count.
 
@@ -1785,7 +1809,8 @@ Anchored to the checklist's own priority order (full detail in `docs/CHECKLIST_G
 12. ✅ Scope-drift detection (§13 partial) — done. `task.review.scopeDrift[]` lists out-of-plan files after diff is captured.
 13. ✅ No-op diff detector (§13 partial) — done. `task.review.noOpDiff` flags empty-diff review requests.
 14. ✅ Repeated test-failure detector (§13 partial) — done. `task.consecutiveTestFailures` + `task.repeatedTestFailures` derived from `task.validations`.
-15. **Worktree slice 4 — NEXT.** Explicit `task.baseRef` at task creation (currently HEAD-at-planning).
+15. ✅ Worktree slice 4 (§8) — done. `task_create` captures explicit `baseRef` + `baseBranch`; manager forwards them. §8 now fully REAL.
+16. **Merge slice 2 (§19) — NEXT.** Actually perform the integration commit on `baseBranch`. Unblocked by §8 slice 4.
 14. **Merge slice 2 (§19).** Actually perform the integration commit on `baseBranch` (today's gate only verifies feasibility).
 10. Smaller follow-ups: failure detection (§13), WIP limits (§9), dependency enforcement (§10), notifications, knowledge propagation.
 
