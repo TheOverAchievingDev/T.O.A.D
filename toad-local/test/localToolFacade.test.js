@@ -500,6 +500,91 @@ test('LocalToolFacade rejects agent_launch when no launchAgent callback is confi
   );
 });
 
+test('LocalToolFacade task_update records "from" and "reason" in the STATUS_CHANGED event payload', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'create-sm',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'sm-1', subject: 'state-machine', status: 'pending' },
+  });
+
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'update-sm',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'sm-1', status: 'in_progress', reason: 'work started' },
+  });
+
+  const task = facade.execute({
+    commandName: COMMANDS.TASK_LIST,
+    actor: { teamId: 'team-a', agentId: 'lead' },
+  }).find((t) => t.taskId === 'sm-1');
+  const statusEvent = task.history.find((e) => e.eventType === 'task.status_changed');
+  assert.ok(statusEvent, 'STATUS_CHANGED event should exist');
+  assert.equal(statusEvent.payload.from, 'pending');
+  assert.equal(statusEvent.payload.status, 'in_progress');
+  assert.equal(statusEvent.payload.reason, 'work started');
+});
+
+test('LocalToolFacade task_update rejects illegal status transitions', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  // Get task into a terminal state
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'create-illegal',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'illegal-1', subject: 'bad transition', status: 'completed' },
+  });
+
+  // completed is terminal — must not move forward
+  assert.throws(
+    () => facade.execute({
+      commandName: COMMANDS.TASK_UPDATE,
+      idempotencyKey: 'update-illegal',
+      actor: { teamId: 'team-a', agentId: 'lead' },
+      args: { taskId: 'illegal-1', status: 'review' },
+    }),
+    /not an allowed transition|completed.*review/,
+  );
+});
+
+test('LocalToolFacade task_update preserves backward-compatible pending → in_progress → completed', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'c-bc',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'bc-1', subject: 'bc', status: 'pending' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'u1-bc',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'bc-1', status: 'in_progress' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'u2-bc',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'bc-1', status: 'completed' },
+  });
+  const task = facade.execute({
+    commandName: COMMANDS.TASK_LIST,
+    actor: { teamId: 'team-a', agentId: 'lead' },
+  }).find((t) => t.taskId === 'bc-1');
+  assert.equal(task.status, 'completed');
+});
+
 test('LocalToolFacade review_request stores diff, summary, files in the task event payload', () => {
   const facade = new LocalToolFacade({
     broker: new InMemoryBroker(),

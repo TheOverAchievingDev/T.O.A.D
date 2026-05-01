@@ -7,6 +7,7 @@ import {
 import { applyPermissionSuggestions } from '../runtime/claudeSettingsWriter.js';
 import { formatCrossTeamText, CROSS_TEAM_SOURCE, CROSS_TEAM_SENT_SOURCE } from '../protocol/crossTeam.js';
 import { TeamConfig } from '../team/teamConfig.js';
+import { validateTaskStatusTransition } from '../task/taskLifecycle.js';
 
 export class LocalToolFacade {
   constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null }) {
@@ -148,13 +149,21 @@ export class LocalToolFacade {
       });
     }
     if (typeof args.status === 'string') {
+      const current = this.taskBoard.getTask({ teamId: actor.teamId, taskId });
+      const fromStatus = current?.status ?? null;
+      const validation = validateTaskStatusTransition({ from: fromStatus, to: args.status });
+      if (!validation.ok) {
+        throw new Error(`task_update: ${validation.reason}`);
+      }
+      const payload = { status: args.status, from: fromStatus };
+      if (typeof args.reason === 'string' && args.reason.length > 0) payload.reason = args.reason;
       this.taskBoard.appendEvent({
         teamId: actor.teamId,
         taskId,
         idempotencyKey: `${idempotencyKey}:status`,
         eventType: TASK_EVENT_TYPES.STATUS_CHANGED,
         actorId: actor.agentId,
-        payload: { status: args.status },
+        payload,
       });
     }
     return this.taskBoard.getTask({ teamId: actor.teamId, taskId });

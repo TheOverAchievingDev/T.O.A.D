@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-04-30 local session (review with diffs)
+Last updated: 2026-04-30 local session (deterministic state machine — checklist §3)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,45 @@ Important files:
 
 ## Latest Completed Slices
 
-### 1. Code Review With Diffs (latest)
+### 1. Deterministic Task State Machine — Checklist §3 (latest)
+
+**Project priorities updated.** The user supplied `agent_teams_hardening_checklist_final_v2.md` as the target system standard. Copied to `docs/AGENT_TEAMS_HARDENING_CHECKLIST.md` and audited at `docs/CHECKLIST_GAP_MATRIX.md`. Slice order is now anchored to the checklist's own priority: **state machine > tool authority > session tracking > diff tracking > CI gates > diagnostics**. UI work continues to be deferred per the user's earlier steering (parallel UI prototype is being built elsewhere).
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-deterministic-state-machine.md`
+
+The single most important enforcement gap from the gap matrix. Closes §3.
+
+New file:
+
+- `src/task/taskLifecycle.js` — exports `TASK_LIFECYCLE` (the 10 states from the checklist), `ALLOWED_TRANSITIONS` (with legacy aliases for `pending`/`completed`/`deleted` so existing call sites keep working without a coordinated rewrite), and `validateTaskStatusTransition({ from, to })`. The validator returns `{ ok: true }` for legal moves and `{ ok: false, reason }` otherwise. Same-state self-transitions are idempotent. `from === null` (initial state) accepts any known status.
+
+Modified files:
+
+- `src/tools/localToolFacade.js` — `#taskUpdate` now reads the current task's status, calls `validateTaskStatusTransition`, throws on illegal transitions, and records `from` (previous status) and optional `reason` in the STATUS_CHANGED event payload (per checklist requirement: "every transition records actor, reason, timestamp, previous state, and next state").
+- `package.json` — adds `node test/taskLifecycle.test.js` to the test chain (now 29 test files).
+- `test/taskLifecycle.test.js` — NEW. 8 tests covering lifecycle constants, initial-state acceptance, idempotent self-transitions, the canonical 10-state happy path, illegal-transition rejection with reason strings, and legacy alias bridges.
+- `test/localToolFacade.test.js` — 3 new tests (now 35 total): STATUS_CHANGED records `from`/`reason`; illegal transitions throw; legacy `pending → in_progress → completed` still works.
+
+Behavior decisions:
+
+- **Legacy aliases included in the table** (`pending`, `completed`, `deleted`) so the existing `taskBoard.test.js` happy path keeps passing. Future tightening (forbid `in_progress → completed` shortcut, requiring `review → testing → merge_ready → done`) is deferred until §6 CI gates land — at that point the role authority slice (§5) will know whether the actor is allowed to skip review.
+- **Validation throws synchronously** from `#taskUpdate`. The mutating-command idempotency check is also sync, so behavior is consistent with `agent_launch` and `agent_stop`.
+- **Same-state self-transitions are allowed.** Re-issuing `task_update status=X` when the task is already X is treated as a no-op rather than a validation error. Idempotency-friendly.
+
+Verification during slice:
+
+```powershell
+node test/taskLifecycle.test.js
+node test/localToolFacade.test.js
+node test/taskBoard.test.js
+npm.cmd test
+```
+
+All 29 backend test files pass.
+
+### 2. Code Review With Diffs
 
 Plan file:
 
@@ -1310,14 +1348,19 @@ Remaining gaps worth tracking:
 
 ## Other Future Slices
 
-Recommended next slice (pick one):
+Anchored to the checklist's own priority order (full detail in `docs/CHECKLIST_GAP_MATRIX.md`):
 
-1. **Subscription quota / plan-usage indicator** — parked. The user wants a "circle indicator" on startup showing Claude (and eventually Codex) plan usage. Investigation found that `--print "/usage"` is a $0 client-side slash command but only returns an auth-status string — the rich quota panel is rendered by the interactive TUI from an undocumented Anthropic API call. `~/.claude/stats-cache.json` has historical activity but not subscription windows. The user is independently investigating reliable data sources before this slice resumes.
-2. **Notifications** — legacy `notifications.ts` defines typed alert categories (task completion, agent attention, errors). TOAD has the raw event bus; needs a notification projection on top.
-3. **Git provisioning hooks** — legacy `TEAM_PREPARE_PROVISIONING` / `TEAM_INITIALIZE_GIT_REPOSITORY` / worktree status APIs. Auto-generate the diff content currently passed to `review_request` from a real git worktree.
-4. **File-level / hunk-level review reject** — legacy supports rejecting individual files or hunks. Big design lift; needs richer event vocabulary and a state machine. Out of scope until we have a UI consuming the existing `review_list` and want more granular controls.
-5. **Optional `--bare` smoke variant** — add a parallel smoke path that uses `--bare` when `ANTHROPIC_API_KEY` is set in the environment, for users on direct API auth.
-6. **Codex provider integration** — TOAD only spawns Claude runtimes. The legacy app had a full `codex-account` feature (rate-limit windows, ChatGPT auth, model selection). Much larger scoped slice.
+1. **Role authority (§5 + §26) — NEXT.** Add `actor.role` (lead / architect / developer / reviewer / tester / human). Per-role allow-list checked in `LocalToolFacade.execute`. Self-review prevention (`actor.agentId !== task.review.requestedBy` for `review_decide`). Without this, the state machine's checklist rules like "developer cannot mark task done" and "tester cannot approve review" remain aspirational.
+2. **Test artifacts + CI gates (§6 + §18).** Orchestrator-run validation commands stored as a structured `TestResult`. Failed tests block `merge_ready` transition. Biggest correctness gap between agent claims and system truth.
+3. **Plan-before-code (§2).** New `task_plan_propose` / `task_plan_approve` MCP tools backed by `PLAN_PROPOSED` / `PLAN_APPROVED` events. Tied to the `ready → planned` transition.
+4. **Diagnostics (§25).** `diagnostics_run` MCP tool returning `{ check, status: PASS/WARNING/FAIL, evidence, suggestedFix }[]`.
+5. **Worktree enforcement (§8) → diff tracking (§7 finished) → merge workflow (§19).** Bigger lift because of git integration.
+6. Smaller follow-ups: failure detection (§13), WIP limits (§9), dependency enforcement (§10), notifications, knowledge propagation.
+
+Parked / out of scope now:
+
+- **Subscription quota / plan-usage indicator** — user is investigating a reliable data source. `--print "/usage"` returns only an auth-status string in headless mode.
+- **UI work** — parallel UI prototype is being built elsewhere; backend-only per project priorities.
 
 Workflow reminders:
 
@@ -1480,6 +1523,11 @@ rg -n "permission|control_request|approval|runtime adapter|watcher|relay" C:\Pro
 - `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-team-launch-stop.md`
 - `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-runtime-send-input.md`
 - `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-review-with-diffs.md`
+- `C:\Project-TOAD\toad-local\docs\AGENT_TEAMS_HARDENING_CHECKLIST.md`
+- `C:\Project-TOAD\toad-local\docs\CHECKLIST_GAP_MATRIX.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-deterministic-state-machine.md`
+- `C:\Project-TOAD\toad-local\src\task\taskLifecycle.js`
+- `C:\Project-TOAD\toad-local\test\taskLifecycle.test.js`
 
 ## Suggested Opening Move For Next Agent
 
