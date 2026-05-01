@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-05-01 local session (per-transition role guards — checklist §3 × §5)
+Last updated: 2026-05-01 local session (tool_call_denied event emission — checklist §26)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,26 @@ Important files:
 
 ## Latest Completed Slices
 
-### 0. Per-Transition Role Guards — Checklist §3 × §5 (latest)
+### 0. tool_call_denied Event Emission — Checklist §26 (latest)
+
+No new plan doc — small follow-up that closes the audit half of §26.
+
+Previously, `assertRoleCanCallTool` threw on denial and the error bubbled up to the API caller, but no record was kept in the event log. Now every denial emits a `tool_call_denied` runtime event before re-throwing.
+
+Modified files:
+
+- `src/tools/localToolFacade.js`:
+  - Constructor accepts optional `eventLog` (anything with `appendEvent`).
+  - `execute()` wraps `assertRoleCanCallTool` in try/catch; on denial, calls `#emitToolCallDenied(actor, commandName, err)` then re-throws.
+  - `#emitToolCallDenied`: appends a `tool_call_denied` event with `runtimeId: 'facade:' + agentId`, payload `{ commandName, role, reason }`. Best-effort — wraps the append in its own try/catch so a broken event log can't mask the role-authority error the caller actually needs.
+- `src/app/LocalToadRuntime.js` — passes `this.eventLog` (the SQLite runtime event log) into the facade.
+- `test/localToolFacade.test.js` — 3 new tests (now 56 total): emits on denial, no-op on allowed call, best-effort tolerates broken event log.
+
+Schema note: `runtime_events.runtime_id` is just a string (no FK), so synthesizing `facade:${agentId}` for facade-level audit events is safe. The team_id FK still requires the team row to exist; `SqliteRuntimeEventLog.appendEvent` already does `INSERT ... ON CONFLICT DO NOTHING` for the team.
+
+Tests pass: 31 backend test files, 320 individual tests, 0 fail.
+
+### 1. Per-Transition Role Guards — Checklist §3 × §5 (previous)
 
 No new plan doc — this slice is a small follow-up that was flagged as "future tightening" in the gap matrix entry for both §3 and §5.
 
@@ -1560,8 +1579,8 @@ Anchored to the checklist's own priority order (full detail in `docs/CHECKLIST_G
 3. ✅ Plan-before-code (§2) — done. Three plan tools, projection, gate, self-approval prevention.
 4. ✅ Diagnostics (§25) — done. `diagnostics_run` read-only MCP tool runs eight self-checks (state-machine deny + allow paths, role-authority developer-deny + unknown-role-deny, validation-commands-configured per team, claude CLI detected, claude CLI authenticated, dbpath persistence) and returns `{ checks: [{ id, label, status, evidence, suggestedFix? }], summary: { pass, warning, fail } }`. Available to every role.
 5. ✅ Per-transition role guards (§3 × §5) — done. `TRANSITION_ROLES` map; `validateTaskStatusTransition` accepts `role`; `merge_ready → done` lead/human only; `rejected → backlog` and `blocked → *` architect/lead/human only.
-6. **Worktree enforcement (§8) → diff tracking (§7 finished) → merge workflow (§19) — NEXT.** Bigger lift because of git integration. Diagnostics already has placeholder slots for `worktree_present_per_task` once §8 lands.
-7. **`tool_call_denied` event emission.** §26 says every denied tool call should be logged. Currently the throw bubbles to `/api/call` but doesn't land in `runtime_events`. Small follow-up.
+6. ✅ `tool_call_denied` event emission (§26) — done. Best-effort runtime event on every role-authority denial. §26 fully done.
+7. **Worktree enforcement (§8) → diff tracking (§7 finished) → merge workflow (§19) — NEXT.** Bigger lift because of git integration. Diagnostics already has placeholder slots for `worktree_present_per_task` once §8 lands.
 8. Smaller follow-ups: failure detection (§13), WIP limits (§9), dependency enforcement (§10), notifications, knowledge propagation.
 
 Parked / out of scope now:

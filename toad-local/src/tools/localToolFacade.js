@@ -13,7 +13,7 @@ import { assertRoleCanCallTool } from '../security/roleAuthority.js';
 import { runDiagnostics } from '../diagnostics/runDiagnostics.js';
 
 export class LocalToolFacade {
-  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, spawnValidation = null, dbPath = null }) {
+  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, spawnValidation = null, dbPath = null, eventLog = null }) {
     if (!broker) throw new TypeError('broker is required');
     if (!taskBoard) throw new TypeError('taskBoard is required');
     this.broker = broker;
@@ -28,6 +28,7 @@ export class LocalToolFacade {
     this.teamConfigRegistry = teamConfigRegistry;
     this.spawnValidation = typeof spawnValidation === 'function' ? spawnValidation : defaultSpawnValidation;
     this.dbPath = typeof dbPath === 'string' && dbPath.length > 0 ? dbPath : null;
+    this.eventLog = eventLog && typeof eventLog.appendEvent === 'function' ? eventLog : null;
   }
 
   execute(command) {
@@ -36,7 +37,12 @@ export class LocalToolFacade {
       requireString(command.idempotencyKey, 'idempotencyKey');
     }
     const actor = normalizeActor(command.actor);
-    assertRoleCanCallTool({ role: actor.role, toolName: commandName });
+    try {
+      assertRoleCanCallTool({ role: actor.role, toolName: commandName });
+    } catch (err) {
+      this.#emitToolCallDenied(actor, commandName, err);
+      throw err;
+    }
     const args = command.args && typeof command.args === 'object' ? command.args : {};
 
     switch (commandName) {
@@ -702,6 +708,27 @@ export class LocalToolFacade {
       spawnValidation: this.spawnValidation,
       dbPath: this.dbPath,
     });
+  }
+
+  #emitToolCallDenied(actor, commandName, err) {
+    if (!this.eventLog) return;
+    // Best-effort audit. The original error always re-throws; a broken event log
+    // must not mask the role-authority denial.
+    try {
+      this.eventLog.appendEvent({
+        runtimeId: `facade:${actor.agentId}`,
+        teamId: actor.teamId,
+        agentId: actor.agentId,
+        eventType: 'tool_call_denied',
+        payload: {
+          commandName,
+          role: typeof actor.role === 'string' ? actor.role : null,
+          reason: err && typeof err.message === 'string' ? err.message : String(err),
+        },
+      });
+    } catch {
+      // swallow — the role-authority error is what the caller needs to see
+    }
   }
 }
 

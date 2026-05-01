@@ -1708,6 +1708,80 @@ test('LocalToolFacade blocks merge_ready → done for non-lead roles', async () 
   assert.equal(task.status, 'done');
 });
 
+test('LocalToolFacade emits tool_call_denied event when role authority rejects a call', () => {
+  const events = [];
+  const eventLog = {
+    appendEvent(input) {
+      events.push(input);
+      return { inserted: true, event: input };
+    },
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    eventLog,
+  });
+  // Developer cannot call agent_launch
+  assert.throws(
+    () => facade.execute({
+      commandName: COMMANDS.AGENT_LAUNCH,
+      idempotencyKey: 'dn-1',
+      actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+      args: { teamId: 'team-a', agentId: 'lead', runtimeId: 'r1', command: 'claude' },
+    }),
+    /role authority: developer cannot call agent_launch/,
+  );
+  // Exactly one tool_call_denied event recorded
+  const denied = events.filter((e) => e.eventType === 'tool_call_denied');
+  assert.equal(denied.length, 1);
+  assert.equal(denied[0].teamId, 'team-a');
+  assert.equal(denied[0].agentId, 'dev-1');
+  assert.equal(denied[0].payload.commandName, 'agent_launch');
+  assert.equal(denied[0].payload.role, 'developer');
+  assert.match(denied[0].payload.reason, /developer cannot call agent_launch/);
+});
+
+test('LocalToolFacade does not emit tool_call_denied for allowed calls', () => {
+  const events = [];
+  const eventLog = {
+    appendEvent(input) { events.push(input); return { inserted: true, event: input }; },
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    eventLog,
+  });
+  // Lead can call agent_status (no idempotency key required for read-only)
+  facade.execute({
+    commandName: COMMANDS.TASK_LIST,
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: {},
+  });
+  const denied = events.filter((e) => e.eventType === 'tool_call_denied');
+  assert.equal(denied.length, 0);
+});
+
+test('LocalToolFacade tool_call_denied event emission is best-effort (does not mask original error)', () => {
+  const eventLog = {
+    appendEvent() { throw new Error('event log is broken'); },
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    eventLog,
+  });
+  // Original role-authority error should bubble even if event log throws
+  assert.throws(
+    () => facade.execute({
+      commandName: COMMANDS.AGENT_LAUNCH,
+      idempotencyKey: 'dn-2',
+      actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+      args: { teamId: 'team-a', agentId: 'lead', runtimeId: 'r1', command: 'claude' },
+    }),
+    /role authority: developer cannot call agent_launch/,
+  );
+});
+
 test('LocalToolFacade blocks blocked → in_progress for developer/reviewer/tester', async () => {
   const facade = new LocalToolFacade({
     broker: new InMemoryBroker(),
