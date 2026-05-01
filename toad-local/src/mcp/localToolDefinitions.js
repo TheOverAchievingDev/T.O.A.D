@@ -270,6 +270,16 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
       signal: { type: 'string', enum: ['SIGTERM', 'SIGINT', 'SIGKILL'] },
     },
   }),
+  makeTool({
+    name: COMMANDS.RUNTIME_SEND_INPUT,
+    title: 'Send Direct Input To Runtime',
+    description: 'Write text directly to a runtime\'s stdin via its adapter, bypassing the broker. Use for slash commands and ad-hoc prompts that should not appear in message history.',
+    required: ['runtimeId', 'text'],
+    properties: {
+      runtimeId: { type: 'string', minLength: 1 },
+      text: { type: 'string', minLength: 1 },
+    },
+  }),
 ]);
 
 export function listLocalMcpTools() {

@@ -500,6 +500,66 @@ test('LocalToolFacade rejects agent_launch when no launchAgent callback is confi
   );
 });
 
+test('LocalToolFacade routes runtime_send_input to the adapter\'s sendTurn', async () => {
+  const turns = [];
+  const adapter = {
+    async sendTurn(input) {
+      turns.push(input);
+      return { accepted: true, responseState: 'queued' };
+    },
+  };
+  const adapters = new Map([['runtime-lead-1', adapter]]);
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    adapters,
+  });
+
+  const result = await facade.execute({
+    commandName: COMMANDS.RUNTIME_SEND_INPUT,
+    idempotencyKey: 'send-input-1',
+    actor: { teamId: 'team-a', agentId: 'operator' },
+    args: { runtimeId: 'runtime-lead-1', text: '/usage' },
+  });
+
+  assert.equal(turns.length, 1);
+  assert.equal(turns[0].message.text, '/usage');
+  assert.deepEqual(result, { accepted: true, responseState: 'queued' });
+});
+
+test('LocalToolFacade rejects runtime_send_input when no adapter is registered for the runtimeId', async () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    adapters: new Map(),
+  });
+  await assert.rejects(
+    () => facade.execute({
+      commandName: COMMANDS.RUNTIME_SEND_INPUT,
+      idempotencyKey: 'send-input-fail',
+      actor: { teamId: 'team-a', agentId: 'operator' },
+      args: { runtimeId: 'runtime-ghost', text: 'hello' },
+    }),
+    /no adapter for runtime/,
+  );
+});
+
+test('LocalToolFacade requires idempotencyKey for runtime_send_input', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    adapters: new Map([['runtime-lead-1', { sendTurn: () => ({}) }]]),
+  });
+  assert.throws(
+    () => facade.execute({
+      commandName: COMMANDS.RUNTIME_SEND_INPUT,
+      actor: { teamId: 'team-a', agentId: 'operator' },
+      args: { runtimeId: 'runtime-lead-1', text: 'hello' },
+    }),
+    /idempotencyKey/,
+  );
+});
+
 test('LocalToolFacade routes team_create / team_list / team_delete through the team config registry', () => {
   const facade = new LocalToolFacade({
     broker: new InMemoryBroker(),

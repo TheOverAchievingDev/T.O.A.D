@@ -77,6 +77,8 @@ export class LocalToolFacade {
         return this.#teamLaunch(actor, args);
       case COMMANDS.TEAM_STOP:
         return this.#teamStop(actor, args);
+      case COMMANDS.RUNTIME_SEND_INPUT:
+        return this.#runtimeSendInput(actor, args);
       default:
         throw new Error(`unsupported command: ${commandName}`);
     }
@@ -474,6 +476,16 @@ export class LocalToolFacade {
       }
     }
     return { teamId, members: results };
+  }
+
+  async #runtimeSendInput(actor, args) {
+    const runtimeId = requireString(args.runtimeId, 'args.runtimeId');
+    const text = requireString(args.text, 'args.text');
+    const adapter = this.adapters?.get?.(runtimeId);
+    if (!adapter || typeof adapter.sendTurn !== 'function') {
+      throw new Error(`runtime_send_input: no adapter for runtime ${runtimeId}`);
+    }
+    return adapter.sendTurn({ message: { text } });
   }
 
   async #teamStop(actor, args) {

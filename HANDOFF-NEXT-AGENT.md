@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-04-30 local session (team_launch / team_stop orchestration)
+Last updated: 2026-04-30 local session (runtime_send_input MCP tool)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,37 @@ Important files:
 
 ## Latest Completed Slices
 
-### 1. `team_launch` / `team_stop` Orchestration (latest)
+### 1. `runtime_send_input` MCP Tool (latest)
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-runtime-send-input.md`
+
+Mirrors the legacy `TEAM_PROCESS_SEND` IPC handler. Writes arbitrary text directly to a runtime's stdin via its adapter, bypassing the broker. Counterpart to the durable `message_send` path. Use cases: slash commands (`/clear`, `/usage`, `/compact`), one-off ad-hoc prompts that should not appear in message history, test harnesses driving a runtime without contaminating the broker.
+
+Modified files:
+
+- `src/commands/command-contract.js` — adds `RUNTIME_SEND_INPUT` to `COMMANDS` and `MUTATING_COMMANDS`.
+- `src/mcp/localToolDefinitions.js` — new tool def with required `runtimeId` + `text`.
+- `src/tools/localToolFacade.js` — new `#runtimeSendInput` handler that looks up the adapter by `runtimeId` (using the existing `adapters` Map injection) and calls `adapter.sendTurn({ message: { text } })`.
+- `test/localToolFacade.test.js` — 3 new tests (now 29 total): forwarding, missing-adapter rejection, sync idempotencyKey check.
+- `test/localMcpToolDefinitions.test.js` — `runtime_send_input` added to expected names list and the mutating-tools assertion.
+
+Behavior decisions:
+
+- **Naming chosen as `runtime_send_input`**, not `team_process_send`. The legacy IPC name is Electron-specific and team-keyed. TOAD addresses runtimes by `runtimeId` directly, matching `runtime_events` / `tool_activity` / `agent_status` / `agent_launch` / `agent_stop`.
+- **Idempotency key required but not used for dedup.** `adapter.sendTurn` is intentionally not idempotent. The key is the standard mutating-command requirement so the API/MCP layer's expectations stay consistent.
+- **Replies flow back through normal runtime-event ingestion** as `assistant_text` — `runtime_send_input` does not synchronously wait for a response.
+
+Verification during slice:
+
+```powershell
+node test/localToolFacade.test.js
+node test/localMcpToolDefinitions.test.js
+npm.cmd test
+```
+
+### 2. `team_launch` / `team_stop` Orchestration
 
 Plan file:
 
@@ -1251,10 +1281,9 @@ Recommended next slice (pick one):
 1. **Subscription quota / plan-usage indicator** — parked. The user wants a "circle indicator" on startup showing Claude (and eventually Codex) plan usage. Investigation found that `--print "/usage"` is a $0 client-side slash command but only returns an auth-status string — the rich quota panel is rendered by the interactive TUI from an undocumented Anthropic API call. `~/.claude/stats-cache.json` has historical activity but not subscription windows. The user is independently investigating reliable data sources before this slice resumes.
 2. **Code review with diffs** — legacy `review.ts` stores per-task diff content and supports file-level accept/reject. TOAD's `review_request` / `review_decide` work on task IDs only. Needs a diff-content store + new tool surface.
 3. **Notifications** — legacy `notifications.ts` defines typed alert categories (task completion, agent attention, errors). TOAD has the raw event bus; needs a notification projection on top.
-4. **`team_process_send`** — legacy lets you send a message to a specific runtime's stdin. TOAD's adapters expose this internally; small slice to wrap it.
-5. **Git provisioning hooks** — legacy `TEAM_PREPARE_PROVISIONING` / `TEAM_INITIALIZE_GIT_REPOSITORY` / worktree status APIs. Needed before code-review-with-diffs can store actual diffs.
-6. **Optional `--bare` smoke variant** — add a parallel smoke path that uses `--bare` when `ANTHROPIC_API_KEY` is set in the environment, for users on direct API auth.
-7. **Codex provider integration** — TOAD only spawns Claude runtimes. The legacy app had a full `codex-account` feature (rate-limit windows, ChatGPT auth, model selection). Much larger scoped slice.
+4. **Git provisioning hooks** — legacy `TEAM_PREPARE_PROVISIONING` / `TEAM_INITIALIZE_GIT_REPOSITORY` / worktree status APIs. Needed before code-review-with-diffs can store actual diffs.
+5. **Optional `--bare` smoke variant** — add a parallel smoke path that uses `--bare` when `ANTHROPIC_API_KEY` is set in the environment, for users on direct API auth.
+6. **Codex provider integration** — TOAD only spawns Claude runtimes. The legacy app had a full `codex-account` feature (rate-limit windows, ChatGPT auth, model selection). Much larger scoped slice.
 
 Workflow reminders:
 
@@ -1415,6 +1444,7 @@ rg -n "permission|control_request|approval|runtime adapter|watcher|relay" C:\Pro
 - `C:\Project-TOAD\toad-local\src\team\sqliteTeamConfigRegistry.js`
 - `C:\Project-TOAD\toad-local\test\sqliteTeamConfigRegistry.test.js`
 - `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-team-launch-stop.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-runtime-send-input.md`
 
 ## Suggested Opening Move For Next Agent
 
