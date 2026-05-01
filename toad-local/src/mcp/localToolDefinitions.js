@@ -1,0 +1,264 @@
+import { COMMANDS, commandRequiresIdempotency } from '../commands/command-contract.js';
+
+const RECIPIENT_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  required: ['kind'],
+  properties: {
+    kind: { type: 'string', enum: ['user', 'agent', 'team', 'system'] },
+    teamId: { type: 'string', minLength: 1 },
+    agentId: { type: 'string', minLength: 1 },
+  },
+});
+
+const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
+  makeTool({
+    name: COMMANDS.AGENT_STATUS,
+    title: 'Agent Status',
+    description: 'List runtime status for the current team or inspect one runtime by ID.',
+    required: [],
+    properties: {
+      runtimeId: { type: 'string', minLength: 1 },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.APPROVAL_RESPOND,
+    title: 'Respond To Approval',
+    description: 'Approve or deny a pending runtime approval request.',
+    required: ['approvalId', 'decision'],
+    properties: {
+      approvalId: { type: 'string', minLength: 1 },
+      decision: { type: 'string', enum: ['approved', 'denied'] },
+      reason: { type: 'string' },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.APPROVAL_LIST,
+    title: 'List Approvals',
+    description: 'List approval requests for the current team.',
+    required: [],
+    properties: {},
+  }),
+  makeTool({
+    name: COMMANDS.MESSAGE_SEND,
+    title: 'Send Message',
+    description: 'Send a message from the current agent to a user, team, system, or another agent.',
+    required: ['to', 'text'],
+    properties: {
+      to: RECIPIENT_SCHEMA,
+      text: { type: 'string', minLength: 1 },
+      kind: {
+        type: 'string',
+        enum: ['user_goal', 'instruction', 'reply', 'task_notification', 'review_notification', 'system'],
+      },
+      taskRefs: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['taskId'],
+          properties: {
+            taskId: { type: 'string', minLength: 1 },
+          },
+        },
+      },
+      metadata: { type: 'object' },
+      replyToMessageId: { type: 'string', minLength: 1 },
+      conversationId: { type: 'string', minLength: 1 },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.TASK_CREATE,
+    title: 'Create Task',
+    description: 'Create a task on the current team task board.',
+    required: ['taskId', 'subject'],
+    properties: {
+      taskId: { type: 'string', minLength: 1 },
+      subject: { type: 'string', minLength: 1 },
+      description: { type: 'string' },
+      ownerId: { type: 'string', minLength: 1 },
+      status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'deleted'] },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.TASK_UPDATE,
+    title: 'Update Task',
+    description: 'Update task ownership or status on the current team task board.',
+    required: ['taskId'],
+    properties: {
+      taskId: { type: 'string', minLength: 1 },
+      ownerId: { type: 'string', minLength: 1 },
+      status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'deleted'] },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.TASK_COMMENT,
+    title: 'Comment On Task',
+    description: 'Add a comment to a task on the current team task board.',
+    required: ['taskId', 'text'],
+    properties: {
+      taskId: { type: 'string', minLength: 1 },
+      text: { type: 'string', minLength: 1 },
+      commentId: { type: 'string', minLength: 1 },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.REVIEW_REQUEST,
+    title: 'Request Review',
+    description: 'Request review for a task on the current team task board.',
+    required: ['taskId'],
+    properties: {
+      taskId: { type: 'string', minLength: 1 },
+      reviewerId: { type: 'string', minLength: 1 },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.REVIEW_DECIDE,
+    title: 'Decide Review',
+    description: 'Approve a task review or request changes.',
+    required: ['taskId', 'decision'],
+    properties: {
+      taskId: { type: 'string', minLength: 1 },
+      decision: { type: 'string', enum: ['approved', 'changes_requested'] },
+      reason: { type: 'string' },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.TASK_LIST,
+    title: 'List Tasks',
+    description: 'List tasks visible to the current team.',
+    required: [],
+    properties: {},
+  }),
+  makeTool({
+    name: COMMANDS.RUNTIME_EVENTS,
+    title: 'Runtime Events',
+    description: 'List recent runtime audit events for the current team. Optionally filter by runtime.',
+    required: [],
+    properties: {
+      runtimeId: { type: 'string', minLength: 1 },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.TOOL_ACTIVITY,
+    title: 'Tool Activity',
+    description: 'List recent tool calls made by agents in the current team. Optionally filter by runtime.',
+    required: [],
+    properties: {
+      runtimeId: { type: 'string', minLength: 1 },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.HEALTH_STATUS,
+    title: 'Health Status',
+    description: 'List API retry events and health summary for the current team. Includes rate-limit and server error counts.',
+    required: [],
+    properties: {
+      runtimeId: { type: 'string', minLength: 1 },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.CROSS_TEAM_MESSAGES,
+    title: 'Cross-Team Messages',
+    description: 'List cross-team messages visible to the current team.',
+    required: [],
+    properties: {
+      limit: { type: 'integer', minimum: 0 },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.CROSS_TEAM_SEND,
+    title: 'Send Cross-Team Message',
+    description: 'Send a message to an agent in another team. The message is delivered to the target team inbox and a sent-copy is kept in the sender inbox.',
+    required: ['targetTeamId', 'text'],
+    properties: {
+      targetTeamId: { type: 'string', minLength: 1 },
+      text: { type: 'string', minLength: 1 },
+      targetAgentId: { type: 'string', minLength: 1 },
+      chainDepth: { type: 'integer', minimum: 0 },
+      conversationId: { type: 'string', minLength: 1 },
+      replyToConversationId: { type: 'string', minLength: 1 },
+    },
+  }),
+]);
+
+export function listLocalMcpTools() {
+  return LOCAL_MCP_TOOL_DEFINITIONS.map(cloneJson);
+}
+
+export function getLocalMcpTool(name) {
+  const toolName = requireString(name, 'name');
+  const tool = LOCAL_MCP_TOOL_DEFINITIONS.find((entry) => entry.name === toolName);
+  if (!tool) throw new Error(`unknown local MCP tool: ${toolName}`);
+  return cloneJson(tool);
+}
+
+export async function callLocalMcpTool({
+  toolFacade,
+  actor,
+  name,
+  arguments: toolArguments = {},
+}) {
+  if (!toolFacade || typeof toolFacade.execute !== 'function') {
+    throw new TypeError('toolFacade with execute() is required');
+  }
+  const toolName = getLocalMcpTool(name).name;
+  const args = toolArguments && typeof toolArguments === 'object' ? { ...toolArguments } : {};
+  const idempotencyKey = commandRequiresIdempotency(toolName)
+    ? requireString(args.idempotencyKey, 'idempotencyKey')
+    : null;
+  delete args.idempotencyKey;
+
+  const result = await toolFacade.execute({
+    commandName: toolName,
+    idempotencyKey,
+    actor,
+    args,
+  });
+
+  return {
+    content: [{ type: 'text', text: JSON.stringify(result) }],
+    structuredContent: result,
+  };
+}
+
+function makeTool({ name, title, description, required, properties }) {
+  const mutating = commandRequiresIdempotency(name);
+  const schemaProperties = {
+    ...(mutating
+      ? { idempotencyKey: { type: 'string', minLength: 1 } }
+      : {}),
+    ...properties,
+  };
+  return Object.freeze({
+    name,
+    title,
+    description,
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: mutating ? ['idempotencyKey', ...required] : [...required],
+      properties: schemaProperties,
+    },
+    annotations: mutating
+      ? {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+        }
+      : {
+          readOnlyHint: true,
+        },
+  });
+}
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function requireString(value, label) {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new TypeError(`${label} must be a non-empty string`);
+  }
+  return value.trim();
+}

@@ -1,0 +1,27 @@
+# Dependencies
+**/node_modules/
+
+# Build outputs
+**/dist/
+**/dist-electron/
+**/out/
+**/build/
+
+# Local data
+toad-local/.toad/
+
+# Local logs
+*.log
+api-dev.*.log
+vite-dev.*.log
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Env
+.env
+.env.local
+*.env

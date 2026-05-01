@@ -1,0 +1,1237 @@
+# TOAD Local Rebuild Handoff
+
+Last updated: 2026-04-30 local session (broker/taskBoard durability swap)
+
+This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
+
+## Workspace
+
+- Root: `C:\Project-TOAD`
+- Main local rebuild: `C:\Project-TOAD\toad-local`
+- Main reverse-engineering/rebuild doc: `C:\Project-TOAD\TOAD-STAGED-REVERSE-ENGINEERING-AND-REBUILD-PLAN.md`
+- Legacy/original project under study: `C:\Project-TOAD\claude_agent_teams_ui-main\claude_agent_teams_ui-main`
+- Important legacy file for many findings: `C:\Project-TOAD\claude_agent_teams_ui-main\claude_agent_teams_ui-main\src\main\services\team\TeamProvisioningService.ts`
+
+There appears to be no git metadata in `C:\Project-TOAD\toad-local`; earlier `git status` failed there. Treat the workspace as local files.
+
+## User Preferences / Constraints
+
+- Keep work local for now. No git push.
+- Continue in small logical slices.
+- Use tests first for behavior changes.
+- Use `apply_patch` for manual edits.
+- Use PowerShell commands from `C:\Project-TOAD\toad-local`.
+- Approval policy is `never`; do not request elevated/sandbox permissions.
+
+## Current Test Command
+
+Run full regression from `C:\Project-TOAD\toad-local`:
+
+```powershell
+npm.cmd test
+```
+
+Last full backend regression passed after the durable side-effect delivery receipts slice on 2026-04-30 (26 test files). UI lint and UI build last passed after the API/UI hardening slice (UI was not touched in this slice).
+
+Current `package.json` test chain:
+
+```powershell
+node test/broker.test.js && node test/taskBoard.test.js && node test/approvalBroker.test.js && node --no-warnings test/sqliteApprovalBroker.test.js && node --no-warnings test/sqliteBroker.test.js && node --no-warnings test/sqliteTaskBoard.test.js && node test/localToolFacade.test.js && node test/localMcpToolDefinitions.test.js && node --no-warnings test/localMcpServer.test.js && node test/deliveryWorker.test.js && node test/claudeStreamJsonAdapter.test.js && node --no-warnings test/sqliteRuntimeRegistry.test.js && node --no-warnings test/sqliteRuntimeEventLog.test.js && node test/runtimeEventIngestor.test.js && node test/runtimeSupervisor.test.js && node test/localReadModel.test.js && node --no-warnings test/localToadRuntime.test.js && node test/parsePermissionRequest.test.js && node test/claudeSettingsWriter.test.js && node test/teammatePermission.test.js && node test/compactionHandler.test.js && node test/crossTeam.test.js && node test/runtimeEventBus.test.js && node test/teamConfig.test.js && node test/apiServer.test.js && node --no-warnings test/sideEffectLog.test.js
+```
+
+Claude CLI smoke is now live-verified end-to-end:
+
+- `claude` exists at `C:\Users\Nova_\.local\bin\claude.exe`
+- Smoke harness: `C:\Project-TOAD\toad-local\test\claudeCliSmoke.test.js`
+- Run with `TOAD_CLAUDE_SMOKE=1` (set `CLAUDE_BIN` if `claude` is not on PATH)
+- Last verified pass: 2026-04-30 — produced an `assistant_text: "TOAD-SMOKE"` event and `result.success` summary in ~15s against `claude-opus-4-7`.
+- The harness uses `--print --verbose --input-format stream-json --output-format stream-json --no-session-persistence --tools ""` (no `--bare`).
+- Do NOT add `--bare` without first confirming an Anthropic API key is set — `--bare` rejects the subscription OAuth that the user's machine uses and the harness will silently skip.
+
+## What Has Been Built
+
+The local rebuild is a Node ESM project using `node:test` and `node:sqlite`.
+
+Core pieces currently present:
+
+- Protocol/message envelope core
+- In-memory and SQLite broker
+- Delivery attempts and runtime delivery worker
+- Task board and review workflow
+- Durable approval broker
+- MCP-shaped local tool definitions and stdio server
+- Runtime supervisor with restart policy
+- SQLite runtime registry
+- SQLite runtime event log
+- Claude stream-json adapter
+- Runtime event ingestion
+- Runtime identity validation
+- Local read model
+- Local orchestrator `LocalToadRuntime`
+- Teammate permission parser and Claude settings writer
+- Runtime compaction handler
+- Runtime event bus
+- Cross-team message protocol
+- Team config registry
+- HTTP/SSE API server
+- Vite React dashboard under `ui/`
+
+Important files:
+
+- `C:\Project-TOAD\toad-local\src\app\LocalToadRuntime.js`
+- `C:\Project-TOAD\toad-local\src\runtime\ClaudeStreamJsonAdapter.js`
+- `C:\Project-TOAD\toad-local\src\runtime\RuntimeEventIngestor.js`
+- `C:\Project-TOAD\toad-local\src\runtime\RuntimeSupervisor.js`
+- `C:\Project-TOAD\toad-local\src\runtime\RuntimeIdentityValidator.js`
+- `C:\Project-TOAD\toad-local\src\runtime\sqliteRuntimeRegistry.js`
+- `C:\Project-TOAD\toad-local\src\runtime\sqliteRuntimeEventLog.js`
+- `C:\Project-TOAD\toad-local\src\approval\inMemoryApprovalBroker.js`
+- `C:\Project-TOAD\toad-local\src\approval\sqliteApprovalBroker.js`
+- `C:\Project-TOAD\toad-local\src\tools\localToolFacade.js`
+- `C:\Project-TOAD\toad-local\src\read\LocalReadModel.js`
+- `C:\Project-TOAD\toad-local\src\mcp\localToolDefinitions.js`
+- `C:\Project-TOAD\toad-local\src\mcp\localMcpServer.js`
+- `C:\Project-TOAD\toad-local\src\mcp\stdioServer.js`
+- `C:\Project-TOAD\toad-local\src\storage\schema.sql`
+- `C:\Project-TOAD\toad-local\src\runtime\parsePermissionRequest.js`
+- `C:\Project-TOAD\toad-local\src\runtime\claudeSettingsWriter.js`
+- `C:\Project-TOAD\toad-local\src\runtime\CompactionHandler.js`
+- `C:\Project-TOAD\toad-local\src\protocol\crossTeam.js`
+- `C:\Project-TOAD\toad-local\src\runtime\RuntimeEventBus.js`
+- `C:\Project-TOAD\toad-local\src\team\teamConfig.js`
+- `C:\Project-TOAD\toad-local\src\transport\apiServer.js`
+- `C:\Project-TOAD\toad-local\src\delivery\sideEffectLog.js`
+- `C:\Project-TOAD\toad-local\ui\`
+
+## Latest Completed Slices
+
+### 1. Broker / TaskBoard Durability Swap (latest)
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-broker-taskboard-durability.md`
+
+Modified files:
+
+- `src/app/LocalToadRuntime.js` — `broker` default switched from `InMemoryBroker` to `SqliteBroker({ filePath: dbPath })`; `taskBoard` default switched from `InMemoryTaskBoard` to `SqliteTaskBoard({ filePath: dbPath })`. All downstream `broker` / `taskBoard` references updated to use `this.broker` / `this.taskBoard` instead of the destructured params (which are now `null` when not provided). Imports updated to remove the in-memory variants.
+- `test/localToadRuntime.test.js` — new persistence test (now 20 total): writes a message and a task event through one runtime, closes, opens a second runtime against the same `dbPath`, asserts both survive.
+- `README.md` — note that all five storage surfaces (broker, taskBoard, approvalBroker, runtimeRegistry, eventLog) now persist when `dbPath` is a real file.
+
+Behavior:
+
+- `npm run api:dev` now persists messages and tasks across restarts — prior in-progress tasks, pending approvals, message history all visible to the next process.
+- API parity verified: `SqliteBroker` and `SqliteTaskBoard` expose the exact methods downstream consumers call (`appendMessage`, `listInbox`, `listMessages`, `markRead` for the broker; `appendEvent`, `listEvents`, `getTask`, `listTasks` for the task board). Existing tests continue to pass against the new defaults — proves transitively that the swap preserves observable behavior.
+- `LocalToadRuntime.close()` already iterates `taskBoard` and `broker` via `closeIfSupported` — SQLite connections close cleanly.
+
+Verification during slice:
+
+```powershell
+node test/localToadRuntime.test.js
+npm.cmd test
+```
+
+### 2. Persistent Storage Configuration + close() leak fix
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-persistent-storage-configuration.md`
+
+The discovery that drove this slice: `scripts/dev-api-server.mjs` constructed `LocalToadRuntime` with no storage paths, so all SQLite components defaulted to `:memory:`. The whole durability story (delivery receipts, approval persistence, runtime audit, side-effect replay-on-restart, retention) silently did nothing across a real `npm run api:dev` restart.
+
+Modified files:
+
+- `src/storage/sqlite.js` — `openToadDatabase` now `mkdirSync(parent, { recursive: true })` for non-`:memory:` paths so first-run doesn't fail on a missing directory.
+- `src/app/LocalToadRuntime.js` — new `dbPath` constructor option (default `:memory:`); `runtimeRegistry`, `eventLog`, `approvalBroker` defaults are now constructed against `dbPath` (rather than each defaulting to its own `:memory:`); existing tests still pass because the default is unchanged.
+- `src/app/LocalToadRuntime.js` — `close()` now also calls `closeIfSupported(this.approvalBroker)`. Without this, the approval broker's SQLite connection stayed open after `close()` returned; on Windows this prevented the file from being unlinked. Real bug, surfaced by the new persistence test.
+- `scripts/dev-api-server.mjs` — sets `dbPath` to `<projectCwd>/.toad/toad.db` (overridable by `TOAD_DB_PATH`), prints the resolved path on startup so the operator can see where their data lives.
+- `test/localToadRuntime.test.js` — new persistence test (now 19 total): writes an approval through one `LocalToadRuntime` against a temp `dbPath`, closes it, opens a second `LocalToadRuntime` against the same path, asserts the approval is visible. Exercises the auto-mkdir path with a nested directory.
+- `.gitignore` (toad-local) — adds `.toad/` plus the existing api-dev log files.
+- `README.md` — documents `TOAD_DB_PATH` and the default `<projectCwd>/.toad/toad.db` location.
+
+Behavior:
+
+- Constructor default stays `:memory:` so tests don't accidentally write to disk.
+- `npm run api:dev` now writes to a real file by default. Stop the orchestrator before deleting or backing up the file — SQLite holds connections while running.
+- Setting `TOAD_DB_PATH=:memory:` reverts to ephemeral mode if you want it back.
+
+Verification during slice:
+
+```powershell
+node test/localToadRuntime.test.js
+npm.cmd test
+```
+
+### 2. UI System Housekeeping Panel
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-ui-system-housekeeping-panel.md`
+
+Modified files:
+
+- `ui/src/components/Dashboard.jsx` — derives `lastDrop` and `lastPrune` from the `events` array via `useMemo`; renders a new "System Housekeeping" panel between the top stats grid and Pending Approvals; adds a small `HousekeepingCell` helper plus a local `formatRelativeTime` utility.
+
+Behavior:
+
+- The panel shows two cells side by side: "Last restart cleanup" (from `side_effects_dropped_on_restart`) and "Last retention sweep" (from `side_effects_pruned`). Each cell shows the count and a relative timestamp (`Xs ago`, `Xm ago`, etc.).
+- When the current SSE session has not received either event yet, each cell shows an empty state ("No orphans cleared this session", "No prune events this session").
+- No backend changes — the events were already flowing on the SSE bus from the prior telemetry slice. The panel is a pure consumer.
+
+Verification during slice:
+
+```powershell
+cd ui
+npm.cmd run lint
+npm.cmd run build
+cd ..
+npm.cmd test
+```
+
+### 2. Live Claude CLI Smoke Verified
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-live-claude-smoke.md`
+
+Modified files:
+
+- `test/claudeCliSmoke.test.js` — drop `--bare` from the spawned CLI args, with an inline comment explaining the rationale.
+
+Diagnosis:
+
+- All previous smoke runs hit `authentication_failed` and skipped. Claude was authenticated locally for *interactive* sessions, but the CLI's `--bare` flag forces a stripped-down headless mode whose auth path only accepts an Anthropic API key (or non-subscription OAuth) — not the Claude Code subscription OAuth that the user's machine uses.
+- None of TOAD's production code uses `--bare`; it was a holdover the smoke had inherited from the legacy reference app. Dropping it makes the smoke match the actual auth flow.
+
+Verification:
+
+- Live run produced an `assistant_text` event containing `TOAD-SMOKE` and a `result.success` summary in ~15 seconds against `claude-opus-4-7`.
+- Validates the full path: stream-json input encoding → CLI auth → assistant streaming → `ClaudeStreamJsonAdapter` normalization → harness assertion.
+
+Quota note:
+
+- Without `--bare`, the run consumes ~334k cache-creation tokens because the full plugin/skill system prompt loads. The CLI prints `total_cost_usd ≈ $2`, but that is an API-equivalent estimate and does not bill subscription users — it consumes plan quota instead.
+- Run sparingly: only when validating against a new CLI version, after material adapter changes, or after long pauses in development.
+
+Next-agent reminder:
+
+- Do NOT reintroduce `--bare` to the smoke without first confirming the operator has an Anthropic API key. The subscription-OAuth path will silently skip with an auth-failure message.
+
+### 2. Restart Housekeeping Telemetry
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-restart-housekeeping-telemetry.md`
+
+Modified files:
+
+- `src/app/LocalToadRuntime.js` — `start()` now emits `runtime_event`s on the existing event bus when housekeeping does work. Two new event types: `side_effects_dropped_on_restart` (after `replayPendingSideEffects()` if it dropped > 0) and `side_effects_pruned` (after `pruneSideEffectLog()` if it deleted > 0). No event when the count is zero.
+- `test/localToadRuntime.test.js` — 3 new tests (now 18 total): drop event emitted with count, prune event emitted with count, no events on a clean log.
+
+Behavior:
+
+- Each event has shape `{ type, count, createdAt }`. They are system-level — no `runtimeId` / `teamId` / `agentId`.
+- The `ApiServer` already relays the `runtime_event` channel to all SSE clients, so the dashboard automatically receives these without any further plumbing.
+- Suppression on no-op keeps signal-to-noise high. A clean restart on a clean log is silent on the bus.
+
+Verification during slice:
+
+```powershell
+node test/localToadRuntime.test.js
+npm.cmd test
+```
+
+### 2. Side-Effect Log Retention
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-side-effect-log-retention.md`
+
+Modified files:
+
+- `src/delivery/sideEffectLog.js` — new `pruneOlderThan(cutoffDate)` method that deletes terminal (`'delivered'`/`'failed'`) rows where `COALESCE(delivered_at, created_at) < cutoff`. Returns the deleted count. Throws on invalid `Date`.
+- `src/app/LocalToadRuntime.js` — new `sideEffectRetentionDays` constructor option (default 7, env `TOAD_SIDE_EFFECT_RETENTION_DAYS`); new `pruneSideEffectLog({ olderThan? })` method; `start()` now calls `pruneSideEffectLog()` immediately after `replayPendingSideEffects()` and before `apiServer.start()`.
+- `test/sideEffectLog.test.js` — 5 new tests (now 12 total) covering delivered-old, failed-old (uses `created_at`), pending preservation, recent retention, invalid-date rejection.
+- `test/localToadRuntime.test.js` — 4 new tests (now 15 total) covering retention-driven prune, explicit `olderThan` override, null-log no-op, and `start()` invoking prune.
+- `README.md` — documents `TOAD_SIDE_EFFECT_RETENTION_DAYS`.
+
+Behavior:
+
+- `'pending'` rows are never deleted — they remain potentially replayable.
+- `'delivered'` rows older than `now - retentionDays` are deleted using `delivered_at`.
+- `'failed'` rows older than `now - retentionDays` are deleted using `created_at` (since `delivered_at` is `NULL` for failed rows). Worst case: a row that lingered as `'pending'` for hours before failing is treated as slightly older than reality, by exactly that lingering window — negligible against a multi-day retention default.
+- Default retention: 7 days. Pruning is a one-shot per-`start()` sweep; no periodic timer.
+
+Verification during slice:
+
+```powershell
+node test/sideEffectLog.test.js
+node test/localToadRuntime.test.js
+npm.cmd test
+```
+
+### 2. LocalToadRuntime Lifecycle Tests + SSE Shutdown Bug Fix
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-local-toad-runtime-lifecycle-tests.md`
+
+Modified files:
+
+- `src/app/LocalToadRuntime.js` — new `port` constructor option (defaults to `process.env.TOAD_API_PORT` or `3001`), threaded into the internal `ApiServer`.
+- `src/transport/apiServer.js` — `stop()` now calls `server.closeAllConnections()` after `server.close(callback)`.
+- `test/localToadRuntime.test.js` — 3 new tests (now 11 total): `start()` binds + serves a `POST /api/call`, `close()` disconnects pending SSE clients + unbinds the port (verified via re-binding probe), `close()` is safe to call when `start()` was never called.
+
+Behavior / bug fix:
+
+- Before this slice, `apiServer.stop()` would hang indefinitely if any SSE client was still connected — `server.close()` waits for keep-alive sockets to drain, and an SSE response keeps its socket open. The new lifecycle test exposed this; `closeAllConnections()` is the one-line fix.
+- `close()` is now safe to call without `start()` (the underlying `server.close()` callback fires even when the server never bound).
+
+Test pattern reminder for future SSE work:
+
+- `http.IncomingMessage` is paused until something consumes it. To get `'close'` / `'end'` events to fire when the server destroys the socket, call `sseRes.resume()` or attach a `'data'` listener after receiving the response.
+
+Verification during slice:
+
+```powershell
+node test/localToadRuntime.test.js
+npm.cmd test
+```
+
+### 2. Origin-Restricted CORS
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-origin-restricted-cors.md`
+
+Modified files:
+
+- `src/transport/apiServer.js` — new `allowedOrigins` constructor option, `#resolveAllowedOrigin` helper, `#setCorsHeaders` echoes a specific origin instead of `*` (or omits ACAO entirely when the origin is not on the allow-list), `Vary: Origin` is set when an origin is echoed.
+- `src/app/LocalToadRuntime.js` — parses `process.env.TOAD_API_ALLOWED_ORIGINS` (comma-separated or `*`) and forwards.
+- `test/apiServer.test.js` — 4 new tests (now 18 total) covering allow-list echo, disallowed origin omission, default list (`localhost:5173` + `127.0.0.1:5173`), and `*` wildcard mode.
+- `README.md` — documents `TOAD_API_ALLOWED_ORIGINS`.
+
+Behavior:
+
+- Default allow-list: `http://localhost:5173`, `http://127.0.0.1:5173` (Vite's default dev origins).
+- Allowed origin in `Origin` header → response carries `Access-Control-Allow-Origin: <that exact origin>` + `Vary: Origin`.
+- Disallowed origin → no ACAO is set; the request still processes but the browser refuses to expose the response to JS.
+- No `Origin` header (curl, server-to-server) → no ACAO is set; non-browser clients ignore CORS, so behavior is preserved.
+- `allowedOrigins: '*'` (or env `TOAD_API_ALLOWED_ORIGINS=*`) echoes whatever origin is sent, matching the legacy wildcard.
+
+Verification during slice:
+
+```powershell
+node test/apiServer.test.js
+npm.cmd test
+cd ui
+npm.cmd run lint
+npm.cmd run build
+```
+
+### 2. API Token Protection
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-api-token-protection.md`
+
+Modified files:
+
+- `src/transport/apiServer.js` — new `token` constructor option, `#authenticate` / `#authenticateEvents` helpers using `crypto.timingSafeEqual`, `Authorization` added to CORS allowed headers, `/events` URL parser now tolerates query strings.
+- `src/app/LocalToadRuntime.js` — passes `process.env.TOAD_API_TOKEN` to the `ApiServer`.
+- `test/apiServer.test.js` — 5 new tests (now 14 total) covering missing/wrong/correct Bearer on `/api/call`, OPTIONS preflight pass-through, and `/events` auth via `?token=` query string.
+- `ui/src/config/toadApi.js` — exports `TOAD_API_TOKEN`, `toadApiHeaders()`, and `toadEventsUrl()` helpers that read `VITE_TOAD_API_TOKEN`.
+- `ui/src/hooks/useToadApi.js` — uses `toadApiHeaders()` instead of inline headers.
+- `ui/src/hooks/useToadEvents.js` — uses `toadEventsUrl()` instead of the bare URL constant.
+- `README.md` — documents `TOAD_API_TOKEN` and `VITE_TOAD_API_TOKEN`.
+
+Behavior:
+
+- When `TOAD_API_TOKEN` is unset, the API runs in the existing no-auth mode (current default, unchanged).
+- When set, `POST /api/call` requires `Authorization: Bearer <token>`; missing or wrong → JSON `401`, no facade execution.
+- `GET /events` requires the same token, accepted via either the `Authorization` header or the `?token=<token>` query string (the latter is needed because `EventSource` cannot send custom headers).
+- OPTIONS preflight is unauthenticated and now advertises `Authorization` in `Access-Control-Allow-Headers`.
+- Token comparison uses `crypto.timingSafeEqual` on equal-length buffers.
+
+Verification during slice:
+
+```powershell
+node test/apiServer.test.js
+npm.cmd test
+cd ui
+npm.cmd run lint
+npm.cmd run build
+```
+
+### 2. Side-Effect Replay-on-Restart
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-side-effect-replay-on-restart.md`
+
+Modified files:
+
+- `src/app/LocalToadRuntime.js` — added `replayPendingSideEffects()` method; called from `start()` before binding the API server.
+- `test/localToadRuntime.test.js` — 4 new tests covering the drop-on-restart contract.
+
+Behavior:
+
+- On `LocalToadRuntime.start()`, every `'pending'` row in `side_effect_deliveries` is marked `'failed'` (drop-on-restart policy for both `tool_result` and `compaction_reinjection` kinds).
+- Already-`'delivered'` and already-`'failed'` rows are untouched.
+- When `sideEffectLog` is `null` (no SQLite handle was available — e.g. when both `runtimeRegistry` and `eventLog` are stubs without `db`), the method is a no-op.
+- Returns `{ dropped: number }` for caller observability.
+
+Verification during slice:
+
+```powershell
+node test/localToadRuntime.test.js
+npm.cmd test
+```
+
+### 2. Durable Side-Effect Delivery Receipts
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-side-effect-delivery-receipts.md`
+
+New files:
+
+- `src/delivery/sideEffectLog.js` — `SideEffectLog` class (markPending/markDelivered/markFailed/get/getPending) backed by a new `side_effect_deliveries` SQLite table.
+- `test/sideEffectLog.test.js` — 7 isolated unit tests.
+
+Modified files:
+
+- `src/storage/schema.sql` — added `side_effect_deliveries` table.
+- `src/runtime/RuntimeEventIngestor.js` — accepts optional `sideEffectLog`; `#sendToolResult` now writes a pending receipt, skips delivery when receipt is already `'delivered'`, marks delivered on success, marks failed and re-throws on adapter rejection.
+- `src/runtime/CompactionHandler.js` — accepts optional `sideEffectLog`; writes a pending receipt on `compact_boundary`, marks delivered after a successful `sendTurn`, marks failed on adapter rejection or `turn_failed`.
+- `src/app/LocalToadRuntime.js` — instantiates `SideEffectLog` from `runtimeRegistry.db ?? eventLog.db` and threads it into `CompactionHandler` and `RuntimeEventIngestor`.
+- `package.json` — added `node --no-warnings test/sideEffectLog.test.js` to the test chain.
+- `test/compactionHandler.test.js` — 4 new integration tests for the receipt lifecycle.
+- `test/runtimeEventIngestor.test.js` — 3 new integration tests for tool-result receipt lifecycle (delivered, idempotent skip, failed-and-rethrow).
+
+Behavior:
+
+- `tool_result` deliveries are now durable. A duplicate `tool_use` ingest (same idempotency event hash) skips the adapter call once the prior call succeeded.
+- Compaction reinjections write a pending receipt on `compact_boundary` and resolve to `delivered` or `failed` based on the `sendTurn` outcome. `turn_failed` also marks the receipt failed (strict drop policy, matching legacy).
+- `getPending()` exists and is unit-tested but is not yet wired into a replay-on-restart flow — that is intentionally deferred to a follow-up slice.
+
+Verification during slice:
+
+```powershell
+node test/sideEffectLog.test.js
+node test/compactionHandler.test.js
+node test/runtimeEventIngestor.test.js
+npm.cmd test
+```
+
+### 2. API/UI Hardening
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-api-ui-hardening.md`
+
+Spec file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\specs\2026-04-30-api-ui-hardening-design.md`
+
+Modified files:
+
+- `src/transport/apiServer.js`
+- `test/apiServer.test.js`
+- `ui/src/config/toadApi.js`
+- `ui/src/hooks/useToadApi.js`
+- `ui/src/hooks/useToadEvents.js`
+- `README.md`
+
+Behavior:
+
+- `/api/call` now returns JSON `400` for malformed JSON and invalid generic envelope shape before facade execution.
+- `/api/call` now returns JSON `413` when a request body exceeds `maxBodyBytes` (default 1 MiB).
+- Dashboard API/SSE URLs are derived from `VITE_TOAD_API_BASE_URL`, defaulting to `http://127.0.0.1:3001`.
+- Existing hook APIs are unchanged.
+
+Verification during slice:
+
+```powershell
+node test/apiServer.test.js
+npm.cmd test
+cd ui
+npm.cmd run lint
+npm.cmd run build
+```
+
+### 2. UI Cross-Team Chat
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-ui-cross-team-chat.md`
+
+Spec file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\specs\2026-04-30-ui-cross-team-chat-design.md`
+
+Modified files:
+
+- `src/read/LocalReadModel.js`
+- `src/commands/command-contract.js`
+- `src/mcp/localToolDefinitions.js`
+- `src/tools/localToolFacade.js`
+- `test/localReadModel.test.js`
+- `test/localToolFacade.test.js`
+- `test/localMcpToolDefinitions.test.js`
+- `ui/src/components/Dashboard.jsx`
+
+Behavior:
+
+- Added `LocalReadModel.listCrossTeamMessages({ teamId, limit })`.
+- Projection filters `cross_team` and `cross_team_sent` rows, strips the cross-team prefix, and returns UI-ready inbound/outbound rows.
+- Added read-only `cross_team_messages` command and MCP tool.
+- Dashboard now shows a Cross-Team Chat panel with conversation list, selected thread, and compose form.
+- Sending uses existing `cross_team_send` with a UI idempotency key and refreshes the panel.
+
+Verification during slice:
+
+```powershell
+node test/localReadModel.test.js
+node test/localToolFacade.test.js
+node test/localMcpToolDefinitions.test.js
+cd ui
+npm.cmd run lint
+npm.cmd run build
+```
+
+### 2. UI Runtime Detail Drawer
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-ui-runtime-detail-drawer.md`
+
+Spec file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\specs\2026-04-30-ui-runtime-detail-drawer-design.md`
+
+Modified files:
+
+- `src/commands/command-contract.js`
+- `src/mcp/localToolDefinitions.js`
+- `src/tools/localToolFacade.js`
+- `test/localToolFacade.test.js`
+- `test/localMcpToolDefinitions.test.js`
+- `ui/src/components/Dashboard.jsx`
+
+Behavior:
+
+- Added read-only `runtime_events` command backed by `LocalReadModel.listRuntimeAudit({ teamId, runtimeId })`.
+- Exposed `runtime_events` as a read-only MCP-shaped tool with optional `runtimeId`.
+- Runtime cards now include a Details button.
+- Details opens a right-side drawer with runtime identity, status, PID/provider fields, recent runtime events, tool calls, and runtime-scoped API retries.
+- Drawer data refreshes through `/api/call`, fallback polling, and selected-runtime SSE updates.
+
+Verification during slice:
+
+```powershell
+node test/localToolFacade.test.js
+node test/localMcpToolDefinitions.test.js
+cd ui
+npm.cmd run lint
+npm.cmd run build
+```
+
+### 2. UI Approval Resolution
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-ui-approval-resolution.md`
+
+Spec file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\specs\2026-04-30-ui-approval-resolution-design.md`
+
+Modified files:
+
+- `src/commands/command-contract.js`
+- `src/mcp/localToolDefinitions.js`
+- `src/tools/localToolFacade.js`
+- `test/localToolFacade.test.js`
+- `test/localMcpToolDefinitions.test.js`
+- `ui/src/hooks/useToadApi.js`
+- `ui/src/components/Dashboard.jsx`
+- `scripts/dev-api-server.mjs`
+- `package.json`
+- `README.md`
+
+Behavior:
+
+- Added read-only `approval_list` command backed by `LocalReadModel.listApprovals({ teamId })`.
+- Exposed `approval_list` as a read-only MCP-shaped tool with no idempotency key requirement.
+- Dashboard fetches approvals through `/api/call`.
+- Dashboard shows pending approvals with prompt, tool, agent, runtime, and input preview.
+- Approve/Deny buttons call existing mutating `approval_respond` with stable UI idempotency keys.
+- `useToadApi` now lifts `idempotencyKey` from args into the API request top level so mutating commands work through the HTTP bridge.
+- Added `npm.cmd run api:dev` to start the local API bridge without shell-quoting an inline script.
+
+Verification during slice:
+
+```powershell
+node test/localToolFacade.test.js
+node test/localMcpToolDefinitions.test.js
+cd ui
+npm.cmd run lint
+npm.cmd run build
+cd ..
+npm.cmd run api:dev
+```
+
+### 2. UI Dashboard Integration
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-ui-dashboard-integration.md`
+
+Modified files:
+
+- `src/transport/apiServer.js`
+- `src/app/LocalToadRuntime.js`
+- `ui/` directory
+
+Behavior:
+
+- Built an HTTP API zero-dependency bridge to expose the LocalToolFacade endpoints.
+- Scaffolded a new Vite + React dashboard with modern aesthetics (glassmorphism, dark mode).
+- Built `useToadEvents` for SSE and `useToadApi` for POST polling.
+- Visualizes health, runtimes, tasks, and live streams.
+
+### 2. Hardening Idempotent Approval Response Delivery
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-hardening-approval-delivery.md`
+
+Modified files:
+
+- `src/storage/schema.sql` — Added `approval_deliveries` table.
+- `src/approval/sqliteApprovalBroker.js` — JOINs delivery data and adds `markApprovalDelivered`.
+- `test/sqliteApprovalBroker.test.js` — Added delivery tracking assertions.
+- `src/tools/localToolFacade.js` — Changed condition to check `approval.delivery` and mark it after adapter call.
+
+Behavior:
+
+- Replaced volatile memory guard (`previousApproval.status === 'pending'`) with a durable delivery receipt tracking mechanism.
+- Provides exactly-once semantics for delivering approval responses to the runtime adapter, surviving local orchestration process restarts.
+
+### 2. CLI Smoke Test Verification
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-cli-smoke-test.md`
+
+Behavior:
+
+- Ran the `smoke:claude` npm script.
+- Originally verified that the `ClaudeStreamJsonAdapter` successfully executes the local Claude CLI in `--bare` mode and parses the `stream-json` payload up to the auth boundary (test correctly skipped with `authentication_failed`).
+- The `--bare` flag was later removed in the live-smoke slice once we discovered it rejects subscription OAuth; see slice 1 (Live Claude CLI Smoke Verified) for the live end-to-end pass.
+
+### 4. HTTP/SSE API Transport
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-http-event-transport.md`
+
+Files:
+
+- `src/transport/apiServer.js` - Built-in `http` SSE server plus `/api/call` bridge
+- `test/apiServer.test.js` - 5 tests
+
+Behavior:
+
+- Wraps the `RuntimeEventBus` with a lightweight Server-Sent Events endpoint (`/events`).
+- Routes `POST /api/call` into `LocalToolFacade`.
+- Broadcasts `runtime_event`s to all connected UI clients.
+- Implements keep-alive, disconnect handling, and CORS.
+
+### 5. Team Configuration
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-team-config.md`
+
+New files:
+
+- `src/team/teamConfig.js` — `TeamConfig` and `TeamConfigRegistry` implementation
+- `test/teamConfig.test.js` — 5 tests
+
+Behavior:
+
+- `TeamConfig` models a team with `teamId`, `lead` configuration, and `teammates` array.
+- `TeamConfigRegistry` provides in-memory mapping and prevents duplicate `teamId` registrations.
+
+### 6. Runtime Event Streaming
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-runtime-event-streaming.md`
+
+New files:
+
+- `src/runtime/RuntimeEventBus.js` — EventEmitter wrapper with subscribe/unsubscribe/dispose
+- `test/runtimeEventBus.test.js` — 8 tests
+
+Modified files:
+
+- `src/runtime/RuntimeEventIngestor.js` — publishes every ingested event to `runtime_event` + type-specific channels
+- `src/app/LocalToadRuntime.js` — creates and wires event bus, disposes on close
+
+### 7. Cross-Team Delivery Integration
+
+Modified files:
+
+- `src/commands/command-contract.js` — added `CROSS_TEAM_SEND` command and mutating flag
+- `src/tools/localToolFacade.js` — added `#crossTeamSend` handler with dual-write (incoming + sent-copy)
+- `src/mcp/localToolDefinitions.js` — added `cross_team_send` MCP tool definition
+- `test/localToolFacade.test.js` — 1 new integration test
+- `test/localMcpToolDefinitions.test.js` — updated assertions for new tool
+
+Behavior:
+
+- `cross_team_send` uses `formatCrossTeamText` to encode metadata prefix.
+- Writes incoming message to target team's broker inbox.
+- Writes sent-copy to sender team's broker inbox.
+- Requires `idempotencyKey` (mutating command).
+- Returns `{ ok, messageId, targetTeamId, targetAgentId }`.
+
+### 8. Cross-Team Message Protocol
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-cross-team-message-protocol.md`
+
+New files:
+
+- `src/protocol/crossTeam.js` — prefix format, parse, strip, source discriminators
+- `test/crossTeam.test.js` — 12 tests
+
+Behavior:
+
+- `formatCrossTeamPrefix(from, chainDepth, meta?)` builds the XML-like metadata tag.
+- `formatCrossTeamText(from, chainDepth, text, meta?)` builds prefix + body.
+- `parseCrossTeamPrefix(text)` extracts from, chainDepth, conversationId, replyToConversationId.
+- `stripCrossTeamPrefix(text)` removes the prefix for UI display.
+- `CROSS_TEAM_SOURCE` and `CROSS_TEAM_SENT_SOURCE` constants for incoming/outgoing discrimination.
+
+### 9. MCP Tool Exposure for Projections
+
+Modified files:
+
+- `src/commands/command-contract.js` — added `TOOL_ACTIVITY` and `HEALTH_STATUS` read-only commands
+- `src/mcp/localToolDefinitions.js` — added MCP tool definitions for `tool_activity` and `health_status`
+- `src/tools/localToolFacade.js` — added `readModel` dependency, `#toolActivity` and `#healthStatus` handlers
+- `src/app/LocalToadRuntime.js` — reordered construction so readModel is created before toolFacade
+- `test/localMcpToolDefinitions.test.js` — updated tool name list and read-only assertions
+
+Behavior:
+
+- `tool_activity` MCP tool returns `listToolCalls()` results for the actor's team, optionally filtered by runtimeId.
+- `health_status` MCP tool returns api retry events plus a summary with `total`, `rateLimited`, `serverErrors` counts.
+- Both are read-only (no idempotencyKey required).
+
+### 10. Runtime Health Monitoring
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-runtime-health-monitoring.md`
+
+Modified files:
+
+- `src/read/LocalReadModel.js` — added `listApiRetries({ teamId, runtimeId? })`, `apiRetries` count in overview
+- `src/app/LocalToadRuntime.js` — added `listApiRetries` delegate
+- `test/localReadModel.test.js` — 5 new tests (12 total)
+
+### 11. Tool-Call Audit Projection
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-tool-call-audit-projection.md`
+
+Modified files:
+
+- `src\read\LocalReadModel.js` — added `listToolCalls({ teamId, runtimeId? })`, added `toolCalls` count to `getTeamOverview`
+- `src\app\LocalToadRuntime.js` — added `listToolCalls` delegate
+- `test\localReadModel.test.js` — expanded fixtures, 4 new tests (7 total)
+
+Behavior:
+
+- `listToolCalls({ teamId, runtimeId? })` filters event log for `tool_use` events and projects them with: type, id, teamId, agentId, runtimeId, toolName, toolUseId, input, createdAt.
+- `getTeamOverview` now includes `toolCalls` count.
+- Gracefully returns empty when event log is unavailable.
+
+### 12. Runtime Compaction Handling
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-runtime-compaction-handling.md`
+
+New files:
+
+- `src\runtime\CompactionHandler.js`
+- `test\compactionHandler.test.js`
+
+Modified files:
+
+- `src\runtime\ClaudeStreamJsonAdapter.js` — compact_boundary metadata, api_retry normalization
+- `src\runtime\RuntimeEventIngestor.js` — compactionHandler lifecycle dispatch
+- `src\app\LocalToadRuntime.js` — CompactionHandler creation and injection
+- `test\claudeStreamJsonAdapter.test.js` — 2 new tests
+
+Behavior:
+
+- `compact_boundary` events now include `trigger` and `preTokens` metadata.
+- `api_retry` events are normalized with `attempt`, `maxRetries`, `errorStatus`, `error`, `errorMessage`, `retryDelayMs`.
+- `CompactionHandler` tracks pending reinjection per runtimeId.
+- On `turn_completed` after a compaction, injects a reinjection prompt via `adapter.sendTurn()` containing team identity, behavioral rules, and task board snapshot.
+- On `turn_failed`, clears pending state without injecting (strict drop policy, matching legacy).
+- Multiple compactions before idle produce a single reinjection.
+
+### 13. Teammate Permission Request Ingestion
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-teammate-permission-request-ingestion.md`
+
+New files:
+
+- `src\runtime\parsePermissionRequest.js`
+- `src\runtime\claudeSettingsWriter.js`
+- `test\parsePermissionRequest.test.js`
+- `test\claudeSettingsWriter.test.js`
+- `test\teammatePermission.test.js`
+
+Modified files:
+
+- `src\tools\localToolFacade.js` — added `projectCwd` option, teammate permission response path
+- `src\app\LocalToadRuntime.js` — added `projectCwd` constructor option
+
+Behavior:
+
+- `parsePermissionRequest(text)` parses teammate `permission_request` JSON payloads (validates `request_id`, `agent_id`, `tool_name`; preserves `permission_suggestions`).
+- `applyPermissionSuggestions({ projectCwd, suggestions })` writes tool permission rules to `{projectCwd}/.claude/settings.local.json` using atomic temp+rename.
+- `addRules` suggestions add tool names to `permissions.allow` (or `deny`).
+- `setMode` suggestions are translated: `acceptEdits` → Edit/Write/NotebookEdit; `bypassPermissions` → broad tool list.
+- `LocalToolFacade.#approvalRespond` detects teammate approvals (`metadata.source === 'teammate'`) and applies settings on approve; no file action on deny.
+- Belt-and-suspenders `control_response` is also sent to the lead adapter when available.
+- `LocalToadRuntime` passes `projectCwd` to the tool facade.
+
+Legacy facts applied:
+
+- `permission_response` to teammate inbox does NOT work.
+- `control_response` via lead stdin does NOT match teammate `request_id`.
+- The only working mechanism is mutating `.claude/settings.local.json`.
+
+### 14. Durable SQLite Approval Broker
+
+Files:
+
+- `src\approval\inMemoryApprovalBroker.js`
+- `src\approval\sqliteApprovalBroker.js`
+- `src\storage\schema.sql`
+- `test\approvalBroker.test.js`
+- `test\sqliteApprovalBroker.test.js`
+
+Behavior:
+
+- Approval request records are durable.
+- Approval responses are idempotent by response idempotency key.
+- Approvals can be listed by team.
+- Approval records carry `approvalId`, `teamId`, `agentId`, `runtimeId`, `prompt`, `metadata`, status/decision/reason/responded fields.
+
+### 2. Approval Read Model
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-approval-read-model.md`
+
+Files:
+
+- `src\read\LocalReadModel.js`
+- `src\app\LocalToadRuntime.js`
+- `test\localReadModel.test.js`
+
+Behavior:
+
+- `LocalReadModel` accepts optional `approvalBroker`.
+- Added `listApprovals({ teamId })`.
+- `getTeamOverview({ teamId })` now includes:
+  - `counts.approvals`
+  - `counts.pendingApprovals`
+  - `approvals`
+  - `pendingApprovals`
+- `LocalToadRuntime` passes its `approvalBroker` to the read model.
+
+### 3. Runtime Approval Ingestion
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-runtime-approval-ingestion.md`
+
+Files:
+
+- `src\runtime\ClaudeStreamJsonAdapter.js`
+- `src\runtime\RuntimeEventIngestor.js`
+- `src\app\LocalToadRuntime.js`
+- `test\claudeStreamJsonAdapter.test.js`
+- `test\runtimeEventIngestor.test.js`
+- `test\localToadRuntime.test.js`
+- `C:\Project-TOAD\TOAD-STAGED-REVERSE-ENGINEERING-AND-REBUILD-PLAN.md`
+
+Legacy finding:
+
+- In legacy `TeamProvisioningService.ts`, lead Claude runtimes emit stream-json `control_request`.
+- Relevant legacy shape:
+
+```js
+{
+  type: 'control_request',
+  request_id: 'approval-1',
+  request: {
+    subtype: 'can_use_tool',
+    tool_name: 'Write',
+    input: { file_path: 'README.md' },
+  },
+  session_id: 'session-1',
+}
+```
+
+Implemented local behavior:
+
+- `ClaudeStreamJsonAdapter` normalizes `control_request` with `request.subtype === 'can_use_tool'` into internal `approval_request`.
+- Internal event shape includes:
+  - `type: 'approval_request'`
+  - `approvalId`
+  - `prompt: "Approve <toolName>"`
+  - `toolName`
+  - `input`
+  - runtime/team/agent/session fields
+- Non-tool control requests remain audit-only `runtime_event`.
+- `RuntimeEventIngestor` accepts `approvalBroker`.
+- Ingesting `approval_request` validates runtime identity and calls `approvalBroker.requestApproval()`.
+- `LocalToadRuntime` passes the existing approval broker into `RuntimeEventIngestor`.
+
+### 4. Approval Response Delivery
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-approval-response-delivery.md`
+
+Files:
+
+- `src\runtime\ClaudeStreamJsonAdapter.js`
+- `src\tools\localToolFacade.js`
+- `src\app\LocalToadRuntime.js`
+- `test\claudeStreamJsonAdapter.test.js`
+- `test\localToolFacade.test.js`
+- `test\localToadRuntime.test.js`
+- `C:\Project-TOAD\TOAD-STAGED-REVERSE-ENGINEERING-AND-REBUILD-PLAN.md`
+
+Legacy finding:
+
+- The old app sends Claude control responses by writing this to stdin:
+
+```js
+{
+  type: 'control_response',
+  response: {
+    subtype: 'success',
+    request_id: requestId,
+    response: { behavior: 'allow', updatedInput: {} },
+  },
+}
+```
+
+For denial:
+
+```js
+{
+  type: 'control_response',
+  response: {
+    subtype: 'success',
+    request_id: requestId,
+    response: { behavior: 'deny', message: 'reason' },
+  },
+}
+```
+
+Implemented local behavior:
+
+- `ClaudeStreamJsonAdapter.approve(input)` writes Claude `control_response` JSON lines to stdin.
+- `decision: 'approved'` maps to `{ behavior: 'allow', updatedInput: {} }`.
+- `decision: 'denied'` maps to `{ behavior: 'deny', message }`.
+- Return shape:
+
+```js
+{
+  accepted: true,
+  responseState: 'approval_response_returned',
+  receipt: { written: true, runtimeId, approvalId, decision },
+}
+```
+
+- `LocalToolFacade` now accepts optional `adapters`.
+- `approval_respond` still updates `approvalBroker.respondApproval()`.
+- If the approval has a `runtimeId` and the adapter is live, it calls `adapter.approve()`.
+- It includes `runtimeResponse` in the returned structured result when delivered.
+- `LocalToadRuntime` passes the shared adapters map into `LocalToolFacade`.
+- A guard checks previous approval status when possible. It only sends the runtime response when there was no previous approval lookup or the previous approval was still pending. This reduces duplicate control responses on idempotent replays.
+
+## Current MCP Tools
+
+See:
+
+- `C:\Project-TOAD\toad-local\src\commands\command-contract.js`
+- `C:\Project-TOAD\toad-local\src\mcp\localToolDefinitions.js`
+
+Important supported commands:
+
+- `message_send`
+- `task_create`
+- `task_update`
+- `task_comment`
+- `task_list`
+- `review_request`
+- `review_decide`
+- `runtime_events`
+- `agent_status`
+- `approval_list`
+- `approval_respond`
+- `tool_activity`
+- `health_status`
+- `cross_team_messages`
+- `cross_team_send`
+
+Mutating tools require `idempotencyKey`.
+
+## Current Runtime Event Support
+
+`ClaudeStreamJsonAdapter` currently handles:
+
+- `assistant` text -> `assistant_text`
+- `assistant` tool_use blocks -> `tool_use`
+- `result.success` -> `turn_completed`
+- `result.error` -> `turn_failed`
+- malformed line -> `parse_error`
+- `system.compact_boundary` -> `compact_boundary`
+- `system.api_retry` -> `api_retry`
+- `control_request` with `can_use_tool` -> `approval_request`
+- fallback -> `runtime_event`
+
+`RuntimeEventIngestor` currently handles:
+
+- `assistant_text`: appends broker reply to user
+- `tool_use`: validates identity, dispatches allowlisted local tools, returns tool result to adapter
+- `approval_request`: validates identity, persists approval through approval broker
+- `compact_boundary`, `turn_completed`, `turn_failed`: dispatches compaction lifecycle when configured
+- all events: publishes to `RuntimeEventBus` when configured
+- everything else: audit-only event log
+
+Allowlisted runtime tool names:
+
+- `message_send`
+- `task_create`
+- `task_update`
+- `task_comment`
+
+## Known Gaps / Next Logical Work
+
+The backend core is in good shape and the teammate permission slice is complete. Current practical next work is UI/product iteration and live smoke validation.
+
+Completed backend parity highlights:
+
+- Lead Claude approval loop: `control_request` -> durable approval -> `approval_respond` -> `control_response`.
+- Teammate permission loop: `permission_request` parser, durable approval metadata, settings-file mutation via `permission_suggestions`, and defensive lead adapter response.
+- Runtime compaction handling: compact boundary tracking and reinjection after turn completion.
+- Runtime health projection: normalized `api_retry` events and `health_status` read tool.
+- Tool-call projection: `tool_activity` read tool.
+- Cross-team messaging: metadata prefix protocol plus dual-write broker integration.
+- Runtime event bus and HTTP/SSE transport for UI.
+
+Remaining gaps worth tracking:
+
+1. Live authenticated Claude smoke
+   - Run `claude /login`.
+   - Then run `TOAD_CLAUDE_SMOKE=1 npm.cmd run smoke:claude`.
+   - Current harness validates the CLI boundary but cannot prove a full live turn without auth/quota.
+
+2. API hardening
+   - Bearer-token gate is in place (opt-in via `TOAD_API_TOKEN` / `VITE_TOAD_API_TOKEN`). The server still binds to `127.0.0.1` only.
+   - CORS is now origin-restricted (`TOAD_API_ALLOWED_ORIGINS`). Default is the Vite dev origins; `*` reproduces the legacy wildcard.
+   - Lifecycle of `LocalToadRuntime.start()` / `close()` is now covered, including a real bug fix in `apiServer.stop()` that prevented clean shutdown when SSE clients were still connected.
+
+3. Durable exactly-once gaps
+   - Approval response adapter delivery has SQLite delivery receipts.
+   - Tool-result delivery and compaction reinjection have SQLite delivery receipts (`side_effect_deliveries` table) wired through `RuntimeEventIngestor` and `CompactionHandler`.
+   - Replay-on-restart now applies a drop policy on `LocalToadRuntime.start()` — `replayPendingSideEffects()` marks every pending row failed. Adapter-session-aware retry (the only alternative to drop) would require a much larger redesign and is intentionally not in scope.
+
+## Other Future Slices
+
+Recommended next slice (pick one):
+
+1. **Subscription quota / plan-usage indicator** — parked. The user wants a "circle indicator" on startup showing Claude (and eventually Codex) plan usage. Investigation found that `--print "/usage"` is a $0 client-side slash command but only returns an auth-status string — the rich quota panel is rendered by the interactive TUI from an undocumented Anthropic API call. `~/.claude/stats-cache.json` has historical activity but not subscription windows. The user is independently investigating reliable data sources before this slice resumes.
+2. **VACUUM on retention** — `DELETE` releases SQLite pages to the freelist but does not shrink the file. Now that all five storage surfaces write to a real `<projectCwd>/.toad/toad.db`, periodic `VACUUM` (or `PRAGMA auto_vacuum = INCREMENTAL` + `PRAGMA incremental_vacuum`) is meaningfully impactful and can be invoked from `LocalToadRuntime.start()` after `pruneSideEffectLog()`.
+3. **Backend secret rotation / token-on-disk** — `TOAD_API_TOKEN` lives in shell env. For long-running daemons, persisting the token in a config file with a rotate command would be more ergonomic.
+4. **Optional `--bare` smoke variant** — add a parallel smoke path that uses `--bare` when `ANTHROPIC_API_KEY` is set in the environment, for users on direct API auth. The current smoke covers the subscription-OAuth path; the `--bare` path covers API-key auth.
+5. **Codex provider integration** — TOAD currently only spawns Claude runtimes. The legacy app had a full `codex-account` feature (rate-limit windows, ChatGPT auth, model selection). Adding Codex as a runtime provider is a much larger scoped slice.
+
+Workflow reminders:
+
+- Write a plan doc in `docs/superpowers/plans/` before touching code.
+- TDD: failing test first, watch it fail, write minimal GREEN code, repeat.
+- Keep changes local-only — no `git push`.
+- Update `HANDOFF-NEXT-AGENT.md` and `TOAD-STAGED-REVERSE-ENGINEERING-AND-REBUILD-PLAN.md` after the slice lands.
+
+## Important Design Takeaways From Reverse Engineering
+
+Do not copy the legacy architecture directly.
+
+Legacy risks documented in `TOAD-STAGED-REVERSE-ENGINEERING-AND-REBUILD-PLAN.md`:
+
+- Whole-array JSON file rewrites can lose inbox updates.
+- File watchers became correctness paths.
+- Lead delivery depended too much on prompt compliance.
+- `TeamProvisioningService.ts` owns too many unrelated concerns.
+- Plain text replies are ambiguous.
+- Cross-team messaging was lead-inbox based.
+- Permission approval path was split and brittle.
+- Kanban/review projection could drift.
+
+Local replacement direction:
+
+- SQLite append-only writes with idempotency keys.
+- Broker-level routing and delivery receipts.
+- Runtime adapters only translate CLI/runtime protocol.
+- Approval broker shared across lead and worker paths.
+- Read model derives UI state.
+- Supervisor owns lifecycle and liveness.
+
+## Quick Orientation Commands
+
+From `C:\Project-TOAD\toad-local`:
+
+```powershell
+rg -n "approval_request|control_request|control_response|permission_request" src test
+rg -n "class LocalToadRuntime|class LocalToolFacade|class RuntimeEventIngestor|class ClaudeStreamJsonAdapter" src
+npm.cmd test
+```
+
+Inspect local plans:
+
+```powershell
+Get-ChildItem docs\superpowers\plans | Sort-Object Name
+```
+
+Inspect reverse-engineering notes:
+
+```powershell
+rg -n "permission|control_request|approval|runtime adapter|watcher|relay" C:\Project-TOAD\TOAD-STAGED-REVERSE-ENGINEERING-AND-REBUILD-PLAN.md C:\Project-TOAD\AGENT-COMMUNICATION-REVERSE-ENGINEERING-NOTES.md
+```
+
+## Files Most Recently Touched
+
+- `C:\Project-TOAD\HANDOFF-NEXT-AGENT.md`
+- `C:\Project-TOAD\TOAD-STAGED-REVERSE-ENGINEERING-AND-REBUILD-PLAN.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-approval-read-model.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-runtime-approval-ingestion.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-approval-response-delivery.md`
+- `C:\Project-TOAD\toad-local\src\runtime\ClaudeStreamJsonAdapter.js`
+- `C:\Project-TOAD\toad-local\src\runtime\RuntimeEventIngestor.js`
+- `C:\Project-TOAD\toad-local\src\tools\localToolFacade.js`
+- `C:\Project-TOAD\toad-local\src\app\LocalToadRuntime.js`
+- `C:\Project-TOAD\toad-local\src\read\LocalReadModel.js`
+- `C:\Project-TOAD\toad-local\test\claudeStreamJsonAdapter.test.js`
+- `C:\Project-TOAD\toad-local\test\runtimeEventIngestor.test.js`
+- `C:\Project-TOAD\toad-local\test\localToolFacade.test.js`
+- `C:\Project-TOAD\toad-local\test\localReadModel.test.js`
+- `C:\Project-TOAD\toad-local\test\localToadRuntime.test.js`
+- `C:\Project-TOAD\toad-local\src\runtime\parsePermissionRequest.js`
+- `C:\Project-TOAD\toad-local\src\runtime\claudeSettingsWriter.js`
+- `C:\Project-TOAD\toad-local\test\parsePermissionRequest.test.js`
+- `C:\Project-TOAD\toad-local\test\claudeSettingsWriter.test.js`
+- `C:\Project-TOAD\toad-local\test\teammatePermission.test.js`
+- `C:\Project-TOAD\toad-local\src\runtime\CompactionHandler.js`
+- `C:\Project-TOAD\toad-local\test\compactionHandler.test.js`
+- `C:\Project-TOAD\toad-local\package.json`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-ui-dashboard-integration.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-ui-approval-resolution.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\specs\2026-04-30-ui-approval-resolution-design.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-ui-runtime-detail-drawer.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\specs\2026-04-30-ui-runtime-detail-drawer-design.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-ui-cross-team-chat.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\specs\2026-04-30-ui-cross-team-chat-design.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-api-ui-hardening.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\specs\2026-04-30-api-ui-hardening-design.md`
+- `C:\Project-TOAD\toad-local\README.md`
+- `C:\Project-TOAD\toad-local\src\transport\apiServer.js`
+- `C:\Project-TOAD\toad-local\test\apiServer.test.js`
+- `C:\Project-TOAD\toad-local\ui\src\config\toadApi.js`
+- `C:\Project-TOAD\toad-local\ui\src\hooks\useToadApi.js`
+- `C:\Project-TOAD\toad-local\ui\src\hooks\useToadEvents.js`
+- `C:\Project-TOAD\toad-local\src\commands\command-contract.js`
+- `C:\Project-TOAD\toad-local\src\mcp\localToolDefinitions.js`
+- `C:\Project-TOAD\toad-local\src\tools\localToolFacade.js`
+- `C:\Project-TOAD\toad-local\src\read\LocalReadModel.js`
+- `C:\Project-TOAD\toad-local\test\localReadModel.test.js`
+- `C:\Project-TOAD\toad-local\test\localToolFacade.test.js`
+- `C:\Project-TOAD\toad-local\test\localMcpToolDefinitions.test.js`
+- `C:\Project-TOAD\toad-local\package.json`
+- `C:\Project-TOAD\toad-local\scripts\dev-api-server.mjs`
+- `C:\Project-TOAD\toad-local\ui\src\App.jsx`
+- `C:\Project-TOAD\toad-local\ui\src\components\Dashboard.jsx`
+- `C:\Project-TOAD\toad-local\ui\src\hooks\useToadApi.js`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-side-effect-delivery-receipts.md`
+- `C:\Project-TOAD\toad-local\src\delivery\sideEffectLog.js`
+- `C:\Project-TOAD\toad-local\src\storage\schema.sql`
+- `C:\Project-TOAD\toad-local\src\runtime\CompactionHandler.js`
+- `C:\Project-TOAD\toad-local\src\runtime\RuntimeEventIngestor.js`
+- `C:\Project-TOAD\toad-local\src\app\LocalToadRuntime.js`
+- `C:\Project-TOAD\toad-local\test\sideEffectLog.test.js`
+- `C:\Project-TOAD\toad-local\test\compactionHandler.test.js`
+- `C:\Project-TOAD\toad-local\test\runtimeEventIngestor.test.js`
+- `C:\Project-TOAD\toad-local\package.json`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-side-effect-replay-on-restart.md`
+- `C:\Project-TOAD\toad-local\test\localToadRuntime.test.js`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-api-token-protection.md`
+- `C:\Project-TOAD\toad-local\src\transport\apiServer.js`
+- `C:\Project-TOAD\toad-local\test\apiServer.test.js`
+- `C:\Project-TOAD\toad-local\src\app\LocalToadRuntime.js`
+- `C:\Project-TOAD\toad-local\ui\src\config\toadApi.js`
+- `C:\Project-TOAD\toad-local\ui\src\hooks\useToadApi.js`
+- `C:\Project-TOAD\toad-local\ui\src\hooks\useToadEvents.js`
+- `C:\Project-TOAD\toad-local\README.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-origin-restricted-cors.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-local-toad-runtime-lifecycle-tests.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-side-effect-log-retention.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-restart-housekeeping-telemetry.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-live-claude-smoke.md`
+- `C:\Project-TOAD\toad-local\test\claudeCliSmoke.test.js`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-ui-system-housekeeping-panel.md`
+- `C:\Project-TOAD\toad-local\ui\src\components\Dashboard.jsx`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-persistent-storage-configuration.md`
+- `C:\Project-TOAD\toad-local\src\storage\sqlite.js`
+- `C:\Project-TOAD\toad-local\src\app\LocalToadRuntime.js`
+- `C:\Project-TOAD\toad-local\scripts\dev-api-server.mjs`
+- `C:\Project-TOAD\toad-local\.gitignore`
+- `C:\Project-TOAD\toad-local\README.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-broker-taskboard-durability.md`
+
+## Suggested Opening Move For Next Agent
+
+1. Read this file.
+2. Read `C:\Project-TOAD\TOAD-STAGED-REVERSE-ENGINEERING-AND-REBUILD-PLAN.md` sections around Stage 4 and Current verification.
+3. Run:
+
+```powershell
+cd C:\Project-TOAD\toad-local
+npm.cmd test
+cd ui
+npm.cmd run lint
+npm.cmd run build
+```
+
+4. Pick the next slice from the Other Future Slices section. Live Claude smoke or durable side-effect receipts are the recommended next slices.
+5. Use TDD for backend changes.
