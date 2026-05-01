@@ -291,3 +291,56 @@ test('RuntimeSupervisor persists runtime lifecycle through a registry', async ()
   assert.equal(calls[2].input.status, 'stopped');
   assert.equal(calls[2].input.signal, 'SIGTERM');
 });
+
+test('RuntimeSupervisor.launchAgent threads taskId into registry.upsertRuntime (§11)', async () => {
+  const directory = new RuntimeDirectory();
+  const child = createFakeChild({ pid: 1234 });
+  const calls = [];
+  const runtimeRegistry = {
+    upsertRuntime(input) { calls.push({ method: 'upsertRuntime', input }); },
+    registerDeliveryMode() {},
+    markRuntimeStopped() {},
+  };
+  const supervisor = new RuntimeSupervisor({
+    runtimeDirectory: directory,
+    runtimeRegistry,
+    spawnProcess() { return child; },
+    createAdapter() { return { providerId: 'claude' }; },
+  });
+  await supervisor.launchAgent({
+    teamId: 'team-a',
+    agentId: 'dev-1',
+    runtimeId: 'runtime-pin',
+    command: 'claude',
+    deliveryMode: 'runtime_stdin',
+    taskId: 'task-42',
+  });
+  const upsert = calls.find((c) => c.method === 'upsertRuntime');
+  assert.equal(upsert.input.taskId, 'task-42');
+});
+
+test('RuntimeSupervisor.launchAgent passes null taskId to registry when caller omits it', async () => {
+  const directory = new RuntimeDirectory();
+  const child = createFakeChild({ pid: 1235 });
+  const calls = [];
+  const runtimeRegistry = {
+    upsertRuntime(input) { calls.push({ method: 'upsertRuntime', input }); },
+    registerDeliveryMode() {},
+    markRuntimeStopped() {},
+  };
+  const supervisor = new RuntimeSupervisor({
+    runtimeDirectory: directory,
+    runtimeRegistry,
+    spawnProcess() { return child; },
+    createAdapter() { return { providerId: 'claude' }; },
+  });
+  await supervisor.launchAgent({
+    teamId: 'team-a',
+    agentId: 'lead',
+    runtimeId: 'runtime-no-pin',
+    command: 'claude',
+    deliveryMode: 'runtime_stdin',
+  });
+  const upsert = calls.find((c) => c.method === 'upsertRuntime');
+  assert.equal(upsert.input.taskId, null);
+});

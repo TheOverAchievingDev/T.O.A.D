@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS runtime_instances (
   stopped_at TEXT,
   exit_code INTEGER,
   signal TEXT,
+  task_id TEXT,
   FOREIGN KEY (team_id) REFERENCES teams(team_id)
 );
 

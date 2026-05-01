@@ -111,3 +111,57 @@ test('SqliteRuntimeRegistry removes delivery modes when runtimes stop', () => {
     assert.equal(registry.listDeliveryModes().length, 0);
   });
 });
+
+// --- §11 slice 1: session→task pinning ---
+
+test('SqliteRuntimeRegistry persists taskId on upsert and surfaces it on read', () => {
+  withRegistry((registry) => {
+    registry.upsertRuntime({
+      runtimeId: 'runtime-task-pin',
+      teamId: 'team-a',
+      agentId: 'dev-1',
+      providerId: 'claude',
+      command: 'claude',
+      args: [],
+      env: {},
+      deliveryMode: 'runtime_stdin',
+      status: 'running',
+      taskId: 'task-42',
+    });
+    const reloaded = registry.getRuntime('runtime-task-pin');
+    assert.equal(reloaded.taskId, 'task-42');
+  });
+});
+
+test('SqliteRuntimeRegistry leaves taskId null when not supplied', () => {
+  withRegistry((registry) => {
+    registry.upsertRuntime({
+      runtimeId: 'runtime-no-task',
+      teamId: 'team-a',
+      agentId: 'lead',
+      providerId: 'claude',
+      command: 'claude',
+      deliveryMode: 'runtime_stdin',
+      status: 'running',
+    });
+    const reloaded = registry.getRuntime('runtime-no-task');
+    assert.equal(reloaded.taskId, null);
+  });
+});
+
+test('SqliteRuntimeRegistry listRuntimes returns taskId on every row', () => {
+  withRegistry((registry) => {
+    registry.upsertRuntime({
+      runtimeId: 'r-pinned', teamId: 'team-a', agentId: 'dev-1',
+      providerId: 'claude', command: 'claude', deliveryMode: 'runtime_stdin', status: 'running', taskId: 'pinned-task',
+    });
+    registry.upsertRuntime({
+      runtimeId: 'r-free', teamId: 'team-a', agentId: 'lead',
+      providerId: 'claude', command: 'claude', deliveryMode: 'runtime_stdin', status: 'running',
+    });
+    const list = registry.listRuntimes({ teamId: 'team-a' });
+    const byId = Object.fromEntries(list.map((r) => [r.runtimeId, r.taskId]));
+    assert.equal(byId['r-pinned'], 'pinned-task');
+    assert.equal(byId['r-free'], null);
+  });
+});

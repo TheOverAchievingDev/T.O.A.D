@@ -22,6 +22,8 @@ export class SqliteRuntimeRegistry {
     const args = Array.isArray(input.args) ? input.args.map(String) : [];
     const env = input.env && typeof input.env === 'object' ? { ...input.env } : {};
 
+    const taskId = typeof input.taskId === 'string' && input.taskId.length > 0 ? input.taskId : null;
+
     this.#ensureTeam(teamId);
     this.db.prepare(
       `
@@ -41,8 +43,9 @@ export class SqliteRuntimeRegistry {
           updated_at,
           stopped_at,
           exit_code,
-          signal
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
+          signal,
+          task_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?)
         ON CONFLICT(runtime_id)
         DO UPDATE SET
           team_id = excluded.team_id,
@@ -58,7 +61,8 @@ export class SqliteRuntimeRegistry {
           updated_at = excluded.updated_at,
           stopped_at = NULL,
           exit_code = NULL,
-          signal = NULL
+          signal = NULL,
+          task_id = excluded.task_id
       `
     ).run(
       runtimeId,
@@ -73,7 +77,8 @@ export class SqliteRuntimeRegistry {
       typeof input.pid === 'number' ? input.pid : null,
       status,
       startedAt,
-      updatedAt
+      updatedAt,
+      taskId
     );
 
     return this.getRuntime(runtimeId);
@@ -226,6 +231,7 @@ export class SqliteRuntimeRegistry {
       stoppedAt: row.stopped_at,
       exitCode: row.exit_code,
       signal: row.signal,
+      taskId: row.task_id || null,
     };
   }
 

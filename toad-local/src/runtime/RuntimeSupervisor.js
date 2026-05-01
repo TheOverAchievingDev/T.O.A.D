@@ -44,6 +44,10 @@ export class RuntimeSupervisor {
       env: input.env && typeof input.env === 'object' ? { ...input.env } : {},
       stdio,
       deliveryMode: input.deliveryMode || 'runtime_stdin',
+      // §11 slice 1: pin runtime to its task when caller supplies it. Persists
+      // through the registry so audit/diagnostics can answer "which task is
+      // this runtime working on?" and "show me everything for task X".
+      taskId: typeof input.taskId === 'string' && input.taskId.length > 0 ? input.taskId : null,
       child,
       adapter,
       status: 'running',
@@ -182,6 +186,7 @@ export class RuntimeSupervisor {
         pid: record.pid,
         status: record.status,
         startedAt: record.startedAt,
+        taskId: record.taskId,
       });
       this.runtimeRegistry.registerDeliveryMode({
         teamId: record.teamId,

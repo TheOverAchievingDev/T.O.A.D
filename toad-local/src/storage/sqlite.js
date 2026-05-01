@@ -12,7 +12,19 @@ export function openToadDatabase(filePath = ':memory:') {
   }
   const db = new DatabaseSync(filePath);
   db.exec(readFileSync(schemaPath, 'utf8'));
+  applyMigrations(db);
   return db;
+}
+
+/**
+ * Idempotent column-add migrations for fields introduced after the initial
+ * schema. SQLite's `CREATE TABLE IF NOT EXISTS` doesn't widen an existing
+ * table, so each new column needs an `ALTER TABLE ADD COLUMN` that swallows
+ * the duplicate-column error. Cheap to run on every open.
+ */
+function applyMigrations(db) {
+  // §11 slice 1: link runtimes to their task.
+  try { db.exec('ALTER TABLE runtime_instances ADD COLUMN task_id TEXT'); } catch {}
 }
 
 export function jsonStringify(value) {

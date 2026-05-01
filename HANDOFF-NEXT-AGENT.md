@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-05-01 local session (explicit baseRef — checklist §8 slice 4)
+Last updated: 2026-05-01 local session (session→task pinning — checklist §11 slice 1)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,29 @@ Important files:
 
 ## Latest Completed Slices
 
-### 0. Explicit baseRef — Checklist §8 slice 4 (latest)
+### 0. Session→Task Pinning — Checklist §11 slice 1 (latest)
+
+The data was already flowing — `agent_launch` accepts `taskId` (added in §8 slice 2 for cwd enforcement). This slice makes the link durable in the registry so audit/diagnostics can answer "which task is this runtime working on?" and "show me everything for task X".
+
+Modified files:
+
+- `src/storage/schema.sql` — `runtime_instances` gains `task_id TEXT` column (nullable; legacy/free-form runtimes have no task).
+- `src/storage/sqlite.js` — `openToadDatabase` now calls `applyMigrations(db)` after the schema load. Soft migration runs `ALTER TABLE runtime_instances ADD COLUMN task_id TEXT` inside try/catch, swallowing the duplicate-column error. Cheap idempotent op on every open. Existing `.toad/toad.db` files get the column without losing data.
+- `src/runtime/sqliteRuntimeRegistry.js` — `upsertRuntime` reads `input.taskId` (defaults to null), persists it, and the upsert ON CONFLICT branch now updates `task_id = excluded.task_id`. `#rowToRuntime` surfaces `taskId: row.task_id || null`.
+- `src/runtime/RuntimeSupervisor.js` — supervisor record captures `input.taskId` at launch time, threads it into `#registerRunningRuntime → upsertRuntime({ taskId })`.
+- `test/sqliteRuntimeRegistry.test.js` — 3 new tests (now 6 total): persists taskId, null when omitted, listRuntimes surfaces taskId per row.
+- `test/runtimeSupervisor.test.js` — 2 new tests (now 9 total): launchAgent threads taskId into registry, null-pass-through.
+- `docs/CHECKLIST_GAP_MATRIX.md` — §11 flipped from PARTIAL to REAL (partial); model/logPath still to come.
+
+Why this matters now (vs. waiting):
+
+- §13 stuck-runtime detection wants to query "tasks with no recent runtime heartbeat" — needs the taskId pin.
+- Audit completeness: a future `task_history_export` (§20) can join runtime_events + runtime_instances by task to surface every action ever taken on a task.
+- Diagnostics §25: a future `runtime_pinned_to_task` check can verify the link is set whenever the task has a worktree.
+
+Tests pass: 36 backend test files, 406 individual tests, 0 fail.
+
+### 1. Explicit baseRef — Checklist §8 slice 4
 
 The fourth and final §8 slice. Tasks can now anchor their worktree to a specific commit (and record an integration target branch name) at creation time, instead of relying on the HEAD-at-planning fallback. §8 is now fully REAL.
 
@@ -1810,7 +1832,8 @@ Anchored to the checklist's own priority order (full detail in `docs/CHECKLIST_G
 13. ✅ No-op diff detector (§13 partial) — done. `task.review.noOpDiff` flags empty-diff review requests.
 14. ✅ Repeated test-failure detector (§13 partial) — done. `task.consecutiveTestFailures` + `task.repeatedTestFailures` derived from `task.validations`.
 15. ✅ Worktree slice 4 (§8) — done. `task_create` captures explicit `baseRef` + `baseBranch`; manager forwards them. §8 now fully REAL.
-16. **Merge slice 2 (§19) — NEXT.** Actually perform the integration commit on `baseBranch`. Unblocked by §8 slice 4.
+16. ✅ Session→task pinning (§11 slice 1) — done. `runtime_instances.task_id` persists the link via the existing `agent_launch.taskId` flow.
+17. **Merge slice 2 (§19) — NEXT.** Actually perform the integration commit on `baseBranch`. Unblocked by §8 slice 4 + §11.
 14. **Merge slice 2 (§19).** Actually perform the integration commit on `baseBranch` (today's gate only verifies feasibility).
 10. Smaller follow-ups: failure detection (§13), WIP limits (§9), dependency enforcement (§10), notifications, knowledge propagation.
 
