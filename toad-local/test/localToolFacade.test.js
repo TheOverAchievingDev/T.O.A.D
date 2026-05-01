@@ -500,6 +500,102 @@ test('LocalToolFacade rejects agent_launch when no launchAgent callback is confi
   );
 });
 
+test('LocalToolFacade enforces role authority on dispatch (developer cannot agent_launch)', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    launchAgent: () => ({ runtimeId: 'r', status: 'starting' }),
+  });
+  assert.throws(
+    () => facade.execute({
+      commandName: COMMANDS.AGENT_LAUNCH,
+      idempotencyKey: 'role-test-1',
+      actor: { teamId: 'team-a', agentId: 'worker-1', role: 'developer' },
+      args: { teamId: 'team-a', agentId: 'worker-1', runtimeId: 'r', command: 'claude' },
+    }),
+    /role authority: developer cannot call agent_launch/,
+  );
+});
+
+test('LocalToolFacade allows developer to call task_update (in their allowlist)', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'role-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'role-1', subject: 'role test', status: 'pending' },
+  });
+
+  // developer with task_update permission
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'role-update',
+    actor: { teamId: 'team-a', agentId: 'worker-1', role: 'developer' },
+    args: { taskId: 'role-1', status: 'in_progress' },
+  });
+  // (no throw means success)
+});
+
+test('LocalToolFacade rejects review_decide when the actor is the same agent that requested the review', async () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'sr-create',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'sr-1', subject: 'self-review' },
+  });
+  // worker-1 requests review on its own work
+  facade.execute({
+    commandName: COMMANDS.REVIEW_REQUEST,
+    idempotencyKey: 'sr-req',
+    actor: { teamId: 'team-a', agentId: 'worker-1' },
+    args: { taskId: 'sr-1', diff: 'd', files: ['x'] },
+  });
+
+  // worker-1 (a reviewer in this hypothetical) tries to approve own work
+  assert.throws(
+    () => facade.execute({
+      commandName: COMMANDS.REVIEW_DECIDE,
+      idempotencyKey: 'sr-dec',
+      actor: { teamId: 'team-a', agentId: 'worker-1', role: 'reviewer' },
+      args: { taskId: 'sr-1', decision: 'approved' },
+    }),
+    /same agent cannot review own work/,
+  );
+});
+
+test('LocalToolFacade allows review_decide when the actor differs from the requester', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'rev-create',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'rev-1', subject: 'rev' },
+  });
+  facade.execute({
+    commandName: COMMANDS.REVIEW_REQUEST,
+    idempotencyKey: 'rev-req',
+    actor: { teamId: 'team-a', agentId: 'worker-1' },
+    args: { taskId: 'rev-1' },
+  });
+  // Different agent decides — should succeed
+  facade.execute({
+    commandName: COMMANDS.REVIEW_DECIDE,
+    idempotencyKey: 'rev-dec',
+    actor: { teamId: 'team-a', agentId: 'reviewer-1', role: 'reviewer' },
+    args: { taskId: 'rev-1', decision: 'approved' },
+  });
+});
+
 test('LocalToolFacade task_update records "from" and "reason" in the STATUS_CHANGED event payload', () => {
   const facade = new LocalToolFacade({
     broker: new InMemoryBroker(),

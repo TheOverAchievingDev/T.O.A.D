@@ -8,6 +8,7 @@ import { applyPermissionSuggestions } from '../runtime/claudeSettingsWriter.js';
 import { formatCrossTeamText, CROSS_TEAM_SOURCE, CROSS_TEAM_SENT_SOURCE } from '../protocol/crossTeam.js';
 import { TeamConfig } from '../team/teamConfig.js';
 import { validateTaskStatusTransition } from '../task/taskLifecycle.js';
+import { assertRoleCanCallTool } from '../security/roleAuthority.js';
 
 export class LocalToolFacade {
   constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null }) {
@@ -31,6 +32,7 @@ export class LocalToolFacade {
       requireString(command.idempotencyKey, 'idempotencyKey');
     }
     const actor = normalizeActor(command.actor);
+    assertRoleCanCallTool({ role: actor.role, toolName: commandName });
     const args = command.args && typeof command.args === 'object' ? command.args : {};
 
     switch (commandName) {
@@ -195,6 +197,12 @@ export class LocalToolFacade {
     const decision = requireString(args.decision, 'args.decision');
     if (decision !== 'approved' && decision !== 'changes_requested') {
       throw new Error(`unsupported review decision: ${decision}`);
+    }
+    // Self-review prevention (checklist §17): the agent that requested
+    // the review cannot also decide it. Applies regardless of role.
+    const currentTask = this.taskBoard.getTask({ teamId: actor.teamId, taskId });
+    if (currentTask?.review?.requestedBy && currentTask.review.requestedBy === actor.agentId) {
+      throw new Error('review_decide: same agent cannot review own work');
     }
     const payload = { decision };
     if (typeof args.reason === 'string' && args.reason.length > 0) payload.reason = args.reason;
@@ -550,10 +558,14 @@ function normalizeActor(actor) {
   if (!actor || typeof actor !== 'object') {
     throw new TypeError('actor is required');
   }
-  return {
+  const normalized = {
     teamId: requireString(actor.teamId, 'actor.teamId'),
     agentId: requireString(actor.agentId, 'actor.agentId'),
   };
+  if (typeof actor.role === 'string' && actor.role.length > 0) {
+    normalized.role = actor.role;
+  }
+  return normalized;
 }
 
 function normalizeMessageRecipient(teamId, recipient) {

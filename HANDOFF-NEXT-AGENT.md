@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-04-30 local session (deterministic state machine — checklist §3)
+Last updated: 2026-04-30 local session (role authority — checklist §5 + §26)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,53 @@ Important files:
 
 ## Latest Completed Slices
 
-### 1. Deterministic Task State Machine — Checklist §3 (latest)
+### 1. Role Authority — Checklist §5 + §26 (latest)
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-role-authority.md`
+
+Continues the v2 hardening pass per the gap matrix's priority order. Builds on the state machine slice — that one made transitions legal/illegal; this one makes WHO can do them depend on role.
+
+New file:
+
+- `src/security/roleAuthority.js` — exports `ROLE_TOOLS` (per-role allowlists; `lead` and `human` are wildcard `'*'`, the other four roles get explicit lists), `KNOWN_ROLES` set, and `assertRoleCanCallTool({ role, toolName })`. Throws sync on denied. Missing role defaults to `human` (full access) so the existing 29 test files keep passing without coordinated role-tagging.
+
+Modified files:
+
+- `src/tools/localToolFacade.js`:
+  - `execute()` calls `assertRoleCanCallTool` after the idempotency check, before dispatch.
+  - `normalizeActor()` preserves `actor.role` when present.
+  - `#reviewDecide` adds **self-review prevention**: looks up the task and throws if `task.review?.requestedBy === actor.agentId`. Applies regardless of role per checklist §17 ("same agent cannot review own work").
+- `test/roleAuthority.test.js` — NEW. 11 tests covering the six known roles, wildcard semantics for `lead`/`human`, explicit allowlists for the other four, missing-role default behavior, and unknown-role rejection.
+- `test/localToolFacade.test.js` — 4 new tests: role denied (developer cannot agent_launch), role allowed (developer can task_update), self-review rejected, different-agent review accepted.
+- `package.json` — adds `node test/roleAuthority.test.js` to the chain (now 30 test files).
+
+Allowlist mapping (full table in plan doc):
+
+- `lead` / `human` — `*` (full access).
+- `architect` — task_create, cross_team_send, review_request, review_decide, plus the common read tools.
+- `developer` — task_update, review_request, runtime_send_input, plus reads. **Cannot agent_launch / team_create / approval_respond / review_decide.**
+- `reviewer` — review_decide plus reads. **Cannot review_request, agent_launch, task_update.**
+- `tester` — task_update plus reads. **Cannot review_decide / agent_launch / team_create.**
+
+Behavior decisions:
+
+- **Permissive default for missing role.** All 29 prior test files use `actor: { teamId, agentId: 'operator' }` with no role and continue to pass. New code that wants enforcement passes `role` explicitly. A future tightening slice can flip the default once UI / agent prompts / smoke harness opt in.
+- **Self-review applies even to `human`.** It is a hard rule per §17 — the agent that requested a review cannot also decide it, regardless of role.
+- **Throws sync, before dispatch.** Matches the existing pattern (`unsupported command`, `idempotencyKey required`).
+
+Verification during slice:
+
+```powershell
+node test/roleAuthority.test.js
+node test/localToolFacade.test.js
+npm.cmd test
+```
+
+All 30 backend test files pass.
+
+### 2. Deterministic Task State Machine — Checklist §3
 
 **Project priorities updated.** The user supplied `agent_teams_hardening_checklist_final_v2.md` as the target system standard. Copied to `docs/AGENT_TEAMS_HARDENING_CHECKLIST.md` and audited at `docs/CHECKLIST_GAP_MATRIX.md`. Slice order is now anchored to the checklist's own priority: **state machine > tool authority > session tracking > diff tracking > CI gates > diagnostics**. UI work continues to be deferred per the user's earlier steering (parallel UI prototype is being built elsewhere).
 
@@ -1350,12 +1396,14 @@ Remaining gaps worth tracking:
 
 Anchored to the checklist's own priority order (full detail in `docs/CHECKLIST_GAP_MATRIX.md`):
 
-1. **Role authority (§5 + §26) — NEXT.** Add `actor.role` (lead / architect / developer / reviewer / tester / human). Per-role allow-list checked in `LocalToolFacade.execute`. Self-review prevention (`actor.agentId !== task.review.requestedBy` for `review_decide`). Without this, the state machine's checklist rules like "developer cannot mark task done" and "tester cannot approve review" remain aspirational.
-2. **Test artifacts + CI gates (§6 + §18).** Orchestrator-run validation commands stored as a structured `TestResult`. Failed tests block `merge_ready` transition. Biggest correctness gap between agent claims and system truth.
+1. ✅ Role authority (§5 + §26) — done with permissive default for backward compat.
+2. **Test artifacts + CI gates (§6 + §18) — NEXT.** Orchestrator-run validation commands stored as a structured `TestResult`. Failed tests block `merge_ready` transition. Biggest correctness gap between agent claims and system truth.
 3. **Plan-before-code (§2).** New `task_plan_propose` / `task_plan_approve` MCP tools backed by `PLAN_PROPOSED` / `PLAN_APPROVED` events. Tied to the `ready → planned` transition.
 4. **Diagnostics (§25).** `diagnostics_run` MCP tool returning `{ check, status: PASS/WARNING/FAIL, evidence, suggestedFix }[]`.
 5. **Worktree enforcement (§8) → diff tracking (§7 finished) → merge workflow (§19).** Bigger lift because of git integration.
-6. Smaller follow-ups: failure detection (§13), WIP limits (§9), dependency enforcement (§10), notifications, knowledge propagation.
+6. **Per-transition role guards.** Now that roles exist, extend `validateTaskStatusTransition` to check role against the move (e.g. only `lead` can do `merge_ready → done`). Cleanly stacks on the state machine + role auth slices.
+7. **`tool_call_denied` event emission.** §26 says every denied tool call should be logged. Currently the throw bubbles to `/api/call` but doesn't land in `runtime_events`. Small follow-up.
+8. Smaller follow-ups: failure detection (§13), WIP limits (§9), dependency enforcement (§10), notifications, knowledge propagation.
 
 Parked / out of scope now:
 
@@ -1528,6 +1576,9 @@ rg -n "permission|control_request|approval|runtime adapter|watcher|relay" C:\Pro
 - `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-deterministic-state-machine.md`
 - `C:\Project-TOAD\toad-local\src\task\taskLifecycle.js`
 - `C:\Project-TOAD\toad-local\test\taskLifecycle.test.js`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-role-authority.md`
+- `C:\Project-TOAD\toad-local\src\security\roleAuthority.js`
+- `C:\Project-TOAD\toad-local\test\roleAuthority.test.js`
 
 ## Suggested Opening Move For Next Agent
 
