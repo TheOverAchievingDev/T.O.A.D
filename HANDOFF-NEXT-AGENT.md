@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-05-01 local session (task history export — checklist §20)
+Last updated: 2026-05-01 local session (re-evaluation after Level 1/2/3 smoke testing)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -13,6 +13,71 @@ This file is the handoff point for a fresh agent with no chat context. The user 
 - Important legacy file for many findings: `C:\Project-TOAD\claude_agent_teams_ui-main\claude_agent_teams_ui-main\src\main\services\team\TeamProvisioningService.ts`
 
 There appears to be no git metadata in `C:\Project-TOAD\toad-local`; earlier `git status` failed there. Treat the workspace as local files.
+
+## 2026-05-01 Re-evaluation — read this before adding more slices
+
+After running an end-to-end smoke against a real Claude CLI (Level 1 = direct adapter, Level 2 = orchestrator-driven launch, Level 3 attempt = full lifecycle with real edits), the picture clarified. Three things to know before doing more work:
+
+### What's actually solid
+
+The orchestrator — every gate, projection, detector, and audit surface listed in `docs/AGENT_TEAMS_HARDENING_CHECKLIST.md` — is real and tested:
+
+- 416 backend tests, 0 fail, across 36 test files
+- Real `git worktree add` / `--abort` / `remove --force` verified end-to-end
+- Real `git diff baseRef..HEAD` capture verified — `task.review.diff` contains the actual unified diff
+- Real merge conflict gate verified — `git merge --no-commit --no-ff` runs inside the worktree before `merge_ready → done`
+- Real Claude CLI streamed through `runtime_send_input` → adapter → ingestor → `runtime_events` → SSE (after the 2026-05-01 auto-consume fix; before that, real-agent events were silently dropped — see §11 in the gap matrix)
+- Migration on existing `.toad/toad.db` runs cleanly (idempotent ALTER TABLE)
+- Diagnostics surfaces real `claude auth status --json` fields (email, authMethod, subscriptionType)
+
+### What's actually missing
+
+**The agent-side MCP tool surface is not wired.** A launched claude can run, accept input, and emit output — but it has **no way to call `task_update`, `review_request`, `message_send`, etc. from inside its tool loop**. We have the tools defined and a real MCP stdio server (`src/mcp/stdioServer.js`), but two pieces of plumbing are missing:
+
+1. `stdioServer.js` defaults to `:memory:` SQLite — needs `TOAD_DB_PATH` env support to connect to the live api:dev runtime's db.
+2. `agent_launch` does not pass `--mcp-config` to claude. A launched agent therefore has no team-coordination tools registered.
+
+This is the actual blocker for "agent does work end-to-end." Until it's fixed, the orchestrator is a perfectly-functioning skeleton with no actor inside it.
+
+### How upstream `claude_agent_teams_ui-main` actually does this (2026-05-01 audit)
+
+The reference upstream uses a different prompt/transport model than I assumed:
+
+- Initial prompt is a **file** passed via `--team-bootstrap-user-prompt-file <path>`, not stdin.
+- A bootstrap **JSON spec** is passed via `--team-bootstrap-spec <path>`.
+- An MCP server is exposed via `--mcp-config <path>` so the agent has team-coordination tools.
+- Teammate-to-teammate messaging uses **filesystem inboxes** (`inboxes/<member>.json`) that the CLI auto-monitors. Lead reads stdin only; teammates read inbox files.
+- Worktree-per-task uses the CLI's built-in `--worktree <name>` flag (the CLI manages it, not the orchestrator).
+
+Reference: [`claude_agent_teams_ui-main/src/main/services/team/TeamProvisioningService.ts`](claude_agent_teams_ui-main/claude_agent_teams_ui-main/src/main/services/team/TeamProvisioningService.ts) lines ~12960-12989 for the spawn args.
+
+We have correctly diverged from upstream where the v2 hardening checklist demanded enforcement (state machine, gates, detectors). Upstream doesn't have most of those. Where we still need to align is the agent-tool-surface piece.
+
+### Three options for what to do next
+
+**Option 1 — document and pause.** Update gap matrix + HANDOFF (this slice). Don't add features. Decide direction with operator. **Cost: ~0 slices.** ← *we just did this.*
+
+**Option 2 — agent-tool surface (recommended).** Add `TOAD_DB_PATH` to `stdioServer.js`. Have `agent_launch` write a per-task mcp-config json (stdio command = `node src/mcp/stdioServer.js`, env = `{ TOAD_DB_PATH, TOAD_TEAM_ID, TOAD_AGENT_ID, TOAD_TASK_ID }`). Append `--mcp-config <path>` to launch args when `taskId` is present. After this lands, a real claude in a worktree can call `task_update`, `review_request`, `message_send`, `validation_run`, `task_plan_propose`, etc. mid-turn — the orchestrator's enforcement gates fire against real agent activity. **Cost: ≈ 1 slice (~3-5 tests, schema additions to `agent_launch` MCP def, a tiny mcp-config template).**
+
+**Option 3 — full upstream-style transport (significant).** Build the `--team-bootstrap-spec` JSON format, the bootstrap-user-prompt-file writer, and the inbox-file delivery model (filesystem watching, append-with-dedup, message-id sha256 generation, write locks for concurrent agents). Replace or parallel HTTP/SSE-based message delivery with filesystem-based. **Cost: ≈ 5–10 slices.** Worth doing only if the operator decides matching upstream's mental model is a goal.
+
+"Expensive" in Options 2/3 means engineering cost (slices of code + tests + edge cases), not Claude credits or money.
+
+### Smoke test findings already fixed in commits this session
+
+| Bug | Fix | Commit |
+|---|---|---|
+| `validation_run` ran spawn before idempotency check; retry returned fresh-spawn payload while persistence kept the cached event | Pre-flight `task.history` check, return cached payload if found | [`9125162`](https://github.com/kaydenraquel-crypto/T.O.A.D./commit/9125162) |
+| `provider_claude_authenticated` reported `user: null` on success | Read `email` (with `user` fallback), surface `authMethod`/`apiProvider`/`subscriptionType` too | [`9125162`](https://github.com/kaydenraquel-crypto/T.O.A.D./commit/9125162) |
+| `LocalToadRuntime.launchAgent` registered the adapter but never started `eventIngestor.ingestFrom(adapter.events())` — real-agent events silently dropped | Auto-consume on launch, errors logged + swallowed | [`aadac5e`](https://github.com/kaydenraquel-crypto/T.O.A.D./commit/aadac5e) |
+
+### Smoke test findings not yet addressed
+
+| Finding | Severity | Fix slice |
+|---|---|---|
+| Agent-side MCP tool surface not wired | Critical for real agent work | Option 2 above |
+| `claude` in a worktree containing the legacy `claude_agent_teams_ui-main/` mirror hits "Prompt is too long" because of CLAUDE.md auto-discovery / cwd file listing | Environmental (not a TOAD bug); only blocks live-agent-in-worktree smoke testing | Mitigations: pass `--setting-sources ""`, custom `--system-prompt`, prune the legacy mirror, or use a smaller baseRef when the worktree is created. None of these change TOAD code. |
+| Windows `MAX_PATH` blocks worktree creation against this repo until `core.longpaths` is set | Environmental | Set globally — already done with operator authorization on 2026-05-01 |
 
 ## User Preferences / Constraints
 
@@ -1868,13 +1933,31 @@ Anchored to the checklist's own priority order (full detail in `docs/CHECKLIST_G
 15. ✅ Worktree slice 4 (§8) — done. `task_create` captures explicit `baseRef` + `baseBranch`; manager forwards them. §8 now fully REAL.
 16. ✅ Session→task pinning (§11 slice 1) — done. `runtime_instances.task_id` persists the link via the existing `agent_launch.taskId` flow.
 17. ✅ Task history export (§20) — done. `task_history_export` read tool returns `{ task, taskEvents, runtimeEvents }`. §20 fully REAL.
-18. **Merge slice 2 (§19) — NEXT.** Actually perform the integration commit on `baseBranch`. ⚠️ Modifies user's mainline branch — needs explicit go-ahead before automating.
-14. **Merge slice 2 (§19).** Actually perform the integration commit on `baseBranch` (today's gate only verifies feasibility).
-10. Smaller follow-ups: failure detection (§13), WIP limits (§9), dependency enforcement (§10), notifications, knowledge propagation.
+18. ✅ Smoke-test fixes — done. validation_run idempotency, diagnostics auth-status field names, runtime auto-consume of adapter events. Detailed under "2026-05-01 Re-evaluation" near the top.
 
-Parked / out of scope now:
+### Decision-pending next slice
 
-- **Subscription quota / plan-usage indicator** — user is investigating a reliable data source. `--print "/usage"` returns only an auth-status string in headless mode.
+19. **Agent-side MCP tool surface (Option 2 from re-evaluation) — RECOMMENDED NEXT.** Without this, the orchestrator works perfectly but launched agents have no way to call `task_update` / `review_request` / `message_send` / etc. from inside their tool loop. Detailed design in the "Three options" section near the top. Cost ≈ 1 slice.
+
+### Other pending slices (operator picks order)
+
+- **Merge slice 2 (§19)** — actually perform the integration commit on `baseBranch`. ⚠️ Modifies user's mainline branch; needs explicit go-ahead before automating. Now unblocked by the baseRef + baseBranch capture.
+- **Stuck/zombie runtime detector (§13)** — heartbeat-based detection over `runtime_events.created_at` per task. Now possible because §11 pins runtimes to tasks AND the auto-consume fix makes runtime_events flow for live agents.
+- **§17 review severity tags** — `nit/minor/major/blocking` on review feedback (small polish slice).
+- **§1 task schema fields** — `priority`, `assignedRole`, `allowedFiles`, `forbiddenFiles`, `acceptanceCriteria`, `riskLevel`, `requiresHumanApproval`. Each unlocks small follow-ups (§10 dependencies, §14 risk policy, scope-drift promotion to blocking).
+- **§9 WIP limits** — flow control config on TeamConfig.
+- **§31 `task_override`** — escape hatch tool with required reason; logs `TASK_OVERRIDE` event.
+- Promote scope-drift / no-op-diff / repeated-test-failures to a configurable `task_blocked` event when policy thresholds are configured (depends on §14).
+
+### Significant architectural moves (only if operator decides)
+
+- **Option 3 from re-evaluation** — full upstream-style team launch (`--team-bootstrap-spec`, `--team-bootstrap-user-prompt-file`, inbox-file delivery). ≈ 5–10 slices.
+- §19 slice 3+ — rebase strategy as alternative to merge.
+- §14 risk policy + auto-classification for `requiresHumanApproval`.
+
+### Parked / out of scope now
+
+- **Subscription quota / plan-usage indicator** — `claude auth status --json` returns `subscriptionType: "max"` (and similar) which the diagnostics tool now surfaces. The "ramping usage indicator" (live remaining-budget) still needs a separate data source the operator was researching.
 - **UI work** — parallel UI prototype is being built elsewhere; backend-only per project priorities.
 
 Workflow reminders:
