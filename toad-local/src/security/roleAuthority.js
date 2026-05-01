@@ -28,6 +28,7 @@ const COMMON_READ_TOOLS = Object.freeze([
   'tool_activity',
   'health_status',
   'diagnostics_run',
+  'task_history_export',
 ]);
 
 export const ROLE_TOOLS = Object.freeze({

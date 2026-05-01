@@ -362,6 +362,15 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
     required: [],
     properties: {},
   }),
+  makeTool({
+    name: COMMANDS.TASK_HISTORY_EXPORT,
+    title: 'Export Task History',
+    description: 'Read-only audit export. Returns the task projection, every task_event in chronological order (CREATED, STATUS_CHANGED, COMMENT_ADDED, REVIEW_*, VALIDATION_RUN, PLAN_*, WORKTREE_*), and runtime_events whose runtime was pinned to this task. Available to every role.',
+    required: ['taskId'],
+    properties: {
+      taskId: { type: 'string', minLength: 1 },
+    },
+  }),
 ]);
 
 export function listLocalMcpTools() {

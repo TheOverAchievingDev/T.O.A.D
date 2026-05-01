@@ -28,6 +28,7 @@ test('listLocalMcpTools exposes MCP-shaped local command tools', () => {
     'runtime_send_input',
     'task_comment',
     'task_create',
+    'task_history_export',
     'task_list',
     'task_plan_approve',
     'task_plan_propose',

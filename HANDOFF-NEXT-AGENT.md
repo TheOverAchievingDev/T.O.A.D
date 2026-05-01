@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-05-01 local session (session→task pinning — checklist §11 slice 1)
+Last updated: 2026-05-01 local session (task history export — checklist §20)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,41 @@ Important files:
 
 ## Latest Completed Slices
 
-### 0. Session→Task Pinning — Checklist §11 slice 1 (latest)
+### 0. Task History Export — Checklist §20 (latest)
+
+The audit trail was already comprehensive — events live in `task_events`, `runtime_events`, `messages`, `approval_requests`, `side_effect_deliveries`. This slice surfaces a single read tool that returns everything correlated to one task in one call. Now that §11 pins runtimes to tasks, the join lets us answer "show me everything ever done on task X."
+
+New API surface:
+
+```
+task_history_export({ taskId }) → {
+  task: <full projection>,
+  taskEvents: [<task_events for this task in chrono order>],
+  runtimeEvents: [<runtime_events whose runtime is pinned to this task>]
+}
+```
+
+Modified files:
+
+- `src/commands/command-contract.js` — new `COMMANDS.TASK_HISTORY_EXPORT = 'task_history_export'` (read-only, no idempotency).
+- `src/security/roleAuthority.js` — added to `COMMON_READ_TOOLS` so every role can call.
+- `src/mcp/localToolDefinitions.js` — new tool def with `taskId` required.
+- `src/runtime/sqliteRuntimeEventLog.js` — new `listEventsByTask({ teamId, taskId })`. SQL join: `runtime_events re JOIN runtime_instances ri ON re.runtime_id = ri.runtime_id WHERE re.team_id = ? AND ri.task_id = ?`. Returns chronological events.
+- `src/tools/localToolFacade.js` — new `#taskHistoryExport(actor, args)`. Reads task projection, calls `taskBoard.listEvents({ teamId, taskId })`, calls `eventLog.listEventsByTask` if available (graceful no-op when no event log is configured).
+- `test/sqliteRuntimeEventLog.test.js` — 2 new tests (now 3 total): join returns task-scoped events, empty list for unknown task.
+- `test/localToolFacade.test.js` — 4 new tests (now 91 total): full export shape, empty runtimeEvents without eventLog, taskId required, every role can call.
+- `test/localMcpToolDefinitions.test.js` — `task_history_export` added to expected tool name list.
+- `docs/CHECKLIST_GAP_MATRIX.md` — §20 flipped to fully REAL.
+
+Why this matters now:
+
+- The §11 link finally pays off: runtimeEvents per task is meaningful only when runtime_instances.task_id is set. We landed §11 specifically so this query could exist.
+- A future UI consumes this directly to render a per-task timeline. Markdown rendering is a UI-side concern; the orchestrator returns canonical JSON.
+- An operator running `claude /export-task X` (or its UI equivalent) gets a single self-contained record they can paste into a postmortem, ticket, or PR description.
+
+Tests pass: 36 backend test files, 412 individual tests, 0 fail.
+
+### 1. Session→Task Pinning — Checklist §11 slice 1
 
 The data was already flowing — `agent_launch` accepts `taskId` (added in §8 slice 2 for cwd enforcement). This slice makes the link durable in the registry so audit/diagnostics can answer "which task is this runtime working on?" and "show me everything for task X".
 
@@ -1833,7 +1867,8 @@ Anchored to the checklist's own priority order (full detail in `docs/CHECKLIST_G
 14. ✅ Repeated test-failure detector (§13 partial) — done. `task.consecutiveTestFailures` + `task.repeatedTestFailures` derived from `task.validations`.
 15. ✅ Worktree slice 4 (§8) — done. `task_create` captures explicit `baseRef` + `baseBranch`; manager forwards them. §8 now fully REAL.
 16. ✅ Session→task pinning (§11 slice 1) — done. `runtime_instances.task_id` persists the link via the existing `agent_launch.taskId` flow.
-17. **Merge slice 2 (§19) — NEXT.** Actually perform the integration commit on `baseBranch`. Unblocked by §8 slice 4 + §11.
+17. ✅ Task history export (§20) — done. `task_history_export` read tool returns `{ task, taskEvents, runtimeEvents }`. §20 fully REAL.
+18. **Merge slice 2 (§19) — NEXT.** Actually perform the integration commit on `baseBranch`. ⚠️ Modifies user's mainline branch — needs explicit go-ahead before automating.
 14. **Merge slice 2 (§19).** Actually perform the integration commit on `baseBranch` (today's gate only verifies feasibility).
 10. Smaller follow-ups: failure detection (§13), WIP limits (§9), dependency enforcement (§10), notifications, knowledge propagation.
 

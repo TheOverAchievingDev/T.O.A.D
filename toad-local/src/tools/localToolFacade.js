@@ -110,6 +110,8 @@ export class LocalToolFacade {
         return this.#taskPlanDecide(actor, command.idempotencyKey, args, 'rejected');
       case COMMANDS.DIAGNOSTICS_RUN:
         return this.#diagnosticsRun();
+      case COMMANDS.TASK_HISTORY_EXPORT:
+        return this.#taskHistoryExport(actor, args);
       default:
         throw new Error(`unsupported command: ${commandName}`);
     }
@@ -888,6 +890,32 @@ export class LocalToolFacade {
       spawnValidation: this.spawnValidation,
       dbPath: this.dbPath,
     });
+  }
+
+  /**
+   * §20: structured audit export for a single task. Returns the current
+   * projection plus every stored event the orchestrator can correlate to it.
+   *
+   *   task           — projection (current state, with all derived fields)
+   *   taskEvents     — chronological task_events for this task (CREATED,
+   *                    STATUS_CHANGED, COMMENT_ADDED, REVIEW_*, VALIDATION_RUN,
+   *                    PLAN_*, WORKTREE_*) sourced from the task board
+   *   runtimeEvents  — runtime_events whose runtime is pinned to this task
+   *                    (via §11 runtime_instances.task_id), or [] when no
+   *                    eventLog with listEventsByTask() is configured
+   *
+   * Read-only; available to every role via COMMON_READ_TOOLS.
+   */
+  #taskHistoryExport(actor, args) {
+    const taskId = requireString(args.taskId, 'args.taskId');
+    const task = this.taskBoard.getTask({ teamId: actor.teamId, taskId });
+    const taskEvents = typeof this.taskBoard.listEvents === 'function'
+      ? this.taskBoard.listEvents({ teamId: actor.teamId, taskId })
+      : [];
+    const runtimeEvents = this.eventLog && typeof this.eventLog.listEventsByTask === 'function'
+      ? this.eventLog.listEventsByTask({ teamId: actor.teamId, taskId })
+      : [];
+    return { task, taskEvents, runtimeEvents };
   }
 
   #emitToolCallDenied(actor, commandName, err) {

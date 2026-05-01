@@ -28,6 +28,7 @@ export const COMMANDS = Object.freeze({
   TASK_PLAN_APPROVE: 'task_plan_approve',
   TASK_PLAN_REJECT: 'task_plan_reject',
   DIAGNOSTICS_RUN: 'diagnostics_run',
+  TASK_HISTORY_EXPORT: 'task_history_export',
 });
 
 export const MUTATING_COMMANDS = Object.freeze([

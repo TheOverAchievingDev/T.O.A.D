@@ -2052,6 +2052,110 @@ test('merge_ready → done has no merge gate when no worktree exists (back-compa
   assert.equal(task.status, 'done');
 });
 
+// --- §20: task_history_export ---
+
+test('task_history_export returns the projection, taskEvents in order, and runtimeEvents (when eventLog provided)', () => {
+  const events = [];
+  const fakeEventLog = {
+    appendEvent(input) { events.push(input); return { inserted: true, event: input }; },
+    listEventsByTask({ teamId, taskId }) {
+      assert.equal(teamId, 'team-a');
+      assert.equal(taskId, 'th-1');
+      return [
+        { eventId: 're-1', runtimeId: 'rt-1', teamId, agentId: 'dev', eventType: 'assistant_text', payload: { text: 'hi' }, createdAt: '2026-05-01T00:10:00.000Z' },
+      ];
+    },
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    eventLog: fakeEventLog,
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'th-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'th-1', subject: 'history' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_COMMENT,
+    idempotencyKey: 'th-c1',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'th-1', text: 'first comment' },
+  });
+  const exp = facade.execute({
+    commandName: COMMANDS.TASK_HISTORY_EXPORT,
+    actor: { teamId: 'team-a', agentId: 'reviewer-1', role: 'reviewer' },
+    args: { taskId: 'th-1' },
+  });
+  assert.equal(exp.task.taskId, 'th-1');
+  assert.equal(exp.task.subject, 'history');
+  assert.ok(Array.isArray(exp.taskEvents));
+  // CREATED + COMMENT_ADDED, in order
+  assert.equal(exp.taskEvents.length, 2);
+  assert.equal(exp.taskEvents[0].eventType, 'task.created');
+  assert.equal(exp.taskEvents[1].eventType, 'task.comment_added');
+  assert.ok(Array.isArray(exp.runtimeEvents));
+  assert.equal(exp.runtimeEvents.length, 1);
+  assert.equal(exp.runtimeEvents[0].eventType, 'assistant_text');
+});
+
+test('task_history_export returns empty runtimeEvents when no eventLog is configured', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'th2-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'th-2', subject: 'no event log' },
+  });
+  const exp = facade.execute({
+    commandName: COMMANDS.TASK_HISTORY_EXPORT,
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'th-2' },
+  });
+  assert.equal(exp.task.taskId, 'th-2');
+  assert.deepEqual(exp.runtimeEvents, []);
+});
+
+test('task_history_export throws when taskId is not provided', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  assert.throws(
+    () => facade.execute({
+      commandName: COMMANDS.TASK_HISTORY_EXPORT,
+      actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+      args: {},
+    }),
+    /taskId/,
+  );
+});
+
+test('task_history_export is callable by every role (read-only)', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'th3-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'th-3', subject: 's' },
+  });
+  for (const role of ['developer', 'reviewer', 'tester', 'architect', 'lead', 'human']) {
+    const exp = facade.execute({
+      commandName: COMMANDS.TASK_HISTORY_EXPORT,
+      actor: { teamId: 'team-a', agentId: `${role}-x`, role },
+      args: { taskId: 'th-3' },
+    });
+    assert.equal(exp.task.taskId, 'th-3', `role ${role} couldn't export`);
+  }
+});
+
 // --- §13 partial: no-op diff detector ---
 
 test('review_request flags review.noOpDiff = true when computed diff has no files', () => {
