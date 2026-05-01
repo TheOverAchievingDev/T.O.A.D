@@ -1855,6 +1855,188 @@ test('LocalToolFacade does not trigger worktree creation when no manager is conf
   assert.equal(task.worktree, null);
 });
 
+// --- §8 slice 3: worktree removal on done ---
+
+test('LocalToolFacade calls worktreeManager.removeForTask when a task transitions merge_ready → done', async () => {
+  const removeCalls = [];
+  const fakeWorktreeManager = {
+    createForTask({ teamId, taskId }) {
+      return {
+        status: 'created',
+        path: `/tmp/wt/${teamId}/${taskId}`,
+        branch: `toad/${teamId}/${taskId}`,
+        baseRef: 'abc',
+        createdAt: '2026-05-01T00:00:00.000Z',
+      };
+    },
+    removeForTask({ teamId, taskId }) {
+      removeCalls.push({ teamId, taskId });
+      return { status: 'removed', path: `/tmp/wt/${teamId}/${taskId}`, removedAt: '2026-05-01T01:00:00.000Z' };
+    },
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    spawnValidation: () => ({ exitCode: 0, stdout: 'pass', stderr: '', durationMs: 1 }),
+    teamConfigRegistry: new (class {
+      teams = new Map();
+      registerTeam(c) { this.teams.set(c.teamId, c); }
+      getTeam(id) { return this.teams.get(id) || null; }
+      listTeams() { return Array.from(this.teams.values()); }
+    })(),
+    worktreeManager: fakeWorktreeManager,
+  });
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  facade.teamConfigRegistry.registerTeam(new TeamConfig({ teamId: 'team-a', validation: { testCommand: 'npm test' } }));
+  // Walk the task all the way through the lifecycle
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'rm-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'rm-1', subject: 'cleanup', status: 'pending' },
+  });
+  for (const [id, status] of [
+    ['rm-ready', 'ready'],
+  ]) {
+    facade.execute({
+      commandName: COMMANDS.TASK_UPDATE,
+      idempotencyKey: id,
+      actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+      args: { taskId: 'rm-1', status },
+    });
+  }
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_PROPOSE,
+    idempotencyKey: 'rm-plan',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'rm-1', summary: 'cleanup' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_APPROVE,
+    idempotencyKey: 'rm-approve',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'rm-1' },
+  });
+  for (const [id, status] of [
+    ['rm-planned', 'planned'],
+    ['rm-ip', 'in_progress'],
+    ['rm-rev', 'review'],
+    ['rm-test', 'testing'],
+  ]) {
+    facade.execute({
+      commandName: COMMANDS.TASK_UPDATE,
+      idempotencyKey: id,
+      actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+      args: { taskId: 'rm-1', status },
+    });
+  }
+  await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN,
+    idempotencyKey: 'rm-val',
+    actor: { teamId: 'team-a', agentId: 'tester-1', role: 'tester' },
+    args: { taskId: 'rm-1', kind: 'test' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'rm-mr',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'rm-1', status: 'merge_ready' },
+  });
+  // No removal yet
+  assert.equal(removeCalls.length, 0);
+  // Move to done — should trigger removal
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'rm-done',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'rm-1', status: 'done' },
+  });
+  assert.equal(removeCalls.length, 1);
+  assert.deepEqual(removeCalls[0], { teamId: 'team-a', taskId: 'rm-1' });
+  // Projection picks up removal
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'rm-1' });
+  assert.equal(task.worktree.status, 'removed');
+  assert.equal(task.worktree.removedAt, '2026-05-01T01:00:00.000Z');
+});
+
+test('LocalToolFacade does NOT remove worktree on rejected (operator triages manually)', () => {
+  const removeCalls = [];
+  const fakeWorktreeManager = {
+    createForTask({ teamId, taskId }) {
+      return { status: 'created', path: `/tmp/${teamId}/${taskId}`, branch: 'b', baseRef: 'r', createdAt: 'now' };
+    },
+    removeForTask(input) { removeCalls.push(input); return { status: 'removed', path: '', removedAt: 'now' }; },
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    worktreeManager: fakeWorktreeManager,
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'rj-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'rj-1', subject: 'reject', status: 'review' },
+  });
+  // review → rejected
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'rj-rej',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'rj-1', status: 'rejected' },
+  });
+  assert.equal(removeCalls.length, 0, 'rejected should not auto-remove worktree');
+});
+
+test('LocalToolFacade tolerates worktreeManager.removeForTask throwing (best-effort)', async () => {
+  const fakeWorktreeManager = {
+    createForTask: () => ({ status: 'created', path: '/tmp/x', branch: 'b', baseRef: 'r', createdAt: 'now' }),
+    removeForTask() { throw new Error('git is busted'); },
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    spawnValidation: () => ({ exitCode: 0, stdout: 'pass', stderr: '', durationMs: 1 }),
+    teamConfigRegistry: new (class {
+      teams = new Map();
+      registerTeam(c) { this.teams.set(c.teamId, c); }
+      getTeam(id) { return this.teams.get(id) || null; }
+      listTeams() { return Array.from(this.teams.values()); }
+    })(),
+    worktreeManager: fakeWorktreeManager,
+  });
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  facade.teamConfigRegistry.registerTeam(new TeamConfig({ teamId: 'team-a', validation: { testCommand: 'npm test' } }));
+  // Walk to merge_ready quickly
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'rt-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'rt-1', subject: 't', status: 'testing' },
+  });
+  await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN,
+    idempotencyKey: 'rt-val',
+    actor: { teamId: 'team-a', agentId: 'tester-1', role: 'tester' },
+    args: { taskId: 'rt-1', kind: 'test' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'rt-mr',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'rt-1', status: 'merge_ready' },
+  });
+  // Done should not throw even though removeForTask blows up
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'rt-done',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'rt-1', status: 'done' },
+  });
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'rt-1' });
+  assert.equal(task.status, 'done');
+});
+
 // --- §8 slice 2: agent_launch cwd enforcement against task worktree ---
 
 function setupTaskWithWorktree(facade, taskId = 'cwd-1') {

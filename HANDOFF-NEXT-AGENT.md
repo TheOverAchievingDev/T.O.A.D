@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-05-01 local session (worktree-per-task slice 2 — checklist §8)
+Last updated: 2026-05-01 local session (worktree-per-task slice 3 — checklist §8)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,24 @@ Important files:
 
 ## Latest Completed Slices
 
-### 0. Worktree per Task — Checklist §8, slice 2 (latest)
+### 0. Worktree per Task — Checklist §8, slice 3 (latest)
+
+Worktree cleanup half. When a task completes (`merge_ready → done`), the orchestrator runs `git worktree remove --force` on the task's worktree. The branch (`toad/${teamId}/${taskId}`) is preserved so merge history stays reachable from the mainline ref. **`rejected` does NOT auto-remove** — the operator may want to triage WIP before deletion; a future manual cleanup tool will handle that case.
+
+Modified files:
+
+- `src/task/worktreeManager.js` — new `removeForTask({ teamId, taskId })`. Runs `git worktree remove --force <path>`. Returns `{ status: 'removed', path, removedAt }` on success or `{ status: 'skipped', reason: 'git_command_failed', stderr }` on failure.
+- `src/task/inMemoryTaskBoard.js` — new `TASK_EVENT_TYPES.WORKTREE_REMOVED = 'task.worktree_removed'`. Projection updates `task.worktree.status` to `'removed'` while spreading the previous worktree fields so `branch`, `baseRef`, `path` survive removal in the audit trail.
+- `src/tools/localToolFacade.js`:
+  - `#taskUpdate` after STATUS_CHANGED: if status is `done` and the task has a `created` worktree, calls `#triggerWorktreeRemoval`.
+  - `#triggerWorktreeRemoval`: best-effort sibling of `#triggerWorktreeCreation`. Wraps `manager.removeForTask` in try/catch; on throw, falls back to a `{ status: 'skipped', reason: 'manager_threw' }` event variant. Transition itself never blocks.
+- `test/worktreeManager.test.js` — 3 new tests (now 8 total): success path with correct args, failure path with skip variant, input validation.
+- `test/taskBoard.test.js` — 1 new projection test (now 11 total): WORKTREE_REMOVED preserves branch.
+- `test/localToolFacade.test.js` — 3 new tests (now 67 total): removal triggers on done, no-removal on rejected, best-effort tolerance.
+
+Tests pass: 34 backend test files, 363 individual tests, 0 fail.
+
+### 1. Worktree per Task — Checklist §8, slice 2
 
 No new plan doc — this is the cwd-enforcement half of the §8 plan written for slice 1.
 
@@ -1641,8 +1658,9 @@ Anchored to the checklist's own priority order (full detail in `docs/CHECKLIST_G
 6. ✅ `tool_call_denied` event emission (§26) — done. Best-effort runtime event on every role-authority denial. §26 fully done.
 7. ✅ Worktree-per-task slice 1 (§8) — done. Creation half: orchestrator runs `git worktree add` on `ready → planned`; projection picks up `task.worktree`.
 8. ✅ Worktree-per-task slice 2 (§8) — done. `agent_launch` cwd enforcement: auto-set or reject based on `task.worktree.path`.
-9. **Worktree slices 3/4 — NEXT.** Removal on `done`/`rejected`, explicit `task.baseRef` from operator.
-10. **Diff tracking (§7 finished) → merge workflow (§19).** Now unblocked by §8.
+9. ✅ Worktree-per-task slice 3 (§8) — done. `removeForTask` runs `git worktree remove --force` on `done`. Branch preserved. `rejected` does not auto-remove.
+10. **Worktree slice 4 — NEXT.** Explicit `task.baseRef` at task creation (currently HEAD-at-planning). Smaller than the previous three.
+11. **Diff tracking (§7 finished) → merge workflow (§19).** Now unblocked by §8.
 10. Smaller follow-ups: failure detection (§13), WIP limits (§9), dependency enforcement (§10), notifications, knowledge propagation.
 
 Parked / out of scope now:

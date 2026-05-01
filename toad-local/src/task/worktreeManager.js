@@ -81,4 +81,37 @@ export class WorktreeManager {
       createdAt: new Date().toISOString(),
     };
   }
+
+  /**
+   * Remove the worktree for a completed task. Returns one of:
+   *   { status: 'removed', path, removedAt }
+   *   { status: 'skipped', reason: 'git_command_failed', stderr }
+   *
+   * `git worktree remove --force` deletes the worktree directory and detaches
+   * its administrative entry. The branch itself (`toad/${teamId}/${taskId}`)
+   * is preserved so the merge commit / history is still reachable from the
+   * mainline ref. A future cleanup tool can prune the branch separately.
+   */
+  removeForTask({ teamId, taskId }) {
+    if (typeof teamId !== 'string' || teamId.length === 0) {
+      throw new TypeError('teamId must be a non-empty string');
+    }
+    if (typeof taskId !== 'string' || taskId.length === 0) {
+      throw new TypeError('taskId must be a non-empty string');
+    }
+    const path = this.worktreePathFor({ teamId, taskId });
+    const result = this.runGit(['worktree', 'remove', '--force', path], { cwd: this.projectCwd });
+    if (result.exitCode !== 0) {
+      return {
+        status: 'skipped',
+        reason: 'git_command_failed',
+        stderr: result.stderr || 'worktree remove failed',
+      };
+    }
+    return {
+      status: 'removed',
+      path,
+      removedAt: new Date().toISOString(),
+    };
+  }
 }

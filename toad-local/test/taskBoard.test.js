@@ -332,6 +332,46 @@ test('projectTask captures WORKTREE_CREATED into task.worktree (status: created)
   assert.equal(task.worktree.baseRef, 'abc123');
 });
 
+test('projectTask captures WORKTREE_REMOVED and updates task.worktree.status to "removed"', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'wt-r',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead',
+    payload: { subject: 'cleanup' },
+  });
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'wt-r',
+    eventType: TASK_EVENT_TYPES.WORKTREE_CREATED,
+    actorId: 'lead',
+    payload: {
+      status: 'created',
+      path: '/tmp/wt-r',
+      branch: 'toad/team-a/wt-r',
+      baseRef: 'abc',
+      createdAt: '2026-05-01T00:00:00.000Z',
+    },
+  });
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'wt-r',
+    eventType: TASK_EVENT_TYPES.WORKTREE_REMOVED,
+    actorId: 'lead',
+    payload: {
+      status: 'removed',
+      path: '/tmp/wt-r',
+      removedAt: '2026-05-01T01:00:00.000Z',
+    },
+  });
+  const task = board.getTask({ teamId: 'team-a', taskId: 'wt-r' });
+  assert.equal(task.worktree.status, 'removed');
+  assert.equal(task.worktree.path, '/tmp/wt-r');
+  assert.equal(task.worktree.branch, 'toad/team-a/wt-r', 'branch preserved through removal');
+  assert.equal(task.worktree.removedAt, '2026-05-01T01:00:00.000Z');
+});
+
 test('projectTask captures WORKTREE_CREATED skipped variant with reason', () => {
   const board = new InMemoryTaskBoard();
   board.appendEvent({

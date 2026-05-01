@@ -14,6 +14,7 @@ export const TASK_EVENT_TYPES = Object.freeze({
   PLAN_APPROVED: 'task.plan_approved',
   PLAN_REJECTED: 'task.plan_rejected',
   WORKTREE_CREATED: 'task.worktree_created',
+  WORKTREE_REMOVED: 'task.worktree_removed',
 });
 
 export const TASK_STATUS = Object.freeze({
@@ -210,6 +211,18 @@ export function projectTask(events) {
             status: 'skipped',
             reason: typeof p.reason === 'string' ? p.reason : 'unknown',
           };
+    }
+    if (event.eventType === TASK_EVENT_TYPES.WORKTREE_REMOVED) {
+      const p = event.payload || {};
+      // Preserve branch/baseRef from the prior 'created' projection so the audit
+      // trail still answers "what branch did this task work on?" after removal.
+      task.worktree = {
+        ...(task.worktree || {}),
+        status: 'removed',
+        path: typeof p.path === 'string' ? p.path : (task.worktree?.path ?? null),
+        removedAt: typeof p.removedAt === 'string' ? p.removedAt : event.createdAt,
+        ...(typeof p.reason === 'string' ? { reason: p.reason } : {}),
+      };
     }
     if (event.eventType === TASK_EVENT_TYPES.VALIDATION_RUN) {
       const payload = event.payload || {};

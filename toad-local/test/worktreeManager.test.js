@@ -140,3 +140,47 @@ test('WorktreeManager.createForTask uses deterministic path under .toad/worktree
     tmp.cleanup();
   }
 });
+
+// --- removeForTask (slice 3) ---
+
+test('WorktreeManager.removeForTask runs git worktree remove --force at the deterministic path', () => {
+  const tmp = makeTmpProject();
+  try {
+    const runGit = fakeRunGit([
+      [['worktree', 'remove'], { exitCode: 0, stdout: '', stderr: '' }],
+    ]);
+    const mgr = new WorktreeManager({ projectCwd: tmp.dir, runGit });
+    const result = mgr.removeForTask({ teamId: 'team-a', taskId: 'task-1' });
+    assert.equal(result.status, 'removed');
+    assert.equal(result.path, join(tmp.dir, '.toad', 'worktrees', 'team-a', 'task-1'));
+    assert.equal(typeof result.removedAt, 'string');
+    const removeCalls = runGit.calls.filter((c) => c.args[0] === 'worktree' && c.args[1] === 'remove');
+    assert.equal(removeCalls.length, 1);
+    assert.equal(removeCalls[0].args[2], '--force');
+    assert.ok(removeCalls[0].args[3].includes('task-1'));
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('WorktreeManager.removeForTask returns skipped when git worktree remove fails', () => {
+  const tmp = makeTmpProject();
+  try {
+    const runGit = fakeRunGit([
+      [['worktree', 'remove'], { exitCode: 128, stdout: '', stderr: 'fatal: not a working tree' }],
+    ]);
+    const mgr = new WorktreeManager({ projectCwd: tmp.dir, runGit });
+    const result = mgr.removeForTask({ teamId: 'team-a', taskId: 'task-1' });
+    assert.equal(result.status, 'skipped');
+    assert.equal(result.reason, 'git_command_failed');
+    assert.match(result.stderr || '', /not a working tree/);
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('WorktreeManager.removeForTask validates teamId/taskId', () => {
+  const mgr = new WorktreeManager({ projectCwd: '/tmp/x', runGit: () => ({ exitCode: 0, stdout: '', stderr: '' }) });
+  assert.throws(() => mgr.removeForTask({ teamId: '', taskId: 't' }), /teamId/);
+  assert.throws(() => mgr.removeForTask({ teamId: 't', taskId: '' }), /taskId/);
+});

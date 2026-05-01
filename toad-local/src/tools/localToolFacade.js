@@ -219,6 +219,15 @@ export class LocalToolFacade {
           this.#triggerWorktreeCreation(actor, idempotencyKey, taskId);
         }
       }
+      // Worktree-per-task (§8 slice 3): when a task transitions to `done`,
+      // remove the worktree. The branch is preserved so merge history stays
+      // reachable. `rejected` does NOT auto-remove — operator triages WIP.
+      if (args.status === 'done' && this.worktreeManager) {
+        const existing = this.taskBoard.getTask({ teamId: actor.teamId, taskId });
+        if (existing?.worktree?.status === 'created') {
+          this.#triggerWorktreeRemoval(actor, idempotencyKey, taskId);
+        }
+      }
     }
     return this.taskBoard.getTask({ teamId: actor.teamId, taskId });
   }
@@ -245,6 +254,31 @@ export class LocalToolFacade {
       });
     } catch {
       // best-effort — projection skip is acceptable, transition already landed
+    }
+  }
+
+  #triggerWorktreeRemoval(actor, idempotencyKey, taskId) {
+    let result;
+    try {
+      result = this.worktreeManager.removeForTask({ teamId: actor.teamId, taskId });
+    } catch (err) {
+      result = {
+        status: 'skipped',
+        reason: 'manager_threw',
+        stderr: err && err.message ? err.message : String(err),
+      };
+    }
+    try {
+      this.taskBoard.appendEvent({
+        teamId: actor.teamId,
+        taskId,
+        idempotencyKey: `${idempotencyKey}:worktree_remove`,
+        eventType: TASK_EVENT_TYPES.WORKTREE_REMOVED,
+        actorId: actor.agentId,
+        payload: result,
+      });
+    } catch {
+      // best-effort
     }
   }
 
