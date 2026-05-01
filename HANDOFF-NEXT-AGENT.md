@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-05-01 local session (merge conflict gate — checklist §19 slice 1)
+Last updated: 2026-05-01 local session (scope-drift detection — checklist §13 partial)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,28 @@ Important files:
 
 ## Latest Completed Slices
 
-### 0. Merge Conflict Gate — Checklist §19 slice 1 (latest)
+### 0. Scope-Drift Detection — Checklist §13 partial (latest)
+
+Now that we have both halves of the data — the **plan** says what files the developer agent intended to change (§2), and the **diff** records what files actually changed (§7) — the orchestrator can compare them and flag out-of-scope edits. This is the first §13 failure-detector slice.
+
+Modified files:
+
+- `src/tools/localToolFacade.js`:
+  - `#reviewRequest`: after the diff/files are determined (caller-supplied or auto-computed), compare `payload.files` against `task.plan.filesExpectedToChange`. Anything not matched lands in `payload.scopeDrift`. Empty plan list = no flagging (no false positives — many tasks won't enumerate every file in advance).
+  - New module-level `matchesAny(file, patterns)` helper. Supports exact paths, directory recursive (`src/parser/**`), and directory prefix (`src/parser/`). Pure, no glob library needed.
+- `src/task/inMemoryTaskBoard.js` — projection picks up `scopeDrift` array from REVIEW_REQUESTED payload onto `task.review.scopeDrift`.
+- `test/localToolFacade.test.js` — 4 new tests (now 79 total): drift detected, no-drift when in-scope, recursive `**` matching, no flagging when plan is empty.
+- `docs/CHECKLIST_GAP_MATRIX.md` — §13 now has a "scope-drift detector (slice 1)" entry; still PARTIAL (more semantic detectors to come).
+
+Why it's reviewer-informational, not transition-blocking (yet):
+
+- Plans aren't always exhaustive. A developer who legitimately needs to touch a config file, README, etc. would be falsely blocked.
+- The reviewer is the right gate for "is this drift acceptable?" — the orchestrator just surfaces the signal.
+- A future slice can promote this to a `task_blocked` event when drift is unacceptable (e.g., when the plan also has `forbiddenFiles` and the drift intersects).
+
+Tests pass: 36 backend test files, 387 individual tests, 0 fail.
+
+### 1. Merge Conflict Gate — Checklist §19 slice 1
 
 The `merge_ready → done` transition now runs a non-destructive merge test inside the task's worktree before letting the transition through. If the task branch can't be merged cleanly into `baseRef`, the orchestrator blocks `done` with a list of conflicting files. This slice covers detection only — actually performing the integration commit on `baseBranch` is deferred to slice 2.
 
@@ -1718,8 +1739,9 @@ Anchored to the checklist's own priority order (full detail in `docs/CHECKLIST_G
 9. ✅ Worktree-per-task slice 3 (§8) — done. `removeForTask` runs `git worktree remove --force` on `done`. Branch preserved. `rejected` does not auto-remove.
 10. ✅ Diff tracking (§7 finished) — done. `computeDiff` runs `git diff baseRef..HEAD` inside the worktree; `review_request` auto-attaches when caller omits.
 11. ✅ Merge conflict gate (§19 slice 1) — done. `checkForConflicts` runs `git merge --no-commit --no-ff` + `--abort` to verify the task branch is mergeable. Conflict or error blocks `merge_ready → done`.
-12. **Worktree slice 4 — NEXT.** Explicit `task.baseRef` at task creation (currently HEAD-at-planning).
-13. **Merge slice 2 (§19).** Actually perform the integration commit on `baseBranch` (today's gate only verifies feasibility).
+12. ✅ Scope-drift detection (§13 partial) — done. `task.review.scopeDrift[]` lists out-of-plan files after diff is captured.
+13. **Worktree slice 4 — NEXT.** Explicit `task.baseRef` at task creation (currently HEAD-at-planning).
+14. **Merge slice 2 (§19).** Actually perform the integration commit on `baseBranch` (today's gate only verifies feasibility).
 10. Smaller follow-ups: failure detection (§13), WIP limits (§9), dependency enforcement (§10), notifications, knowledge propagation.
 
 Parked / out of scope now:

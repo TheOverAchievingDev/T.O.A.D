@@ -151,6 +151,9 @@ export function projectTask(events) {
         files: Array.isArray(event.payload.files)
           ? event.payload.files.filter((f) => typeof f === 'string')
           : [],
+        scopeDrift: Array.isArray(event.payload.scopeDrift)
+          ? event.payload.scopeDrift.filter((f) => typeof f === 'string')
+          : [],
         requestedBy: event.actorId,
         requestedAt: event.createdAt,
       };

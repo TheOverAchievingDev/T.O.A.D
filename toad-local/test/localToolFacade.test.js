@@ -2052,6 +2052,200 @@ test('merge_ready → done has no merge gate when no worktree exists (back-compa
   assert.equal(task.status, 'done');
 });
 
+// --- §13 partial: scope-drift detection in review_request ---
+
+test('review_request flags scope drift: files outside plan.filesExpectedToChange land in review.scopeDrift', () => {
+  const fakeWorktreeManager = {
+    createForTask: ({ teamId, taskId }) => ({ status: 'created', path: `/tmp/${teamId}/${taskId}`, branch: 'b', baseRef: 'r', createdAt: 'now' }),
+  };
+  const fakeDiffComputer = {
+    computeDiff: () => ({ diff: 'd', files: ['src/parser.js', 'src/scope-creep.js', 'README.md'] }),
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    worktreeManager: fakeWorktreeManager,
+    diffComputer: fakeDiffComputer,
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'sd-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'sd-1', subject: 'scope', status: 'ready' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_PROPOSE,
+    idempotencyKey: 'sd-plan',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'sd-1', summary: 's', filesExpectedToChange: ['src/parser.js'] },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_APPROVE,
+    idempotencyKey: 'sd-app',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'sd-1' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'sd-planned',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'sd-1', status: 'planned' },
+  });
+  facade.execute({
+    commandName: COMMANDS.REVIEW_REQUEST,
+    idempotencyKey: 'sd-rev',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'sd-1', summary: 'please review' },
+  });
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'sd-1' });
+  // Plan only allowed src/parser.js — the other two are out of scope
+  assert.deepEqual(task.review.scopeDrift, ['src/scope-creep.js', 'README.md']);
+  assert.deepEqual(task.review.files, ['src/parser.js', 'src/scope-creep.js', 'README.md']);
+});
+
+test('review_request does not flag anything when all changed files are in the plan', () => {
+  const fakeDiffComputer = {
+    computeDiff: () => ({ diff: 'd', files: ['src/parser.js', 'src/parser.test.js'] }),
+  };
+  const fakeWorktreeManager = {
+    createForTask: ({ teamId, taskId }) => ({ status: 'created', path: `/tmp/${teamId}/${taskId}`, branch: 'b', baseRef: 'r', createdAt: 'now' }),
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    worktreeManager: fakeWorktreeManager,
+    diffComputer: fakeDiffComputer,
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'sd2-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'sd-2', subject: 's', status: 'ready' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_PROPOSE,
+    idempotencyKey: 'sd2-plan',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'sd-2', summary: 's', filesExpectedToChange: ['src/parser.js', 'src/parser.test.js'] },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_APPROVE,
+    idempotencyKey: 'sd2-app',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'sd-2' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'sd2-planned',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'sd-2', status: 'planned' },
+  });
+  facade.execute({
+    commandName: COMMANDS.REVIEW_REQUEST,
+    idempotencyKey: 'sd2-rev',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'sd-2', summary: 's' },
+  });
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'sd-2' });
+  assert.deepEqual(task.review.scopeDrift, []);
+});
+
+test('review_request supports directory wildcard "src/parser/**" in plan.filesExpectedToChange', () => {
+  const fakeDiffComputer = {
+    computeDiff: () => ({ diff: 'd', files: ['src/parser/lex.js', 'src/parser/sub/parse.js', 'src/main.js'] }),
+  };
+  const fakeWorktreeManager = {
+    createForTask: ({ teamId, taskId }) => ({ status: 'created', path: `/tmp/${teamId}/${taskId}`, branch: 'b', baseRef: 'r', createdAt: 'now' }),
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    worktreeManager: fakeWorktreeManager,
+    diffComputer: fakeDiffComputer,
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'sd3-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'sd-3', subject: 's', status: 'ready' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_PROPOSE,
+    idempotencyKey: 'sd3-plan',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'sd-3', summary: 's', filesExpectedToChange: ['src/parser/**'] },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_APPROVE,
+    idempotencyKey: 'sd3-app',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'sd-3' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'sd3-planned',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'sd-3', status: 'planned' },
+  });
+  facade.execute({
+    commandName: COMMANDS.REVIEW_REQUEST,
+    idempotencyKey: 'sd3-rev',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'sd-3', summary: 's' },
+  });
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'sd-3' });
+  // Both src/parser/* files match; src/main.js is drift
+  assert.deepEqual(task.review.scopeDrift, ['src/main.js']);
+});
+
+test('review_request leaves scopeDrift empty when plan has no filesExpectedToChange', () => {
+  const fakeDiffComputer = {
+    computeDiff: () => ({ diff: 'd', files: ['anywhere.js'] }),
+  };
+  const fakeWorktreeManager = {
+    createForTask: ({ teamId, taskId }) => ({ status: 'created', path: `/tmp/${teamId}/${taskId}`, branch: 'b', baseRef: 'r', createdAt: 'now' }),
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    worktreeManager: fakeWorktreeManager,
+    diffComputer: fakeDiffComputer,
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'sd4-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'sd-4', subject: 's', status: 'ready' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_PROPOSE,
+    idempotencyKey: 'sd4-plan',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'sd-4', summary: 's' /* no filesExpectedToChange */ },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_APPROVE,
+    idempotencyKey: 'sd4-app',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'sd-4' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'sd4-planned',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'sd-4', status: 'planned' },
+  });
+  facade.execute({
+    commandName: COMMANDS.REVIEW_REQUEST,
+    idempotencyKey: 'sd4-rev',
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId: 'sd-4', summary: 's' },
+  });
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'sd-4' });
+  // No expectation set → no drift flagged
+  assert.deepEqual(task.review.scopeDrift, []);
+});
+
 // --- §7 finished: review_request auto-computes diff against task worktree ---
 
 test('review_request auto-computes diff and files when task has worktree and caller omits both', async () => {

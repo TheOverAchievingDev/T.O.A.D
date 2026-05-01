@@ -330,9 +330,9 @@ export class LocalToolFacade {
     // active worktree, ask the orchestrator to compute the real diff against
     // the base ref. Operator-supplied diff always wins (covers cases like
     // squash-rebase summaries the orchestrator can't reconstruct).
+    const taskBeforeReview = this.taskBoard.getTask({ teamId: actor.teamId, taskId });
     if (!payload.diff && !payload.files) {
-      const task = this.taskBoard.getTask({ teamId: actor.teamId, taskId });
-      const wt = task?.worktree;
+      const wt = taskBeforeReview?.worktree;
       if (wt && wt.status === 'created' && wt.path && wt.baseRef) {
         let computed;
         try {
@@ -344,6 +344,19 @@ export class LocalToolFacade {
         if (computed && Array.isArray(computed.files) && computed.files.length > 0) {
           payload.files = computed.files;
         }
+      }
+    }
+    // §13 partial: scope-drift detection. Compare the actual changed files
+    // against the plan's filesExpectedToChange. Files outside the plan are
+    // flagged for the reviewer. Empty plan list (or no plan) → no flagging,
+    // no false positives. Reviewer ultimately decides what to do with drift.
+    if (Array.isArray(payload.files) && payload.files.length > 0) {
+      const expected = Array.isArray(taskBeforeReview?.plan?.filesExpectedToChange)
+        ? taskBeforeReview.plan.filesExpectedToChange
+        : [];
+      if (expected.length > 0) {
+        const drift = payload.files.filter((file) => !matchesAny(file, expected));
+        if (drift.length > 0) payload.scopeDrift = drift;
       }
     }
     this.taskBoard.appendEvent({
@@ -878,6 +891,33 @@ export class LocalToolFacade {
 function truncate(value, max) {
   if (typeof value !== 'string') return '';
   return value.length <= max ? value : value.slice(0, max);
+}
+
+/**
+ * Tiny path-matcher for §13 scope-drift detection. Supports:
+ *   - exact match: "src/parser.js" matches "src/parser.js"
+ *   - directory recursive: "src/parser/**" matches "src/parser/x" and
+ *     "src/parser/sub/y" (anything under src/parser/)
+ *   - directory prefix: "src/parser/" matches anything under src/parser/
+ *
+ * Patterns and paths are case-sensitive. No globstar in the middle of a
+ * pattern (e.g. "src/**\/test.js"); add later if a slice needs it.
+ */
+function matchesAny(file, patterns) {
+  if (typeof file !== 'string') return false;
+  for (const p of patterns) {
+    if (typeof p !== 'string' || p.length === 0) continue;
+    if (file === p) return true;
+    if (p.endsWith('/**')) {
+      const prefix = p.slice(0, -3);
+      if (prefix.length === 0) return true; // "/**" matches everything
+      if (file === prefix) return true;
+      if (file.startsWith(prefix + '/')) return true;
+    } else if (p.endsWith('/')) {
+      if (file.startsWith(p)) return true;
+    }
+  }
+  return false;
 }
 
 function defaultSpawnValidation(command, { cwd } = {}) {
