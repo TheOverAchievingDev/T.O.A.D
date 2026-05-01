@@ -2052,6 +2052,100 @@ test('merge_ready → done has no merge gate when no worktree exists (back-compa
   assert.equal(task.status, 'done');
 });
 
+// --- bugfix: validation_run idempotency must skip spawn on retry ---
+
+test('validation_run with the same idempotencyKey does NOT re-run spawn and returns the cached payload', async () => {
+  let spawnCallCount = 0;
+  const spawn = (command, opts) => {
+    spawnCallCount++;
+    return { exitCode: 0, stdout: 'pass', stderr: '', durationMs: 50 };
+  };
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    spawnValidation: spawn,
+    teamConfigRegistry: new (class {
+      teams = new Map();
+      registerTeam(c) { this.teams.set(c.teamId, c); }
+      getTeam(id) { return this.teams.get(id) || null; }
+      listTeams() { return Array.from(this.teams.values()); }
+    })(),
+  });
+  facade.teamConfigRegistry.registerTeam(new TeamConfig({ teamId: 'team-a', validation: { testCommand: 'npm test' } }));
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'idem-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'idem-1', subject: 'idem' },
+  });
+  // First call — runs the spawn, records a passed event
+  const first = await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN,
+    idempotencyKey: 'val-run-once',
+    actor: { teamId: 'team-a', agentId: 'tester', role: 'tester' },
+    args: { taskId: 'idem-1', kind: 'test' },
+  });
+  assert.equal(first.verdict, 'passed');
+  assert.equal(spawnCallCount, 1);
+
+  // Second call — same idempotencyKey. Spawn must not run again. Returned
+  // payload must equal the cached event's payload (not a fresh spawn result).
+  const second = await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN,
+    idempotencyKey: 'val-run-once',
+    actor: { teamId: 'team-a', agentId: 'tester', role: 'tester' },
+    args: { taskId: 'idem-1', kind: 'test' },
+  });
+  assert.equal(spawnCallCount, 1, 'spawn must not run again on idempotent retry');
+  assert.equal(second.verdict, 'passed');
+  // Projection still has exactly one validation event
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'idem-1' });
+  assert.equal(task.validations.length, 1);
+});
+
+test('validation_run with a different idempotencyKey runs the spawn again', async () => {
+  let spawnCallCount = 0;
+  const spawn = () => {
+    spawnCallCount++;
+    return { exitCode: 0, stdout: 'pass', stderr: '', durationMs: 50 };
+  };
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    spawnValidation: spawn,
+    teamConfigRegistry: new (class {
+      teams = new Map();
+      registerTeam(c) { this.teams.set(c.teamId, c); }
+      getTeam(id) { return this.teams.get(id) || null; }
+      listTeams() { return Array.from(this.teams.values()); }
+    })(),
+  });
+  facade.teamConfigRegistry.registerTeam(new TeamConfig({ teamId: 'team-a', validation: { testCommand: 'npm test' } }));
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'idem2-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'idem-2', subject: 'idem2' },
+  });
+  await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN,
+    idempotencyKey: 'run-a',
+    actor: { teamId: 'team-a', agentId: 'tester', role: 'tester' },
+    args: { taskId: 'idem-2', kind: 'test' },
+  });
+  await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN,
+    idempotencyKey: 'run-b',
+    actor: { teamId: 'team-a', agentId: 'tester', role: 'tester' },
+    args: { taskId: 'idem-2', kind: 'test' },
+  });
+  assert.equal(spawnCallCount, 2);
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'idem-2' });
+  assert.equal(task.validations.length, 2);
+});
+
 // --- §20: task_history_export ---
 
 test('task_history_export returns the projection, taskEvents in order, and runtimeEvents (when eventLog provided)', () => {

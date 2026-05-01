@@ -142,10 +142,21 @@ test('provider_claude_detected: fail when claude --version is missing', () => {
   assert.ok(typeof check.suggestedFix === 'string' && check.suggestedFix.length > 0);
 });
 
-test('provider_claude_authenticated: pass on loggedIn:true JSON', () => {
+test('provider_claude_authenticated: pass on loggedIn:true JSON, with email/authMethod/subscriptionType in evidence', () => {
   const spawn = fakeSpawn([
     ['claude --version', { exitCode: 0, stdout: '1.2.3', stderr: '', durationMs: 1 }],
-    ['auth status', { exitCode: 0, stdout: '{"loggedIn":true,"user":"kayden@example.com"}', stderr: '', durationMs: 2 }],
+    ['auth status', {
+      exitCode: 0,
+      stdout: JSON.stringify({
+        loggedIn: true,
+        authMethod: 'claude.ai',
+        apiProvider: 'firstParty',
+        email: 'kayden@example.com',
+        subscriptionType: 'max',
+      }),
+      stderr: '',
+      durationMs: 2,
+    }],
   ]);
   const report = runDiagnostics({
     teamConfigRegistry: new TeamConfigRegistry(),
@@ -154,6 +165,25 @@ test('provider_claude_authenticated: pass on loggedIn:true JSON', () => {
   });
   const check = findCheck(report, 'provider_claude_authenticated');
   assert.equal(check.status, 'pass');
+  assert.equal(check.evidence.email, 'kayden@example.com');
+  assert.equal(check.evidence.authMethod, 'claude.ai');
+  assert.equal(check.evidence.subscriptionType, 'max');
+});
+
+test('provider_claude_authenticated: still passes on a stripped-down loggedIn:true JSON (back-compat)', () => {
+  const spawn = fakeSpawn([
+    ['claude --version', { exitCode: 0, stdout: '1.2.3', stderr: '', durationMs: 1 }],
+    ['auth status', { exitCode: 0, stdout: '{"loggedIn":true}', stderr: '', durationMs: 2 }],
+  ]);
+  const report = runDiagnostics({
+    teamConfigRegistry: new TeamConfigRegistry(),
+    spawnValidation: spawn,
+    dbPath: '/tmp/x.db',
+  });
+  const check = findCheck(report, 'provider_claude_authenticated');
+  assert.equal(check.status, 'pass');
+  // Optional fields are absent (or null) but the check still passes
+  assert.equal(check.evidence.email, null);
 });
 
 test('provider_claude_authenticated: warning when not authenticated', () => {

@@ -169,7 +169,14 @@ function checkProviderAuthenticated(versionResult, spawnValidation) {
     });
   }
   if (parsed && parsed.loggedIn === true) {
-    return pass(id, label, { user: parsed.user || null });
+    return pass(id, label, {
+      // Real claude CLI returns `email`, not `user`. Keep the older key as a
+      // fallback for forward/back compat across CLI versions.
+      email: parsed.email || parsed.user || null,
+      authMethod: parsed.authMethod || null,
+      apiProvider: parsed.apiProvider || null,
+      subscriptionType: parsed.subscriptionType || null,
+    });
   }
   return warning(id, label, {
     parsed,

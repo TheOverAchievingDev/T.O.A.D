@@ -792,6 +792,19 @@ export class LocalToolFacade {
     if (!validKinds.includes(kind)) {
       throw new Error(`validation_run: unknown kind "${kind}"`);
     }
+    // Idempotency pre-flight: if an event with this idempotencyKey already
+    // exists, return its payload without re-running the spawn. The taskBoard
+    // would dedup the appendEvent anyway, but doing it here prevents the
+    // wasted spawn (and avoids returning a fresh-spawn payload that doesn't
+    // match the persisted event).
+    if (idempotencyKey) {
+      const existingTask = this.taskBoard.getTask({ teamId: actor.teamId, taskId });
+      const cached = Array.isArray(existingTask?.history)
+        ? existingTask.history.find((e) => e?.idempotencyKey === idempotencyKey
+            && e?.eventType === TASK_EVENT_TYPES.VALIDATION_RUN)
+        : null;
+      if (cached) return cached.payload;
+    }
     // Resolve the command: explicit override → team config → null
     let command = typeof args.command === 'string' && args.command.length > 0 ? args.command : null;
     if (!command && this.teamConfigRegistry) {
