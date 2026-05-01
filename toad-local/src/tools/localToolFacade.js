@@ -500,6 +500,25 @@ export class LocalToolFacade {
     if (typeof args.cwd === 'string' && args.cwd.length > 0) input.cwd = args.cwd;
     if (args.env && typeof args.env === 'object' && !Array.isArray(args.env)) input.env = args.env;
     if (typeof args.providerId === 'string' && args.providerId.length > 0) input.providerId = args.providerId;
+
+    // §8 slice 2: enforce worktree cwd when args.taskId points to a task with
+    // a created worktree. Caller can either omit cwd (we auto-set) or pass the
+    // exact worktree path. Mismatch is a hard error so a rogue agent can't
+    // operate outside its task isolation.
+    if (typeof args.taskId === 'string' && args.taskId.length > 0) {
+      const task = this.taskBoard.getTask({ teamId, taskId: args.taskId });
+      const wtPath = task?.worktree?.status === 'created' ? task.worktree.path : null;
+      if (wtPath) {
+        if (input.cwd && input.cwd !== wtPath) {
+          throw new Error(
+            `agent_launch: cwd ${input.cwd} must match task worktree ${wtPath} for task ${args.taskId}`,
+          );
+        }
+        input.cwd = wtPath;
+      }
+      input.taskId = args.taskId;
+    }
+
     return this.launchAgent(input);
   }
 

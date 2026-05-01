@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-05-01 local session (worktree-per-task slice 1 — checklist §8)
+Last updated: 2026-05-01 local session (worktree-per-task slice 2 — checklist §8)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,29 @@ Important files:
 
 ## Latest Completed Slices
 
-### 0. Worktree per Task — Checklist §8, slice 1 (latest)
+### 0. Worktree per Task — Checklist §8, slice 2 (latest)
+
+No new plan doc — this is the cwd-enforcement half of the §8 plan written for slice 1.
+
+When an `agent_launch` call carries a `taskId` and that task's projection shows `task.worktree.status === 'created'`, the facade now enforces that the runtime's cwd is the worktree path:
+
+- caller omits `cwd` → auto-set to `task.worktree.path`,
+- caller passes a `cwd` that matches → allow,
+- caller passes a `cwd` that doesn't match → throw `agent_launch: cwd <X> must match task worktree <Y> for task <Z>`,
+- no `taskId` on the call OR task has no created worktree → no enforcement (back-compat).
+
+Modified files:
+
+- `src/tools/localToolFacade.js` — `#agentLaunch` looks up the task, derives `wtPath`, and either auto-sets or validates `input.cwd`. `args.taskId` is also propagated into `input.taskId` so future slices (§11 session→task pinning, §13 failure detector) can correlate runtimes to tasks via the launch input.
+- `src/mcp/localToolDefinitions.js` — `agent_launch` tool def gains `taskId: { type: 'string', minLength: 1 }` and updated description noting the cwd enforcement behavior.
+- `test/localToolFacade.test.js` — 5 new tests (now 64 total): auto-set, matching cwd accepted, conflicting cwd rejected, no-taskId unconstrained, taskId-without-worktree leaves cwd unchanged.
+- `docs/CHECKLIST_GAP_MATRIX.md` — §8 evidence updated with slice 2 row.
+
+Rationale: rogue or confused agents shouldn't be able to operate outside their task's isolated worktree. Hard error rather than silent override so the operator sees the contradiction and can fix the call site. Auto-set is the convenience path for honest callers who didn't track the worktree path themselves.
+
+Tests pass: 34 backend test files, 356 individual tests, 0 fail.
+
+### 1. Worktree per Task — Checklist §8, slice 1
 
 Plan file:
 
@@ -1618,8 +1640,9 @@ Anchored to the checklist's own priority order (full detail in `docs/CHECKLIST_G
 5. ✅ Per-transition role guards (§3 × §5) — done. `TRANSITION_ROLES` map; `validateTaskStatusTransition` accepts `role`; `merge_ready → done` lead/human only; `rejected → backlog` and `blocked → *` architect/lead/human only.
 6. ✅ `tool_call_denied` event emission (§26) — done. Best-effort runtime event on every role-authority denial. §26 fully done.
 7. ✅ Worktree-per-task slice 1 (§8) — done. Creation half: orchestrator runs `git worktree add` on `ready → planned`; projection picks up `task.worktree`.
-8. **Worktree slices 2/3/4 — NEXT.** Cwd enforcement on `agent_launch`, removal on `done`/`rejected`, explicit `task.baseRef`. Each is a small slice.
-9. **Diff tracking (§7 finished) → merge workflow (§19).** Now unblocked by §8 slice 1.
+8. ✅ Worktree-per-task slice 2 (§8) — done. `agent_launch` cwd enforcement: auto-set or reject based on `task.worktree.path`.
+9. **Worktree slices 3/4 — NEXT.** Removal on `done`/`rejected`, explicit `task.baseRef` from operator.
+10. **Diff tracking (§7 finished) → merge workflow (§19).** Now unblocked by §8.
 10. Smaller follow-ups: failure detection (§13), WIP limits (§9), dependency enforcement (§10), notifications, knowledge propagation.
 
 Parked / out of scope now:

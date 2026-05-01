@@ -1855,6 +1855,139 @@ test('LocalToolFacade does not trigger worktree creation when no manager is conf
   assert.equal(task.worktree, null);
 });
 
+// --- §8 slice 2: agent_launch cwd enforcement against task worktree ---
+
+function setupTaskWithWorktree(facade, taskId = 'cwd-1') {
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: `${taskId}-create`,
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId, subject: 'cwd', status: 'pending' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: `${taskId}-ready`,
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId, status: 'ready' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_PROPOSE,
+    idempotencyKey: `${taskId}-plan`,
+    actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+    args: { taskId, summary: 'do it' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_PLAN_APPROVE,
+    idempotencyKey: `${taskId}-approve`,
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: `${taskId}-planned`,
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId, status: 'planned' },
+  });
+}
+
+function makeWorktreeFacade({ workingPath = '/tmp/wt-cwd' } = {}) {
+  const launches = [];
+  const fakeWorktreeManager = {
+    createForTask({ teamId, taskId }) {
+      return {
+        status: 'created',
+        path: `${workingPath}/${teamId}/${taskId}`,
+        branch: `toad/${teamId}/${taskId}`,
+        baseRef: 'abc123',
+        createdAt: '2026-05-01T00:00:00.000Z',
+      };
+    },
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    worktreeManager: fakeWorktreeManager,
+    launchAgent: async (input) => {
+      launches.push(input);
+      return { runtimeId: input.runtimeId, status: 'running' };
+    },
+  });
+  return { facade, launches };
+}
+
+test('agent_launch auto-sets cwd to worktree path when caller omits cwd', async () => {
+  const { facade, launches } = makeWorktreeFacade();
+  setupTaskWithWorktree(facade, 'cwd-1');
+  await facade.execute({
+    commandName: COMMANDS.AGENT_LAUNCH,
+    idempotencyKey: 'al-1',
+    actor: { teamId: 'team-a', agentId: 'operator', role: 'human' },
+    args: { teamId: 'team-a', agentId: 'lead', runtimeId: 'r-1', command: 'claude', taskId: 'cwd-1' },
+  });
+  assert.equal(launches.length, 1);
+  assert.equal(launches[0].cwd, '/tmp/wt-cwd/team-a/cwd-1');
+});
+
+test('agent_launch accepts a cwd that matches the task worktree path', async () => {
+  const { facade, launches } = makeWorktreeFacade();
+  setupTaskWithWorktree(facade, 'cwd-2');
+  await facade.execute({
+    commandName: COMMANDS.AGENT_LAUNCH,
+    idempotencyKey: 'al-2',
+    actor: { teamId: 'team-a', agentId: 'operator', role: 'human' },
+    args: { teamId: 'team-a', agentId: 'lead', runtimeId: 'r-2', command: 'claude', taskId: 'cwd-2', cwd: '/tmp/wt-cwd/team-a/cwd-2' },
+  });
+  assert.equal(launches.length, 1);
+  assert.equal(launches[0].cwd, '/tmp/wt-cwd/team-a/cwd-2');
+});
+
+test('agent_launch rejects a cwd that conflicts with the task worktree path', async () => {
+  const { facade, launches } = makeWorktreeFacade();
+  setupTaskWithWorktree(facade, 'cwd-3');
+  await assert.rejects(
+    () => facade.execute({
+      commandName: COMMANDS.AGENT_LAUNCH,
+      idempotencyKey: 'al-3',
+      actor: { teamId: 'team-a', agentId: 'operator', role: 'human' },
+      args: { teamId: 'team-a', agentId: 'lead', runtimeId: 'r-3', command: 'claude', taskId: 'cwd-3', cwd: '/elsewhere' },
+    }),
+    /agent_launch: cwd .* must match task worktree/,
+  );
+  assert.equal(launches.length, 0);
+});
+
+test('agent_launch with no taskId is unconstrained (back-compat)', async () => {
+  const { facade, launches } = makeWorktreeFacade();
+  // No task / no worktree on the call
+  await facade.execute({
+    commandName: COMMANDS.AGENT_LAUNCH,
+    idempotencyKey: 'al-4',
+    actor: { teamId: 'team-a', agentId: 'operator', role: 'human' },
+    args: { teamId: 'team-a', agentId: 'lead', runtimeId: 'r-4', command: 'claude', cwd: '/anywhere' },
+  });
+  assert.equal(launches.length, 1);
+  assert.equal(launches[0].cwd, '/anywhere');
+});
+
+test('agent_launch with taskId for a task that has no created worktree leaves cwd unchanged', async () => {
+  const { facade, launches } = makeWorktreeFacade();
+  // Task that never reached planned — no worktree
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'cwd-5-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'cwd-5', subject: 'no wt' },
+  });
+  await facade.execute({
+    commandName: COMMANDS.AGENT_LAUNCH,
+    idempotencyKey: 'al-5',
+    actor: { teamId: 'team-a', agentId: 'operator', role: 'human' },
+    args: { teamId: 'team-a', agentId: 'lead', runtimeId: 'r-5', command: 'claude', taskId: 'cwd-5', cwd: '/anywhere' },
+  });
+  assert.equal(launches.length, 1);
+  assert.equal(launches[0].cwd, '/anywhere');
+});
+
 test('LocalToolFacade emits tool_call_denied event when role authority rejects a call', () => {
   const events = [];
   const eventLog = {

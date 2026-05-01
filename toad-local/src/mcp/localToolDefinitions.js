@@ -220,7 +220,7 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
   makeTool({
     name: COMMANDS.AGENT_LAUNCH,
     title: 'Launch Agent Runtime',
-    description: 'Spawn a Claude (or other) CLI runtime under the supervisor and register the adapter so the runtime joins the orchestrator event loop.',
+    description: 'Spawn a Claude (or other) CLI runtime under the supervisor and register the adapter so the runtime joins the orchestrator event loop. When `taskId` references a task with a created worktree, `cwd` is auto-set to the worktree path; an explicit `cwd` that conflicts with the worktree is rejected.',
     required: ['teamId', 'agentId', 'runtimeId', 'command'],
     properties: {
       teamId: { type: 'string', minLength: 1 },
@@ -231,6 +231,7 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
       cwd: { type: 'string', minLength: 1 },
       env: { type: 'object', additionalProperties: { type: 'string' } },
       providerId: { type: 'string', minLength: 1 },
+      taskId: { type: 'string', minLength: 1 },
     },
   }),
   makeTool({
