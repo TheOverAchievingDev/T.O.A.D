@@ -1639,3 +1639,119 @@ test('LocalToolFacade.diagnostics_run is callable by every role (read-only)', as
     assert.ok(Array.isArray(report.checks), `role ${role} did not get checks`);
   }
 });
+
+test('LocalToolFacade blocks merge_ready → done for non-lead roles', async () => {
+  const spawnFn = (cmd) => cmd.includes('claude') ? { exitCode: 0, stdout: '1.0', stderr: '', durationMs: 1 } : { exitCode: 0, stdout: 'pass', stderr: '', durationMs: 1 };
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  const registry = new (class {
+    teams = new Map();
+    registerTeam(c) { this.teams.set(c.teamId, c); }
+    getTeam(id) { return this.teams.get(id) || null; }
+    listTeams() { return Array.from(this.teams.values()); }
+  })();
+  registry.registerTeam(new TeamConfig({ teamId: 'team-a', validation: { testCommand: 'npm test' } }));
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    teamConfigRegistry: registry,
+    spawnValidation: spawnFn,
+  });
+  // Walk a task to merge_ready as lead (privileged setup)
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'rg-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'rg-1', subject: 'role-guard', status: 'pending' },
+  });
+  for (const [id, status] of [
+    ['rg-2', 'in_progress'],
+    ['rg-3', 'review'],
+    ['rg-4', 'testing'],
+  ]) {
+    facade.execute({
+      commandName: COMMANDS.TASK_UPDATE,
+      idempotencyKey: id,
+      actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+      args: { taskId: 'rg-1', status },
+    });
+  }
+  await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN,
+    idempotencyKey: 'rg-val',
+    actor: { teamId: 'team-a', agentId: 'tester-1', role: 'tester' },
+    args: { taskId: 'rg-1', kind: 'test' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'rg-mr',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'rg-1', status: 'merge_ready' },
+  });
+  // Developer cannot complete the merge
+  assert.throws(
+    () => facade.execute({
+      commandName: COMMANDS.TASK_UPDATE,
+      idempotencyKey: 'rg-deny',
+      actor: { teamId: 'team-a', agentId: 'dev-1', role: 'developer' },
+      args: { taskId: 'rg-1', status: 'done' },
+    }),
+    /role developer cannot perform merge_ready . done/,
+  );
+  // Lead can
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'rg-allow',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'rg-1', status: 'done' },
+  });
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'rg-1' });
+  assert.equal(task.status, 'done');
+});
+
+test('LocalToolFacade blocks blocked → in_progress for developer/reviewer/tester', async () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'b-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'b-1', subject: 'block-guard', status: 'pending' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'b-ip',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'b-1', status: 'in_progress' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'b-block',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'b-1', status: 'blocked' },
+  });
+  // Developer + tester both have task_update access via role-authority but should be
+  // blocked by the per-transition guard. (Reviewer can't call task_update at all —
+  // role-authority denies them at a higher layer; they're not part of this test.)
+  for (const role of ['developer', 'tester']) {
+    assert.throws(
+      () => facade.execute({
+        commandName: COMMANDS.TASK_UPDATE,
+        idempotencyKey: `b-deny-${role}`,
+        actor: { teamId: 'team-a', agentId: `${role}-1`, role },
+        args: { taskId: 'b-1', status: 'in_progress' },
+      }),
+      /role .* cannot perform blocked . in_progress/,
+    );
+  }
+  // Architect can unblock
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE,
+    idempotencyKey: 'b-arch',
+    actor: { teamId: 'team-a', agentId: 'arch-1', role: 'architect' },
+    args: { taskId: 'b-1', status: 'in_progress' },
+  });
+  const task = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'b-1' });
+  assert.equal(task.status, 'in_progress');
+});

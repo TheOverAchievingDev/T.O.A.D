@@ -95,3 +95,65 @@ test('ALLOWED_TRANSITIONS table includes both 10-state and legacy keys', () => {
     assert.ok(Array.isArray(ALLOWED_TRANSITIONS[k]), `expected legacy key ${k}`);
   }
 });
+
+// --- per-transition role guards ---
+
+test('merge_ready → done is restricted to lead / human', () => {
+  for (const role of ['lead', 'human']) {
+    assert.equal(validateTaskStatusTransition({ from: 'merge_ready', to: 'done', role }).ok, true);
+  }
+  for (const role of ['developer', 'reviewer', 'tester', 'architect']) {
+    const r = validateTaskStatusTransition({ from: 'merge_ready', to: 'done', role });
+    assert.equal(r.ok, false, `expected ${role} to be rejected`);
+    assert.match(r.reason, /role .*cannot/i);
+  }
+});
+
+test('rejected → backlog is restricted to architect / lead / human', () => {
+  for (const role of ['architect', 'lead', 'human']) {
+    assert.equal(validateTaskStatusTransition({ from: 'rejected', to: 'backlog', role }).ok, true);
+  }
+  for (const role of ['developer', 'reviewer', 'tester']) {
+    const r = validateTaskStatusTransition({ from: 'rejected', to: 'backlog', role });
+    assert.equal(r.ok, false, `expected ${role} to be rejected`);
+  }
+});
+
+test('blocked → ready/planned/in_progress is restricted to architect / lead / human', () => {
+  for (const target of ['ready', 'planned', 'in_progress']) {
+    for (const role of ['architect', 'lead', 'human']) {
+      assert.equal(validateTaskStatusTransition({ from: 'blocked', to: target, role }).ok, true);
+    }
+    for (const role of ['developer', 'reviewer', 'tester']) {
+      const r = validateTaskStatusTransition({ from: 'blocked', to: target, role });
+      assert.equal(r.ok, false, `expected ${role} to be rejected for blocked → ${target}`);
+    }
+  }
+});
+
+test('unguarded transitions accept any role', () => {
+  // ready → planned has no role guard; every role can do it
+  for (const role of ['developer', 'reviewer', 'tester', 'architect', 'lead', 'human']) {
+    assert.equal(validateTaskStatusTransition({ from: 'ready', to: 'planned', role }).ok, true);
+  }
+  // in_progress → review same
+  for (const role of ['developer', 'reviewer', 'tester', 'architect', 'lead', 'human']) {
+    assert.equal(validateTaskStatusTransition({ from: 'in_progress', to: 'review', role }).ok, true);
+  }
+});
+
+test('missing role keeps backward compatibility (legacy call sites without role tagging)', () => {
+  // No role provided — should not block guarded transitions
+  assert.equal(validateTaskStatusTransition({ from: 'merge_ready', to: 'done' }).ok, true);
+  assert.equal(validateTaskStatusTransition({ from: 'blocked', to: 'in_progress' }).ok, true);
+  assert.equal(validateTaskStatusTransition({ from: 'rejected', to: 'backlog' }).ok, true);
+});
+
+test('role guard does not bypass the state-machine table — illegal moves still rejected even for lead', () => {
+  // Even lead/human cannot do an illegal transition like done → in_progress
+  for (const role of ['lead', 'human']) {
+    const r = validateTaskStatusTransition({ from: 'done', to: 'in_progress', role });
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /not an allowed transition/);
+  }
+});

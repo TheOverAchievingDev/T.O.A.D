@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-04-30 local session (diagnostics — checklist §25)
+Last updated: 2026-05-01 local session (per-transition role guards — checklist §3 × §5)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,35 @@ Important files:
 
 ## Latest Completed Slices
 
-### 0. Diagnostics — Checklist §25 (latest)
+### 0. Per-Transition Role Guards — Checklist §3 × §5 (latest)
+
+No new plan doc — this slice is a small follow-up that was flagged as "future tightening" in the gap matrix entry for both §3 and §5.
+
+Closes the seam between the state machine (§3) and role authority (§5/§26): the state-machine table previously said `merge_ready → done` was a legal move, but had no way to express "only the lead should sign off the merge". This slice adds that.
+
+Modified files:
+
+- `src/task/taskLifecycle.js` — new `TRANSITION_ROLES` map. `validateTaskStatusTransition({ from, to, role })` now checks role against the allowlist when both `role` is provided AND a guard exists for `from->to`. Missing role bypasses the guard (back-compat with legacy call sites that don't tag `actor.role`, consistent with `roleAuthority.js`'s permissive default).
+- `src/security/roleAuthority.js` — `task_update` added to architect's allowlist. Architect needs to drive task status changes for the unblock/recovery transitions the new guards reserve to architect/lead/human.
+- `src/tools/localToolFacade.js` — `#taskUpdate` now passes `actor.role` into `validateTaskStatusTransition`. The role guard sits inside the existing transition-validation step; no new code path.
+- `test/taskLifecycle.test.js` — 6 new tests (now 14 total): merge_ready→done allowed for lead/human, denied for others; rejected→backlog allowed for architect/lead/human; blocked→* allowed for architect/lead/human; unguarded transitions accept any role; missing role bypasses guards (back-compat); illegal moves still rejected even with privileged role.
+- `test/localToolFacade.test.js` — 2 new tests (now 53 total): merge_ready→done blocked for developer, allowed for lead; blocked→in_progress blocked for developer/tester, allowed for architect.
+- `docs/CHECKLIST_GAP_MATRIX.md` — §3 evidence updated; §5 flipped from REAL (partial) to REAL.
+
+Guard table:
+
+| Transition | Allowed roles |
+|---|---|
+| `merge_ready → done` | lead, human |
+| `rejected → backlog` | architect, lead, human |
+| `blocked → ready` | architect, lead, human |
+| `blocked → planned` | architect, lead, human |
+| `blocked → in_progress` | architect, lead, human |
+| (any other allowed transition) | any role with `task_update` in allowlist |
+
+Tests pass: 31 backend test files, 317 individual tests, 0 fail.
+
+### 1. Diagnostics — Checklist §25 (previous)
 
 Plan file:
 
@@ -1531,8 +1559,8 @@ Anchored to the checklist's own priority order (full detail in `docs/CHECKLIST_G
 2. ✅ Test artifacts + CI gates (§6 + §18) — done. Validation config on TeamConfig; `validation_run` MCP tool; `task.validations[]` projection; `testing → merge_ready` gated on passing test verdict.
 3. ✅ Plan-before-code (§2) — done. Three plan tools, projection, gate, self-approval prevention.
 4. ✅ Diagnostics (§25) — done. `diagnostics_run` read-only MCP tool runs eight self-checks (state-machine deny + allow paths, role-authority developer-deny + unknown-role-deny, validation-commands-configured per team, claude CLI detected, claude CLI authenticated, dbpath persistence) and returns `{ checks: [{ id, label, status, evidence, suggestedFix? }], summary: { pass, warning, fail } }`. Available to every role.
-5. **Worktree enforcement (§8) → diff tracking (§7 finished) → merge workflow (§19) — NEXT.** Bigger lift because of git integration. Diagnostics already has placeholder slots for `worktree_present_per_task` once §8 lands.
-6. **Per-transition role guards.** Now that roles exist, extend `validateTaskStatusTransition` to check role against the move (e.g. only `lead` can do `merge_ready → done`). Cleanly stacks on the state machine + role auth slices.
+5. ✅ Per-transition role guards (§3 × §5) — done. `TRANSITION_ROLES` map; `validateTaskStatusTransition` accepts `role`; `merge_ready → done` lead/human only; `rejected → backlog` and `blocked → *` architect/lead/human only.
+6. **Worktree enforcement (§8) → diff tracking (§7 finished) → merge workflow (§19) — NEXT.** Bigger lift because of git integration. Diagnostics already has placeholder slots for `worktree_present_per_task` once §8 lands.
 7. **`tool_call_denied` event emission.** §26 says every denied tool call should be logged. Currently the throw bubbles to `/api/call` but doesn't land in `runtime_events`. Small follow-up.
 8. Smaller follow-ups: failure detection (§13), WIP limits (§9), dependency enforcement (§10), notifications, knowledge propagation.
 

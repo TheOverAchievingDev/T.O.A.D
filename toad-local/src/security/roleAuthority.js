@@ -35,6 +35,7 @@ export const ROLE_TOOLS = Object.freeze({
   architect: Object.freeze([
     ...COMMON_READ_TOOLS,
     'task_create',
+    'task_update',
     'cross_team_send',
     'review_request',
     'review_decide',

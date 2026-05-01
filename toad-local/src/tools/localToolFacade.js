@@ -167,7 +167,7 @@ export class LocalToolFacade {
     if (typeof args.status === 'string') {
       const current = this.taskBoard.getTask({ teamId: actor.teamId, taskId });
       const fromStatus = current?.status ?? null;
-      const validation = validateTaskStatusTransition({ from: fromStatus, to: args.status });
+      const validation = validateTaskStatusTransition({ from: fromStatus, to: args.status, role: actor.role });
       if (!validation.ok) {
         throw new Error(`task_update: ${validation.reason}`);
       }
