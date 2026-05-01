@@ -97,6 +97,7 @@ export function projectTask(events) {
     ownerId: null,
     status: TASK_STATUS.PENDING,
     reviewState: REVIEW_STATE.NONE,
+    review: null,
     comments: [],
     history: [],
     createdAt: ordered[0].createdAt,
@@ -132,6 +133,17 @@ export function projectTask(events) {
     }
     if (event.eventType === TASK_EVENT_TYPES.REVIEW_REQUESTED) {
       task.reviewState = REVIEW_STATE.REVIEW;
+      task.review = {
+        state: 'requested',
+        reviewerId: typeof event.payload.reviewerId === 'string' ? event.payload.reviewerId : null,
+        summary: typeof event.payload.summary === 'string' ? event.payload.summary : null,
+        diff: typeof event.payload.diff === 'string' ? event.payload.diff : null,
+        files: Array.isArray(event.payload.files)
+          ? event.payload.files.filter((f) => typeof f === 'string')
+          : [],
+        requestedBy: event.actorId,
+        requestedAt: event.createdAt,
+      };
     }
     if (event.eventType === TASK_EVENT_TYPES.REVIEW_STARTED) {
       task.reviewState = REVIEW_STATE.REVIEW;
@@ -142,6 +154,19 @@ export function projectTask(events) {
       if (event.payload.decision === 'changes_requested') {
         task.status = TASK_STATUS.PENDING;
       }
+      task.review = {
+        ...(task.review || {}),
+        state: 'decided',
+        decision: typeof event.payload.decision === 'string' ? event.payload.decision : null,
+        reason: typeof event.payload.reason === 'string' ? event.payload.reason : null,
+        feedback: Array.isArray(event.payload.feedback)
+          ? event.payload.feedback.filter(
+              (f) => f && typeof f.file === 'string' && typeof f.comment === 'string',
+            ).map((f) => ({ file: f.file, comment: f.comment }))
+          : [],
+        decidedBy: event.actorId,
+        decidedAt: event.createdAt,
+      };
     }
   }
 

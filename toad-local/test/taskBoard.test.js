@@ -81,6 +81,82 @@ test('review decision is derived from events', () => {
   assert.equal(task.status, TASK_STATUS.COMPLETED);
 });
 
+test('projectTask collects review.diff/files/summary into task.review on REVIEW_REQUESTED', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'parser',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead',
+    payload: { subject: 'Build parser', ownerId: 'worker-1' },
+  });
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'parser',
+    eventType: TASK_EVENT_TYPES.REVIEW_REQUESTED,
+    actorId: 'worker-1',
+    payload: {
+      reviewerId: 'lead',
+      summary: 'Implements LL(1) parser',
+      diff: '--- a/parser.js\n+++ b/parser.js\n@@ -0,0 +1 @@\n+export const parse = ()=>{};',
+      files: ['parser.js', 'parser.test.js'],
+    },
+  });
+
+  const task = board.getTask({ teamId: 'team-a', taskId: 'parser' });
+  assert.ok(task.review, 'task.review should be populated by REVIEW_REQUESTED');
+  assert.equal(task.review.state, 'requested');
+  assert.equal(task.review.reviewerId, 'lead');
+  assert.equal(task.review.summary, 'Implements LL(1) parser');
+  assert.match(task.review.diff, /export const parse/);
+  assert.deepEqual(task.review.files, ['parser.js', 'parser.test.js']);
+  assert.equal(task.review.requestedBy, 'worker-1');
+  assert.ok(task.review.requestedAt);
+});
+
+test('projectTask merges review feedback into task.review on REVIEW_DECIDED', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'parser',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead',
+    payload: { subject: 'Build parser' },
+  });
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'parser',
+    eventType: TASK_EVENT_TYPES.REVIEW_REQUESTED,
+    actorId: 'worker-1',
+    payload: { reviewerId: 'lead', diff: '--- a/x\n+++ b/x', files: ['x'] },
+  });
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'parser',
+    eventType: TASK_EVENT_TYPES.REVIEW_DECIDED,
+    actorId: 'lead',
+    payload: {
+      decision: 'changes_requested',
+      reason: 'Naming nits',
+      feedback: [
+        { file: 'parser.js', comment: 'Rename `parse` to `parseProgram`' },
+        { file: 'parser.test.js', comment: 'Add an empty-input case' },
+      ],
+    },
+  });
+
+  const task = board.getTask({ teamId: 'team-a', taskId: 'parser' });
+  assert.equal(task.review.state, 'decided');
+  assert.equal(task.review.decision, 'changes_requested');
+  assert.equal(task.review.reason, 'Naming nits');
+  assert.equal(task.review.feedback.length, 2);
+  assert.equal(task.review.feedback[0].file, 'parser.js');
+  assert.match(task.review.feedback[0].comment, /parseProgram/);
+  // Original requested fields persist
+  assert.match(task.review.diff, /---/);
+  assert.deepEqual(task.review.files, ['x']);
+});
+
 test('task events are idempotent by idempotencyKey', () => {
   const board = new InMemoryTaskBoard();
   const first = board.appendEvent({

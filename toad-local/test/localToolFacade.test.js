@@ -500,6 +500,113 @@ test('LocalToolFacade rejects agent_launch when no launchAgent callback is confi
   );
 });
 
+test('LocalToolFacade review_request stores diff, summary, files in the task event payload', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+
+  // Seed a task first
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'create-x',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'task-x', subject: 'X' },
+  });
+
+  const task = facade.execute({
+    commandName: COMMANDS.REVIEW_REQUEST,
+    idempotencyKey: 'rev-req-1',
+    actor: { teamId: 'team-a', agentId: 'worker-1' },
+    args: {
+      taskId: 'task-x',
+      reviewerId: 'lead',
+      summary: 'Did the thing',
+      diff: '--- a/x.js\n+++ b/x.js\n@@ -0,0 +1 @@\n+1',
+      files: ['x.js'],
+    },
+  });
+
+  assert.equal(task.review.state, 'requested');
+  assert.equal(task.review.reviewerId, 'lead');
+  assert.equal(task.review.summary, 'Did the thing');
+  assert.match(task.review.diff, /\+1/);
+  assert.deepEqual(task.review.files, ['x.js']);
+});
+
+test('LocalToolFacade review_decide stores per-file feedback', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'create-y',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'task-y', subject: 'Y' },
+  });
+  facade.execute({
+    commandName: COMMANDS.REVIEW_REQUEST,
+    idempotencyKey: 'rev-req-y',
+    actor: { teamId: 'team-a', agentId: 'worker-1' },
+    args: { taskId: 'task-y', diff: '--- a\n+++ b', files: ['y.js'] },
+  });
+
+  const task = facade.execute({
+    commandName: COMMANDS.REVIEW_DECIDE,
+    idempotencyKey: 'rev-dec-y',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: {
+      taskId: 'task-y',
+      decision: 'changes_requested',
+      reason: 'Naming',
+      feedback: [{ file: 'y.js', comment: 'rename to z.js' }],
+    },
+  });
+
+  assert.equal(task.review.state, 'decided');
+  assert.equal(task.review.decision, 'changes_requested');
+  assert.equal(task.review.feedback.length, 1);
+  assert.equal(task.review.feedback[0].file, 'y.js');
+  assert.match(task.review.feedback[0].comment, /rename/);
+});
+
+test('LocalToolFacade review_list returns tasks with active reviews including the diff', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  // Two tasks: one with an open review, one without
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'c1',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'open-rev', subject: 'open' },
+  });
+  facade.execute({
+    commandName: COMMANDS.REVIEW_REQUEST,
+    idempotencyKey: 'r1',
+    actor: { teamId: 'team-a', agentId: 'worker-1' },
+    args: { taskId: 'open-rev', diff: 'd', files: ['a.js'] },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'c2',
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { taskId: 'no-rev', subject: 'no review' },
+  });
+
+  const list = facade.execute({
+    commandName: COMMANDS.REVIEW_LIST,
+    actor: { teamId: 'team-a', agentId: 'operator' },
+  });
+
+  assert.equal(list.length, 1);
+  assert.equal(list[0].taskId, 'open-rev');
+  assert.equal(list[0].review.state, 'requested');
+  assert.equal(list[0].review.diff, 'd');
+});
+
 test('LocalToolFacade routes runtime_send_input to the adapter\'s sendTurn', async () => {
   const turns = [];
   const adapter = {

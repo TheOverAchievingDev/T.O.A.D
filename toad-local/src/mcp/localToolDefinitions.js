@@ -120,23 +120,45 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
   makeTool({
     name: COMMANDS.REVIEW_REQUEST,
     title: 'Request Review',
-    description: 'Request review for a task on the current team task board.',
+    description: 'Request review for a task. Optionally attach diff content, a summary, and the list of files touched.',
     required: ['taskId'],
     properties: {
       taskId: { type: 'string', minLength: 1 },
       reviewerId: { type: 'string', minLength: 1 },
+      summary: { type: 'string' },
+      diff: { type: 'string' },
+      files: { type: 'array', items: { type: 'string', minLength: 1 } },
     },
   }),
   makeTool({
     name: COMMANDS.REVIEW_DECIDE,
     title: 'Decide Review',
-    description: 'Approve a task review or request changes.',
+    description: 'Approve a task review or request changes. Optionally attach per-file feedback comments.',
     required: ['taskId', 'decision'],
     properties: {
       taskId: { type: 'string', minLength: 1 },
       decision: { type: 'string', enum: ['approved', 'changes_requested'] },
       reason: { type: 'string' },
+      feedback: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['file', 'comment'],
+          properties: {
+            file: { type: 'string', minLength: 1 },
+            comment: { type: 'string', minLength: 1 },
+          },
+        },
+      },
     },
+  }),
+  makeTool({
+    name: COMMANDS.REVIEW_LIST,
+    title: 'List Open Reviews',
+    description: 'List tasks on the current team that have an active review request (diff content included).',
+    required: [],
+    properties: {},
   }),
   makeTool({
     name: COMMANDS.TASK_LIST,

@@ -6,6 +6,7 @@ export const COMMANDS = Object.freeze({
   TASK_LIST: 'task_list',
   REVIEW_REQUEST: 'review_request',
   REVIEW_DECIDE: 'review_decide',
+  REVIEW_LIST: 'review_list',
   AGENT_STATUS: 'agent_status',
   APPROVAL_LIST: 'approval_list',
   APPROVAL_RESPOND: 'approval_respond',

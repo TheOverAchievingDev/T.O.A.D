@@ -45,6 +45,8 @@ export class LocalToolFacade {
         return this.#reviewRequest(actor, command.idempotencyKey, args);
       case COMMANDS.REVIEW_DECIDE:
         return this.#reviewDecide(actor, command.idempotencyKey, args);
+      case COMMANDS.REVIEW_LIST:
+        return this.#reviewList(actor);
       case COMMANDS.TASK_LIST:
         return this.taskBoard.listTasks({ teamId: actor.teamId });
       case COMMANDS.AGENT_STATUS:
@@ -160,15 +162,21 @@ export class LocalToolFacade {
 
   #reviewRequest(actor, idempotencyKey, args) {
     const taskId = requireString(args.taskId, 'args.taskId');
+    const payload = {};
+    if (typeof args.reviewerId === 'string' && args.reviewerId.length > 0) payload.reviewerId = args.reviewerId;
+    if (typeof args.summary === 'string' && args.summary.length > 0) payload.summary = args.summary;
+    if (typeof args.diff === 'string' && args.diff.length > 0) payload.diff = args.diff;
+    if (Array.isArray(args.files)) {
+      const cleaned = args.files.filter((f) => typeof f === 'string' && f.length > 0);
+      if (cleaned.length > 0) payload.files = cleaned;
+    }
     this.taskBoard.appendEvent({
       teamId: actor.teamId,
       taskId,
       idempotencyKey,
       eventType: TASK_EVENT_TYPES.REVIEW_REQUESTED,
       actorId: actor.agentId,
-      payload: {
-        ...(typeof args.reviewerId === 'string' ? { reviewerId: args.reviewerId } : {}),
-      },
+      payload,
     });
     return this.taskBoard.getTask({ teamId: actor.teamId, taskId });
   }
@@ -179,18 +187,28 @@ export class LocalToolFacade {
     if (decision !== 'approved' && decision !== 'changes_requested') {
       throw new Error(`unsupported review decision: ${decision}`);
     }
+    const payload = { decision };
+    if (typeof args.reason === 'string' && args.reason.length > 0) payload.reason = args.reason;
+    if (Array.isArray(args.feedback)) {
+      const cleaned = args.feedback
+        .filter((f) => f && typeof f.file === 'string' && typeof f.comment === 'string')
+        .map((f) => ({ file: f.file, comment: f.comment }));
+      if (cleaned.length > 0) payload.feedback = cleaned;
+    }
     this.taskBoard.appendEvent({
       teamId: actor.teamId,
       taskId,
       idempotencyKey,
       eventType: TASK_EVENT_TYPES.REVIEW_DECIDED,
       actorId: actor.agentId,
-      payload: {
-        decision,
-        ...(typeof args.reason === 'string' ? { reason: args.reason } : {}),
-      },
+      payload,
     });
     return this.taskBoard.getTask({ teamId: actor.teamId, taskId });
+  }
+
+  #reviewList(actor) {
+    const tasks = this.taskBoard.listTasks({ teamId: actor.teamId }) || [];
+    return tasks.filter((t) => t && t.review && t.review.state === 'requested');
   }
 
   #agentStatus(actor, args) {

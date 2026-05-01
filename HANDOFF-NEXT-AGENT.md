@@ -1,6 +1,6 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-04-30 local session (runtime_send_input MCP tool)
+Last updated: 2026-04-30 local session (review with diffs)
 
 This file is the handoff point for a fresh agent with no chat context. The user wants to continue reverse engineering the alpha MCP/Twilio-style GitHub project and rebuilding our own local TOAD runtime. Work is local only. Do not push to git unless the user explicitly asks.
 
@@ -105,7 +105,41 @@ Important files:
 
 ## Latest Completed Slices
 
-### 1. `runtime_send_input` MCP Tool (latest)
+### 1. Code Review With Diffs (latest)
+
+Plan file:
+
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-review-with-diffs.md`
+
+Brings TOAD's review surface up to legacy parity for the **content** half of code review. The legacy `review.ts` has 18+ IPC handlers spanning git worktrees, file watchers, hunk-level reject, conflict detection — all explicitly deferred. This slice does the minimum viable subset: store diff text on the review request, surface it via a new read tool, and let the decision attach per-file feedback.
+
+Modified files:
+
+- `src/task/inMemoryTaskBoard.js` — `projectTask` populates a new `task.review` sub-object on `REVIEW_REQUESTED` (state, reviewerId, summary, diff, files, requestedBy, requestedAt) and merges into it on `REVIEW_DECIDED` (decision, reason, feedback, decidedBy, decidedAt). The existing `task.reviewState` enum is kept for backward compatibility; new consumers should prefer `task.review`.
+- `src/commands/command-contract.js` — adds `REVIEW_LIST = 'review_list'` (read-only, NOT in `MUTATING_COMMANDS`).
+- `src/mcp/localToolDefinitions.js` — extended `review_request` schema (`summary`, `diff`, `files`); extended `review_decide` schema (`feedback` as array of `{ file, comment }`); new `review_list` tool def (read-only).
+- `src/tools/localToolFacade.js` — `#reviewRequest` and `#reviewDecide` propagate the new fields into event payloads (omitted when not provided so existing callers keep working); new `#reviewList` returns tasks where `task.review.state === 'requested'` for the actor's team.
+- `test/taskBoard.test.js` — 2 new projection tests (now 5 total): diff/files/summary populated on REVIEW_REQUESTED; feedback merged on REVIEW_DECIDED while requested-side fields persist.
+- `test/localToolFacade.test.js` — 3 new tests (now 32 total): review_request stores diff/files/summary; review_decide stores feedback; review_list returns only tasks with active reviews including the diff content.
+- `test/localMcpToolDefinitions.test.js` — `review_list` added to expected names list and read-only tools assertion.
+
+Behavior decisions:
+
+- **No schema change.** Diff text and feedback live in `task_events.payload_json`. SQLite TEXT columns hold large diffs comfortably and the event-log replay surfaces them naturally.
+- **`task.review` is a single sub-object** (not scattered fields). Cohesive shape, maps directly to the legacy app's review payload.
+- **All new fields are optional** so existing callers (the agent-status tools, current task_list consumers) keep working unchanged. Empty/missing diff = "approve a task by ID" mode, which is what the prior implementation did.
+- **Caller passes the diff text in.** TOAD has no git integration yet — the agent calling `review_request` runs `git diff` itself and attaches the output. Auto-generating diffs from a worktree is a separate slice.
+
+Verification during slice:
+
+```powershell
+node test/taskBoard.test.js
+node test/localToolFacade.test.js
+node test/localMcpToolDefinitions.test.js
+npm.cmd test
+```
+
+### 2. `runtime_send_input` MCP Tool
 
 Plan file:
 
@@ -1279,9 +1313,9 @@ Remaining gaps worth tracking:
 Recommended next slice (pick one):
 
 1. **Subscription quota / plan-usage indicator** — parked. The user wants a "circle indicator" on startup showing Claude (and eventually Codex) plan usage. Investigation found that `--print "/usage"` is a $0 client-side slash command but only returns an auth-status string — the rich quota panel is rendered by the interactive TUI from an undocumented Anthropic API call. `~/.claude/stats-cache.json` has historical activity but not subscription windows. The user is independently investigating reliable data sources before this slice resumes.
-2. **Code review with diffs** — legacy `review.ts` stores per-task diff content and supports file-level accept/reject. TOAD's `review_request` / `review_decide` work on task IDs only. Needs a diff-content store + new tool surface.
-3. **Notifications** — legacy `notifications.ts` defines typed alert categories (task completion, agent attention, errors). TOAD has the raw event bus; needs a notification projection on top.
-4. **Git provisioning hooks** — legacy `TEAM_PREPARE_PROVISIONING` / `TEAM_INITIALIZE_GIT_REPOSITORY` / worktree status APIs. Needed before code-review-with-diffs can store actual diffs.
+2. **Notifications** — legacy `notifications.ts` defines typed alert categories (task completion, agent attention, errors). TOAD has the raw event bus; needs a notification projection on top.
+3. **Git provisioning hooks** — legacy `TEAM_PREPARE_PROVISIONING` / `TEAM_INITIALIZE_GIT_REPOSITORY` / worktree status APIs. Auto-generate the diff content currently passed to `review_request` from a real git worktree.
+4. **File-level / hunk-level review reject** — legacy supports rejecting individual files or hunks. Big design lift; needs richer event vocabulary and a state machine. Out of scope until we have a UI consuming the existing `review_list` and want more granular controls.
 5. **Optional `--bare` smoke variant** — add a parallel smoke path that uses `--bare` when `ANTHROPIC_API_KEY` is set in the environment, for users on direct API auth.
 6. **Codex provider integration** — TOAD only spawns Claude runtimes. The legacy app had a full `codex-account` feature (rate-limit windows, ChatGPT auth, model selection). Much larger scoped slice.
 
@@ -1445,6 +1479,7 @@ rg -n "permission|control_request|approval|runtime adapter|watcher|relay" C:\Pro
 - `C:\Project-TOAD\toad-local\test\sqliteTeamConfigRegistry.test.js`
 - `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-team-launch-stop.md`
 - `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-runtime-send-input.md`
+- `C:\Project-TOAD\toad-local\docs\superpowers\plans\2026-04-30-review-with-diffs.md`
 
 ## Suggested Opening Move For Next Agent
 
