@@ -1,0 +1,74 @@
+# Checklist Gap Matrix — TOAD vs `agent_teams_hardening_checklist_final_v2.md`
+
+Last audit: 2026-04-30 (after the review-with-diffs slice — commit `e221d5d`).
+
+This document is the single source of truth for "where is TOAD against the v2 hardening checklist?" The full checklist lives at `docs/AGENT_TEAMS_HARDENING_CHECKLIST.md`. This file is updated at the end of every slice that touches enforcement scope.
+
+## Severity legend
+
+- **REAL** — implemented, tested, reachable from the API surface.
+- **PARTIAL** — scaffolding present but missing pieces the checklist calls out.
+- **MISSING** — not implemented at all in TOAD.
+- **OUT-OF-SCOPE-NOW** — intentionally deferred per project priorities (e.g. UI work).
+
+## Status per section
+
+| § | Item | Status | Evidence | Severity | Next action |
+|---|---|---|---|---|---|
+| 1 | Strict task contract / schema | **PARTIAL** | `inMemoryTaskBoard.js` projects `subject`, `description`, `ownerId`, `status`, `reviewState`, `comments`, `history`. Missing: `priority`, `assignedRole`, `allowedFiles`, `forbiddenFiles`, `acceptanceCriteria`, `testCommands`, `expectedDeliverables`, `riskLevel`, `requiresHumanApproval`, plan/test/review summaries. | High | Extend the task event payload schema and the projection to carry the missing fields. Backward-compatible defaults so existing call sites keep working. |
+| 2 | Plan-before-code gate | **MISSING** | No `PLAN_PROPOSED` / `PLAN_APPROVED` events. No plan submission tool. | High | Add `task_plan_propose` / `task_plan_approve` MCP tools backed by new task events. Tie to state-machine transition `ready → planned`. |
+| 3 | Deterministic state machine | **MISSING** | `TASK_STATUS = { pending, in_progress, completed, deleted }` — only 4 of the checklist's 10 states. `task_update` accepts arbitrary status with no transition validation. The orchestrator does NOT own state. | **CRITICAL** | **NEXT SLICE.** Add the 10-state lifecycle constants + transition table + `validateTaskStatusTransition` helper. Wire into `#taskUpdate`. Every transition records actor / reason / from / to / timestamp. |
+| 4 | Structured message-board events | **PARTIAL** | TOAD has `task_events` (CREATED, ASSIGNED, STATUS_CHANGED, COMMENT_ADDED, REVIEW_REQUESTED, REVIEW_STARTED, REVIEW_DECIDED), `runtime_events`, `messages`, `approval_requests`, `side_effect_deliveries`. Missing types: PLAN_PROPOSED/APPROVED/REJECTED, WORK_STARTED, PATCH_READY, TEST_REQUESTED/PASSED/FAILED, TASK_BLOCKED/UNBLOCKED, MERGE_READY, HUMAN_APPROVAL_REQUESTED, TASK_DONE. | High | Extend `TASK_EVENT_TYPES` enum with the missing names as new events are needed by other slices (state machine, plan-before-code, test artifacts). Don't add ahead-of-need. |
+| 5 | Role permissions / authority boundaries | **MISSING** | Actor is `{ teamId, agentId }` only. No role concept. Anyone can do anything within their team. | **CRITICAL** | After state machine. Add `actor.role` (lead / architect / developer / reviewer / tester / human). Build a per-role allow-list checked in `LocalToolFacade.execute`. Self-review prevention via `event.actorId !== task.review.requestedBy`. |
+| 6 | Deterministic CI / test gates | **MISSING** | No orchestrator-run validation. Tests are agent-claimed. | **CRITICAL** | After role authority. Add `ProjectValidationConfig` schema, a `validation_run` MCP tool that spawns the configured commands, stores the run as a task event with exit code/stdout/stderr/duration. Block `merge_ready` transition without a passing test artifact. |
+| 7 | Real changed-file and diff tracking | **PARTIAL** | `review_request` payload now carries `diff` and `files` (slice e221d5d). Missing: `baseRef`/`headRef`, automatic diff computation, out-of-scope file flagging, conflict detection. | High | Tied to the git provisioning slice. Add `task.baseRef` field on task creation; add a `task_diff_compute` orchestrator helper that runs `git diff baseRef..HEAD` inside the task's worktree. Out-of-scope flagging compares against `task.allowedFiles` (added by §1). |
+| 8 | Branch / worktree enforcement | **MISSING** | Runtimes spawn with whatever cwd is configured. No worktree per task. | High | Big slice. Add `worktree_per_task` strategy: orchestrator runs `git worktree add` with a deterministic path on `task_planned`, stores path in the task projection, refuses `agent_launch` for that task with a different cwd. |
+| 9 | WIP limits and flow control | **MISSING** | No flow config. Multiple agents can take any number of tasks. | Medium | Add `TeamFlowConfig` to team config. Enforce in `team_launch` and in transition gates (refuse `in_progress` when over the limit). |
+| 10 | Task dependency enforcement | **MISSING** | No dependency edges on tasks. | Medium | Extend task schema (§1) with `dependencyTaskIds`. Reject `in_progress` when dependencies are not `done`. Auto-emit `TASK_UNBLOCKED` event when last dependency closes. |
+| 11 | Agent session lifecycle tracking | **PARTIAL** | `runtime_instances` SQLite table tracks runtimeId / teamId / agentId / providerId / command / cwd / pid / status / started_at / stopped_at / exit_code / signal. `runtime_events` provides per-session audit. Missing: `taskId` field, `model`, `logPath`. | Medium | Add `task_id` column to `runtime_instances` (links a process to a task). Already tracking provider; just need to surface model when known. |
+| 12 | Provider abstraction layer | **PARTIAL** | `ClaudeStreamJsonAdapter` exists. Team config members carry `providerId`. `ANTHROPIC_BASE_URL` / `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` env vars handled. Missing: shared `AgentRuntimeProvider` interface, capability detection, normalized provider event types. | High (for Codex slice later) | Extract `AgentRuntimeProvider` interface from `ClaudeStreamJsonAdapter`. Defer until the Codex slice forces it; building it speculatively is the bigger risk. |
+| 13 | Failure detection | **PARTIAL** | Runtime supervisor restart policy (`bounded unexpected-exit restarts`), `CompactionHandler`, side-effect receipts, `parse_error` runtime events. Missing semantic detectors: false success, scope drift, no-op diff with claimed completion, repeated test failure threshold. | High | Add a `FailureDetector` projection over `task_events` + `runtime_events` that emits `TASK_BLOCKED` with `reason: 'no_op_diff' \| 'scope_drift' \| ...`. Wire into the state machine so blocking conditions cannot be transitioned past. |
+| 14 | Risk / safety policies | **PARTIAL** | Approval system (`approval_request` / `approval_respond` against `control_request can_use_tool`) exists end-to-end. Missing: file-pattern risk policy, automated `requiresHumanApproval` flag on high-risk paths, destructive-command sandboxing. | High | Add `risk-policy.json` config + a `riskClassifier` step in `task_update` and `agent_launch` that flips `requiresHumanApproval` when allowedFiles intersect risky patterns. |
+| 15 | Context packs | **MISSING** | No mechanism. | Medium | After role authority. Add a `task_context_pack` read-only tool returning `{ task, relevantFiles, recentEvents, validationCommands }` shaped by the actor's role. |
+| 16 | Role-specific prompt templates | **MISSING** | No role concept yet. | Medium | Depends on §5. After roles exist, add prompt templates under `.toad/prompts/<role>.md` and make `agent_launch` / `team_launch` inject them. |
+| 17 | Review artifacts | **PARTIAL** | `review_request` / `review_decide` / `review_list` (slice e221d5d). `task.review` projection. Missing: severity tags (nit/minor/major/blocking) on findings, self-review prevention, large-diff checklist enforcement. | Medium | Extend `review_decide` feedback schema to include `severity`. Add self-review check (`actor.agentId !== task.review.requestedBy`). |
+| 18 | Test artifacts | **MISSING** | No structured test results stored. `tool_activity` captures invocations but no `TestResult` record. | **CRITICAL** | Tied to §6 CI gates. Add `task.test` projection populated from new `TEST_REQUESTED` / `TEST_PASSED` / `TEST_FAILED` events. Failed tests transition `testing → in_progress`. |
+| 19 | Merge / integration workflow | **MISSING** | No git integration. | High | Depends on §8 worktree enforcement. After worktrees: orchestrator-run merge with rebase, conflict detection, `merge_ready → done` only on success. |
+| 20 | Audit trail and replayability | **REAL (mostly)** | `runtime_events`, `task_events`, `messages`, `approval_requests`, `side_effect_deliveries` form a comprehensive audit trail. `LocalReadModel.listRuntimeAudit` etc. surface this. `replayPendingSideEffects` exists. Missing: JSON/Markdown export. | Low | Add `task_history_export` read tool returning the task's full event log. Small slice. |
+| 21 | Claim verification tests | **PARTIAL** | 28 backend test files, but they are per-component, not "this README claim is verified" labeled. | Medium | Add `test/claims/` directory with one test file per advertised behavior tagged with the README claim it verifies. |
+| 22 | Integration / E2E test harness | **PARTIAL** | `localToadRuntime.test.js` covers cross-component happy paths. `claudeCliSmoke.test.js` does the live boundary. Missing: bad-implementation, failing-tests, dependency-blocking, self-review-prevention, provider-failure scenarios. | Medium | Each E2E scenario gets one test file under `test/e2e/` driving the facade through realistic event sequences. |
+| 23 | UI trust indicators | **OUT-OF-SCOPE-NOW** | Per project priorities: backend-only until the parallel UI prototype consumes existing tools. | — | Defer. |
+| 24 | Configuration system | **PARTIAL** | `.toad/toad.db` and `.toad/api-token` exist. Missing: `.agent-teams/` directory layout — `config.json`, `workflow.json`, `validation.json`, `risk-policy.json`, `tools.json`, `budgets.json`, `roles/*.md`. | Medium | Build incrementally as each consumer needs it (roles → roles/*.md, validation → validation.json, etc.). Don't pre-create empty files. |
+| 25 | Diagnostics panel | **MISSING** | No diagnostics endpoint. `health_status` MCP tool reports api retries only. | **HIGH** | Add a `diagnostics_run` MCP tool returning `{ check, status: PASS/WARNING/FAIL, evidence, suggestedFix }[]`. Initial checks: provider detected, validation commands configured, task transition validation reachable, role tool permissions enforced. |
+| 26 | Tool / MCP authority by role | **MISSING** | All 24 MCP tools are available to every actor. | **CRITICAL** | Tied to §5. After roles exist: per-role allow-list in `LocalToolFacade.execute`. Every denied call logged. |
+| 27 | Prompt construction standards | **MISSING** | No templates. | Medium | Depends on §5, §16. |
+| 28 | Token / cost budgets | **PARTIAL** | Per-turn `usage` in `result` events captured in `runtime_events`. No aggregation, no per-task / per-session / per-project budgets. Subscription quota indicator parked. | Medium | Aggregate usage across `runtime_events` by `runtimeId` / `teamId` / `taskId`. Add `BudgetConfig` enforcement that pauses or escalates on threshold. |
+| 29 | Agent-level evaluation suite | **MISSING** | No. | Low | Defer until provider abstraction is in (§12) — eval suite needs to swap providers cleanly. |
+| 30 | Knowledge propagation | **MISSING** | No knowledge store. | Low | Defer. Build incrementally if context packs (§15) start needing it. |
+| 31 | Conflict resolution protocol | **MISSING** | No formal override semantics. | Medium | Add `task_override` mutating tool requiring an explicit reason; logged as `TASK_OVERRIDE` event with the actor's role. |
+| 32 | Failure recovery semantics | **PARTIAL** | `replayPendingSideEffects` drops pending receipts on restart. Runtime supervisor handles process death. Missing: classified `RecoveryMode` (resume / retry_idempotent / rollback_worktree / preserve_and_escalate / abandon_task_branch). | Medium | Tied to §8 worktrees. Add a small recovery dispatcher invoked from `LocalToadRuntime.start()`. |
+| 33 | Resume protocol | **PARTIAL** | Durable approvals, side-effect log, runtime registry, broker — most state is recoverable. Missing: explicit reconciliation between repo state and task DB on restart. | Medium | After §8 worktrees: `reconcileTaskWorktrees()` runs at startup. |
+
+## Mapping completed slices to checklist sections
+
+| Completed slice | Maps to | Notes |
+|---|---|---|
+| Durable side-effect receipts (§4 + replay-on-restart + retention + telemetry + housekeeping panel) | §20 audit trail; §32 recovery; §33 resume | Strong audit foundation. |
+| API token + CORS + lifecycle tests + token-on-disk | §14 partial (auth gate is the foundation for risk policy) | No role enforcement yet. |
+| `agent_launch` / `agent_stop` | §11 session lifecycle; §12 partial provider abstraction | Adapter map preserved across launch. |
+| Persistent team config + CRUD | §24 partial (TeamConfig is the seed of `.agent-teams/config.json`) | SQLite-backed registry. |
+| `team_launch` / `team_stop` | §11 session-per-task wiring (deterministic `runtime-<teamId>-<agentId>` IDs) | No worktree isolation yet. |
+| `runtime_send_input` | §11 (legacy `TEAM_PROCESS_SEND` parity) | Bypasses broker for slash commands. |
+| Code review with diffs | §17 review artifacts (partial); §7 diff tracking (partial) | Caller passes the diff in; orchestrator does not compute it yet. |
+
+## Recommended slice order (anchored to the checklist's own priority)
+
+The checklist's stated order is `state machine > tool authority > session tracking > diff tracking > CI gates > diagnostics > UI polish`. Mapping to TOAD's current state and the gaps above:
+
+1. **Deterministic state machine (§3)** — CRITICAL. Adopt the 10-state lifecycle, add the transition table, validate every `task_update`. Foundation for everything else (plan-before-code, role authority, dependency enforcement, CI gates all assume legal transitions exist).
+2. **Role authority (§5 + §26)** — CRITICAL. Add `actor.role`, per-role allow-list in `LocalToolFacade.execute`, self-review prevention. Without this, "developer cannot mark task done" and "tester cannot approve review" are aspirational.
+3. **Test artifacts + CI gates (§6 + §18)** — CRITICAL. Orchestrator-run validation commands stored as `TestResult`; failed tests block `merge_ready`. The single biggest gap between "agents claim done" and "system knows done".
+4. **Plan-before-code (§2)** — High. New `task_plan_propose` / `task_plan_approve` tools backed by `PLAN_PROPOSED` / `PLAN_APPROVED` events. Tied to `ready → planned` transition.
+5. **Diagnostics (§25)** — High. `diagnostics_run` MCP tool. Once 1–4 land, "is the system genuinely safe vs. agent-claimed safe?" needs an answer surface.
+6. Worktree enforcement (§8) → diff tracking (§7 finished) → merge workflow (§19). Bigger lift because of git integration.
+7. Failure detection (§13), WIP limits (§9), dependency enforcement (§10), notifications, knowledge propagation. Smaller incremental slices once the spine is in place.
