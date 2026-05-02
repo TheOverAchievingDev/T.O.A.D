@@ -183,6 +183,8 @@ export class LocalToolFacade {
         return this.#providerAuthLogin(args);
       case COMMANDS.PROVIDER_AUTH_LOGOUT:
         return this.#providerAuthLogout(args);
+      case COMMANDS.AUDIT_LOG_QUERY:
+        return this.#auditLogQuery(actor, args);
       default:
         throw new Error(`unsupported command: ${commandName}`);
     }
@@ -1384,6 +1386,59 @@ export class LocalToolFacade {
       providerId,
       spawnSyncImpl: this.providerAuthSpawnSync,
     });
+  }
+
+  /**
+   * §20 audit-log query. Merges task events + runtime events for the actor's
+   * team, optionally filtering to events after a timestamp, and returns them
+   * sorted by createdAt desc with a hard cap. Read-only; available to every
+   * role via COMMON_READ_TOOLS.
+   *
+   * Returns: { events: [...], hasMore: boolean, cap: number, sinceMs: number | null }
+   * Each event carries a `_source: 'task' | 'runtime'` tag so the UI can
+   * style them differently.
+   */
+  #auditLogQuery(actor, args) {
+    const teamId = actor.teamId;
+    const limit = Math.max(1, Math.min(1000, Number.isInteger(args?.limit) ? args.limit : 200));
+    const sinceMs = Number.isFinite(Number(args?.sinceMs)) && Number(args.sinceMs) > 0
+      ? Number(args.sinceMs)
+      : null;
+
+    const taskEvents = (this.taskBoard && typeof this.taskBoard.listEvents === 'function')
+      ? this.taskBoard.listEvents({ teamId })
+      : [];
+    const runtimeEvents = (this.eventLog && typeof this.eventLog.listEvents === 'function')
+      ? this.eventLog.listEvents({ teamId })
+      : [];
+
+    const tagged = [];
+    for (const e of taskEvents) {
+      const at = Date.parse(e.createdAt ?? '');
+      if (sinceMs && Number.isFinite(at) && at < sinceMs) continue;
+      tagged.push({ ...e, _source: 'task' });
+    }
+    for (const e of runtimeEvents) {
+      const at = Date.parse(e.createdAt ?? '');
+      if (sinceMs && Number.isFinite(at) && at < sinceMs) continue;
+      tagged.push({ ...e, _source: 'runtime' });
+    }
+
+    tagged.sort((a, b) => {
+      const aMs = Date.parse(a.createdAt ?? '');
+      const bMs = Date.parse(b.createdAt ?? '');
+      if (!Number.isFinite(aMs)) return 1;
+      if (!Number.isFinite(bMs)) return -1;
+      return bMs - aMs;
+    });
+
+    const hasMore = tagged.length > limit;
+    return {
+      events: tagged.slice(0, limit),
+      hasMore,
+      cap: limit,
+      sinceMs,
+    };
   }
 
   /**

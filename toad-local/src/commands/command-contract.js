@@ -44,6 +44,7 @@ export const COMMANDS = Object.freeze({
   PROVIDER_AUTH_STATUS: 'provider_auth_status',
   PROVIDER_AUTH_LOGIN: 'provider_auth_login',
   PROVIDER_AUTH_LOGOUT: 'provider_auth_logout',
+  AUDIT_LOG_QUERY: 'audit_log_query',
 });
 
 export const MUTATING_COMMANDS = Object.freeze([

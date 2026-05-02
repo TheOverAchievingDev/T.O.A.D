@@ -121,6 +121,7 @@ export interface Tweaks {
     | 'tasks'
     | 'settings'
     | 'costs'
+    | 'audit'
     | 'picker'
     | 'empty'
     | 'onboarding'

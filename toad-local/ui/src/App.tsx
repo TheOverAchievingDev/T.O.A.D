@@ -22,6 +22,9 @@ import { SettingsScreen } from '@/components/settings/SettingsScreen';
 import { ToastProvider } from '@/components/ToastSystem';
 import { LogViewerDrawer } from '@/components/LogViewerDrawer';
 import { CostsScreen } from '@/components/CostsScreen';
+import { AuditLogScreen } from '@/components/AuditLogScreen';
+import { ShortcutsModal } from '@/components/ShortcutsModal';
+import { useShortcutsHotkey } from '@/hooks/useShortcutsHotkey';
 import {
   TweaksPanel,
   TweakSection,
@@ -53,7 +56,10 @@ function AppInner() {
   const [launchingTeamId, setLaunchingTeamId] = useState<string | null>(null);
   const [addProjectOpen, setAddProjectOpen] = useState(false);
   const [logRuntimeId, setLogRuntimeId] = useState<string | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const projectRegistry = useProjects();
+
+  useShortcutsHotkey(() => setShortcutsOpen(true));
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', tweaks.theme);
@@ -95,6 +101,7 @@ function AppInner() {
     onCreateTask: () => setTaskCreateOpen(true),
     onRefresh: refresh,
     onOpenLogs: (runtimeId) => setLogRuntimeId(runtimeId),
+    onShowShortcuts: () => setShortcutsOpen(true),
   });
 
   // Bridge legacy global window events some components emit (titlebar runtime
@@ -241,6 +248,13 @@ function AppInner() {
           {tweaks.screen === 'costs' && (
             <CostsScreen team={team} runtimes={runtimes} />
           )}
+          {tweaks.screen === 'audit' && (
+            <AuditLogScreen
+              team={team}
+              onOpenTask={openTaskFromPalette}
+              onOpenLogs={(id) => setLogRuntimeId(id)}
+            />
+          )}
           {tweaks.screen === 'launching' && (
             <TeamLaunchingScreen
               team={team}
@@ -343,6 +357,7 @@ function AppInner() {
           onClose={() => setLogRuntimeId(null)}
         />
       )}
+      {shortcutsOpen && <ShortcutsModal onClose={() => setShortcutsOpen(false)} />}
       {tweaks.showNotifs && (
         <NotificationsDrawer team={team} onClose={() => setTweak('showNotifs', false)} />
       )}
@@ -405,6 +420,7 @@ function AppInner() {
                 { value: 'tasks', label: 'Tasks' },
                 { value: 'settings', label: 'Settings' },
                 { value: 'costs', label: 'Cost dashboard' },
+                { value: 'audit', label: 'Audit log' },
                 { value: 'picker', label: 'Project picker' },
                 { value: 'empty', label: 'Empty workspace' },
                 { value: 'onboarding', label: 'Onboarding' },

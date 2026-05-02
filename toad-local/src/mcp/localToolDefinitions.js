@@ -532,6 +532,16 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
       providerId: { type: 'string', enum: ['anthropic', 'openai', 'opencode'] },
     },
   }),
+  makeTool({
+    name: COMMANDS.AUDIT_LOG_QUERY,
+    title: 'Query Audit Log',
+    description: '§20 Returns a chronologically-sorted (newest first) merge of task events + runtime events for the actor’s team. Each event carries a _source tag (`task` or `runtime`). Supports `limit` (default 200, max 1000) and optional `sinceMs` filter. Read-only; available to every role.',
+    required: [],
+    properties: {
+      limit: { type: 'integer', minimum: 1, maximum: 1000 },
+      sinceMs: { type: 'integer', minimum: 0 },
+    },
+  }),
 ]);
 
 export function listLocalMcpTools() {

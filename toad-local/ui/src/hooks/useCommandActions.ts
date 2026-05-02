@@ -15,6 +15,7 @@ interface UseCommandActionsArgs {
   onCreateTask: () => void;
   onRefresh: () => void;
   onOpenLogs?: (runtimeId: string) => void;
+  onShowShortcuts?: () => void;
 }
 
 /** Compose every actionable destination/toggle/operation in the app into a flat
@@ -25,7 +26,7 @@ interface UseCommandActionsArgs {
  */
 export function useCommandActions({
   team, tasks, runtimes = [], tweaks, setTweak,
-  onOpenTask, onOpenAgent, onCreateTeam, onCreateTask, onRefresh, onOpenLogs,
+  onOpenTask, onOpenAgent, onCreateTeam, onCreateTask, onRefresh, onOpenLogs, onShowShortcuts,
 }: UseCommandActionsArgs): CommandAction[] {
   return useMemo<CommandAction[]>(() => {
     const actions: CommandAction[] = [];
@@ -41,6 +42,9 @@ export function useCommandActions({
       { id: 'nav.costs', group: 'Navigate', label: 'Go to Cost dashboard', icon: 'sparkle',
         keywords: ['cost', 'token', 'spend', 'budget', 'usage', 'billing'],
         run: () => setTweak('screen', 'costs') },
+      { id: 'nav.audit', group: 'Navigate', label: 'Go to Audit log', icon: 'list',
+        keywords: ['audit', 'log', 'history', 'events', 'trail'],
+        run: () => setTweak('screen', 'audit') },
       { id: 'nav.settings', group: 'Navigate', label: 'Go to Settings', icon: 'settings',
         keywords: ['preferences', 'config', 'options', 'github', 'providers', 'risk'],
         run: () => setTweak('screen', 'settings') },
@@ -88,6 +92,18 @@ export function useCommandActions({
         keywords: ['dev', 'debug', 'panel'],
         run: () => setTweak('showTweaks', !tweaks.showTweaks) },
     );
+
+    if (onShowShortcuts) {
+      actions.push({
+        id: 'action.shortcuts',
+        group: 'Actions',
+        label: 'Show keyboard shortcuts',
+        icon: 'info',
+        hint: '?',
+        keywords: ['help', 'kbd', 'keys', 'hotkeys'],
+        run: onShowShortcuts,
+      });
+    }
 
     // ---- Settings ----
     actions.push(
@@ -158,5 +174,5 @@ export function useCommandActions({
     }
 
     return actions;
-  }, [team, tasks, runtimes, tweaks, setTweak, onOpenTask, onOpenAgent, onCreateTeam, onCreateTask, onRefresh, onOpenLogs]);
+  }, [team, tasks, runtimes, tweaks, setTweak, onOpenTask, onOpenAgent, onCreateTeam, onCreateTask, onRefresh, onOpenLogs, onShowShortcuts]);
 }

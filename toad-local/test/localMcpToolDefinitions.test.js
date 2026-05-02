@@ -16,6 +16,7 @@ test('listLocalMcpTools exposes MCP-shaped local command tools', () => {
     'agent_stop',
     'approval_list',
     'approval_respond',
+    'audit_log_query',
     'cross_team_messages',
     'cross_team_send',
     'diagnostics_run',

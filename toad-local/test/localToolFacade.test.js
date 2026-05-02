@@ -4493,6 +4493,89 @@ test('provider_auth_logout dispatches synchronous spawn', () => {
   assert.deepEqual(captured.args, ['auth', 'logout']);
 });
 
+// --- §20 audit_log_query ---
+
+test('audit_log_query merges task + runtime events sorted newest first', () => {
+  const broker = new InMemoryBroker();
+  const taskBoard = new InMemoryTaskBoard();
+  taskBoard.appendEvent({
+    teamId: 'team-a', taskId: 'task-1', idempotencyKey: 'k1',
+    eventType: TASK_EVENT_TYPES.CREATED, actorId: 'lead',
+    payload: { title: 'first' },
+  });
+  taskBoard.appendEvent({
+    teamId: 'team-a', taskId: 'task-2', idempotencyKey: 'k2',
+    eventType: TASK_EVENT_TYPES.CREATED, actorId: 'lead',
+    payload: { title: 'second' },
+  });
+  // Fake event log with two runtime events. The facade only accepts an
+  // eventLog that has an appendEvent method, so we stub one too.
+  const eventLog = {
+    appendEvent() {},
+    listEvents() {
+      return [
+        { id: 1, runtimeId: 'r-1', type: 'tool_use', createdAt: '2026-05-01T22:00:01.000Z', payload: { toolName: 'Edit' } },
+        { id: 2, runtimeId: 'r-1', type: 'tool_use', createdAt: '2026-05-01T22:00:02.000Z', payload: { toolName: 'Bash' } },
+      ];
+    },
+  };
+  const facade = new LocalToolFacade({ broker, taskBoard, eventLog });
+  const result = facade.execute({
+    commandName: COMMANDS.AUDIT_LOG_QUERY,
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { limit: 10 },
+  });
+  assert.equal(result.events.length, 4);
+  // Newest first.
+  for (let i = 0; i + 1 < result.events.length; i++) {
+    const cur = Date.parse(result.events[i].createdAt);
+    const next = Date.parse(result.events[i + 1].createdAt);
+    if (Number.isFinite(cur) && Number.isFinite(next)) {
+      assert.ok(cur >= next, 'should be sorted newest first');
+    }
+  }
+  // Sources are tagged.
+  const sources = new Set(result.events.map((e) => e._source));
+  assert.deepEqual([...sources].sort(), ['runtime', 'task']);
+});
+
+test('audit_log_query honours sinceMs filter', () => {
+  const taskBoard = new InMemoryTaskBoard();
+  taskBoard.appendEvent({
+    teamId: 'team-a', taskId: 'task-1', idempotencyKey: 'k1',
+    eventType: TASK_EVENT_TYPES.CREATED, actorId: 'lead',
+    payload: {},
+  });
+  const cutoff = Date.now() + 60_000;
+  const facade = new LocalToolFacade({ broker: new InMemoryBroker(), taskBoard });
+  const result = facade.execute({
+    commandName: COMMANDS.AUDIT_LOG_QUERY,
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { sinceMs: cutoff },
+  });
+  assert.equal(result.events.length, 0, 'cutoff in the future should filter all out');
+});
+
+test('audit_log_query caps results at the limit and reports hasMore', () => {
+  const taskBoard = new InMemoryTaskBoard();
+  for (let i = 0; i < 5; i++) {
+    taskBoard.appendEvent({
+      teamId: 'team-a', taskId: `task-${i}`, idempotencyKey: `k${i}`,
+      eventType: TASK_EVENT_TYPES.CREATED, actorId: 'lead',
+      payload: {},
+    });
+  }
+  const facade = new LocalToolFacade({ broker: new InMemoryBroker(), taskBoard });
+  const result = facade.execute({
+    commandName: COMMANDS.AUDIT_LOG_QUERY,
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { limit: 3 },
+  });
+  assert.equal(result.events.length, 3);
+  assert.equal(result.hasMore, true);
+  assert.equal(result.cap, 3);
+});
+
 test('provider_auth_login is denied for non-lead/non-human roles', async () => {
   const facade = new LocalToolFacade({
     broker: new InMemoryBroker(),

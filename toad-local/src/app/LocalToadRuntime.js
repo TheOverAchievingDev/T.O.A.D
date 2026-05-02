@@ -22,6 +22,7 @@ import { shouldInjectToadMcpConfig, withClaudeMcpPermissions, writeToadMcpConfig
 import { loadRiskPolicy } from '../policy/loadRiskPolicy.js';
 import { RiskPolicyStore } from '../policy/riskPolicyStore.js';
 import { SettingsStore } from '../settings/settingsStore.js';
+import { StuckRuntimeMonitor } from '../diagnostics/stuckRuntimeMonitor.js';
 
 export class LocalToadRuntime {
   constructor({
@@ -52,6 +53,9 @@ export class LocalToadRuntime {
     githubClientId = null,
     providerAuthSpawn = null,
     providerAuthSpawnSync = null,
+    stuckMonitor = null,
+    stuckMonitorIntervalMs = parseIntervalEnv(process.env.TOAD_STUCK_MONITOR_INTERVAL_MS),
+    stuckMonitorThresholdMs = parseIntervalEnv(process.env.TOAD_STUCK_MONITOR_THRESHOLD_MS),
   } = {}) {
     this.broker = broker || new SqliteBroker({ filePath: dbPath });
     this.taskBoard = taskBoard || new SqliteTaskBoard({ filePath: dbPath });
@@ -158,6 +162,21 @@ export class LocalToadRuntime {
       allowedOrigins: parseAllowedOriginsEnv(process.env.TOAD_API_ALLOWED_ORIGINS),
       staticDir: uiStaticDir,
     });
+    // §13 monitor: periodic detection that lifts the read-only `stuck_runtime_list`
+    // tool into a push signal via the SSE bus. The UI's useEventToasts hook
+    // turns those into toasts. Constructed only when we have a registry +
+    // event log; otherwise we'd be running detection over nothing.
+    this.stuckRuntimeMonitor =
+      stuckMonitor
+      ?? (this.runtimeRegistry && this.eventLog
+        ? new StuckRuntimeMonitor({
+            runtimeRegistry: this.runtimeRegistry,
+            eventLog: this.eventLog,
+            eventBus: this.eventBus,
+            ...(stuckMonitorIntervalMs != null ? { intervalMs: stuckMonitorIntervalMs } : {}),
+            ...(stuckMonitorThresholdMs != null ? { thresholdMs: stuckMonitorThresholdMs } : {}),
+          })
+        : null);
     this.eventIngestor =
       eventIngestor ||
       new RuntimeEventIngestor({
@@ -201,6 +220,9 @@ export class LocalToadRuntime {
       }
     }
     await this.apiServer.start();
+    if (this.stuckRuntimeMonitor && typeof this.stuckRuntimeMonitor.start === 'function') {
+      this.stuckRuntimeMonitor.start();
+    }
   }
 
   replayPendingSideEffects() {
@@ -338,6 +360,9 @@ export class LocalToadRuntime {
   }
 
   async close() {
+    if (this.stuckRuntimeMonitor && typeof this.stuckRuntimeMonitor.stop === 'function') {
+      this.stuckRuntimeMonitor.stop();
+    }
     await Promise.all(this.supervisor.listRuntimes().map((r) => this.stopAgent(r.runtimeId)));
     await this.apiServer.stop();
     this.adapters.clear();
@@ -368,6 +393,13 @@ function parseRetentionDaysEnv(raw) {
   if (typeof raw !== 'string') return 7;
   const parsed = Number.parseFloat(raw.trim());
   if (!Number.isFinite(parsed) || parsed <= 0) return 7;
+  return parsed;
+}
+
+function parseIntervalEnv(raw) {
+  if (typeof raw !== 'string') return undefined;
+  const parsed = Number.parseInt(raw.trim(), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
   return parsed;
 }
 
