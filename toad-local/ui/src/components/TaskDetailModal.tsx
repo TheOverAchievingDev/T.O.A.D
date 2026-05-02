@@ -8,6 +8,7 @@ import { DiffSection } from './task-detail/DiffSection';
 import { ValidationsSection } from './task-detail/ValidationsSection';
 import { TaskRiskBadge } from './TaskRiskBadge';
 import { ReviewComposer } from './ReviewComposer';
+import { TaskLifecycle } from './TaskLifecycle';
 import { SEED_PLAN, SEED_DIFF_FILES, SEED_VALIDATIONS } from './task-detail/seed';
 
 type ActivityKind = 'create' | 'log' | 'change' | 'comment' | 'approval' | 'stage';
@@ -552,20 +553,18 @@ export function TaskDetailModal({ team, taskId, task, onClose, actor = DEFAULT_A
             </div>
 
             <div className="td-side-block">
-              <div className="td-side-label">Workflow</div>
-              <div className="td-workflow">
-                {[
-                  { id: 'todo', label: 'To do', done: detail.status !== 'todo' },
-                  { id: 'in-progress', label: 'In progress', active: detail.status === 'in-progress' },
-                  { id: 'review', label: 'Review', active: detail.status === 'review' },
-                  { id: 'done', label: 'Done', done: detail.status === 'done' },
-                ].map((s) => (
-                  <div key={s.id} className={`td-wf-step ${s.done ? 'done' : ''} ${s.active ? 'active' : ''}`}>
-                    <span className="td-wf-dot" />
-                    <span>{s.label}</span>
-                  </div>
-                ))}
-              </div>
+              <div className="td-side-label">Lifecycle</div>
+              <TaskLifecycle
+                status={detail.status}
+                visited={timeline
+                  .filter((e) => e.kind === 'stage')
+                  .map((e) => e.body ?? '')
+                  .flatMap((body) => {
+                    // Stage events read like "Moved <from> -> <to>" — pull both ends.
+                    const m = /^moved\s+(\S+)\s*(?:→|->)\s*(\S+)/i.exec(body);
+                    return m ? [m[1], m[2]] : [];
+                  })}
+              />
             </div>
 
             <div className="td-side-block">

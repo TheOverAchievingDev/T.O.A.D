@@ -128,6 +128,34 @@ export function CreateTeamModal({
         idempotencyKey: `team-create-${teamId}-${Date.now()}`,
       });
 
+      // §1: When the user supplied a lead prompt, capture it as a seed task
+      // so the team has something to work on the moment it boots. Failure
+      // here is non-fatal — the team is created and launchable regardless.
+      const trimmedPrompt = leadPrompt.trim();
+      if (trimmedPrompt) {
+        const seedTaskId = `T-001`;
+        const subject = trimmedPrompt.length > 80
+          ? `${trimmedPrompt.slice(0, 77)}…`
+          : trimmedPrompt;
+        try {
+          await callTool({
+            actor: { ...actor, teamId },
+            method: 'task_create',
+            args: {
+              taskId: seedTaskId,
+              subject,
+              description: trimmedPrompt,
+              assignedRole: 'lead',
+              priority: 'medium',
+            },
+            idempotencyKey: `seed-task-${teamId}-${Date.now()}`,
+          });
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.warn('[create-team] seed task creation failed', err);
+        }
+      }
+
       if (runAfterCreate) {
         setSubmit({ kind: 'launching' });
         await callTool({
@@ -364,7 +392,7 @@ export function CreateTeamModal({
                   onChange={(e) => setLeadPrompt(e.target.value)}
                   disabled={inFlight}
                 />
-                <div className="field-hint">Tip: mention <span className="mono">create a task</span> to seed the kanban.</div>
+                <div className="field-hint">When set, this prompt is also captured as the team's first task (T-001) so the lead has something to pick up on launch.</div>
               </div>
 
               <div className="field-row">

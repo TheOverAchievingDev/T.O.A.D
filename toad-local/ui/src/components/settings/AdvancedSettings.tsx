@@ -3,6 +3,11 @@ import { Icon } from '../Icon';
 import { SettingsSectionHeader, SettingsCard } from './SettingsLayout';
 import { useSectionDraft } from './useSectionDraft';
 import { SaveBar, SectionMeta } from './SectionShell';
+import { callTool, ToadApiError, type Actor } from '@/api/client';
+
+const DEFAULT_ACTOR: Actor = { teamId: 'default', agentId: 'ui-client', agentName: 'ui', role: 'human' };
+
+const SETTINGS_SECTIONS = ['general', 'providers', 'github', 'workspace', 'risk', 'mcp', 'notifications', 'advanced'] as const;
 
 type LogLevel = 'info' | 'debug' | 'trace';
 
@@ -20,9 +25,59 @@ const DEFAULTS: AdvancedDraft = {
   devToolsEnabled: false,
 };
 
+type BackendResetState =
+  | { kind: 'idle' }
+  | { kind: 'confirm'; what: 'settings' | 'risk' }
+  | { kind: 'running'; what: 'settings' | 'risk' }
+  | { kind: 'done'; what: 'settings' | 'risk' }
+  | { kind: 'error'; message: string };
+
 export function AdvancedSettings() {
   const draft = useSectionDraft<AdvancedDraft>({ section: 'advanced', scope: 'global', defaults: DEFAULTS });
   const [resetConfirm, setResetConfirm] = useState(false);
+  const [backendReset, setBackendReset] = useState<BackendResetState>({ kind: 'idle' });
+
+  async function clearSettingsFile(scope: 'global' | 'project') {
+    setBackendReset({ kind: 'running', what: 'settings' });
+    try {
+      // Overwrite each section with an empty object. Atomic-per-section but
+      // covers the surface — alternative would be a single "settings_clear"
+      // backend tool, deferred until we see the need.
+      for (const section of SETTINGS_SECTIONS) {
+        await callTool({
+          actor: DEFAULT_ACTOR,
+          method: 'settings_set',
+          args: { scope, section, value: {} },
+          idempotencyKey: `settings-clear-${scope}-${section}-${Date.now()}`,
+        });
+      }
+      setBackendReset({ kind: 'done', what: 'settings' });
+      draft.revert();
+    } catch (err) {
+      const message = err instanceof ToadApiError ? err.message
+        : err instanceof Error ? err.message
+        : 'Reset failed';
+      setBackendReset({ kind: 'error', message });
+    }
+  }
+
+  async function clearRiskPolicy() {
+    setBackendReset({ kind: 'running', what: 'risk' });
+    try {
+      await callTool({
+        actor: DEFAULT_ACTOR,
+        method: 'risk_policy_set',
+        args: { rules: [], commandRules: [] },
+        idempotencyKey: `risk-clear-${Date.now()}`,
+      });
+      setBackendReset({ kind: 'done', what: 'risk' });
+    } catch (err) {
+      const message = err instanceof ToadApiError ? err.message
+        : err instanceof Error ? err.message
+        : 'Reset failed';
+      setBackendReset({ kind: 'error', message });
+    }
+  }
 
   return (
     <div>
@@ -132,6 +187,113 @@ export function AdvancedSettings() {
             </button>
           </div>
         )}
+      </SettingsCard>
+
+      <SettingsCard
+        title="Reset backend state"
+        description="Clears server-side artifacts. Settings reset wipes every section in settings.json (provider keys, GitHub creds, workspace defaults, etc). Risk policy reset empties .toad/risk-policy.json. Both are irreversible — back up first if you've configured anything you'd rather keep."
+      >
+        {backendReset.kind === 'error' && (
+          <div
+            style={{
+              marginBottom: 10,
+              padding: '8px 10px',
+              background: 'oklch(0.30 0.08 25 / 0.4)',
+              border: '1px solid oklch(0.55 0.18 25 / 0.4)',
+              borderRadius: 6,
+              color: 'oklch(0.85 0.10 25)',
+              fontSize: 12,
+            }}
+          >
+            {backendReset.message}
+          </div>
+        )}
+        {backendReset.kind === 'done' && (
+          <div
+            style={{
+              marginBottom: 10,
+              padding: '8px 10px',
+              background: 'oklch(0.30 0.08 145 / 0.4)',
+              border: '1px solid oklch(0.55 0.18 145 / 0.4)',
+              borderRadius: 6,
+              color: 'oklch(0.85 0.10 145)',
+              fontSize: 12,
+            }}
+          >
+            <Icon name="check" size={11} /> Cleared {backendReset.what === 'settings' ? 'settings.json sections' : '.toad/risk-policy.json'}.
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {backendReset.kind === 'idle' || backendReset.kind === 'done' || backendReset.kind === 'error' ? (
+            <>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => setBackendReset({ kind: 'confirm', what: 'settings' })}
+              >
+                <Icon name="trash" size={11} /> Reset all settings…
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => setBackendReset({ kind: 'confirm', what: 'risk' })}
+              >
+                <Icon name="trash" size={11} /> Reset risk policy…
+              </button>
+            </>
+          ) : null}
+
+          {backendReset.kind === 'confirm' && backendReset.what === 'settings' && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span style={{ fontSize: 12 }}>
+                This wipes every section in <span className="mono">settings.json</span> (global scope). Sure?
+              </span>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => void clearSettingsFile('global')}
+              >
+                Yes, clear settings
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                onClick={() => setBackendReset({ kind: 'idle' })}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
+          {backendReset.kind === 'confirm' && backendReset.what === 'risk' && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span style={{ fontSize: 12 }}>
+                This empties <span className="mono">.toad/risk-policy.json</span>. Sure?
+              </span>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => void clearRiskPolicy()}
+              >
+                Yes, clear policy
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                onClick={() => setBackendReset({ kind: 'idle' })}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
+          {backendReset.kind === 'running' && (
+            <div className="dim" style={{ fontSize: 12 }}>
+              Clearing {backendReset.what === 'settings' ? 'settings.json' : '.toad/risk-policy.json'}…
+            </div>
+          )}
+        </div>
       </SettingsCard>
 
       <SaveBar draft={draft} />
