@@ -1,0 +1,55 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "TOAD",
+  "version": "0.1.0",
+  "identifier": "ai.toad.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "TOAD",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 720,
+        "resizable": true,
+        "center": true,
+        "decorations": true,
+        "fullscreen": false,
+        "transparent": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* https://api.github.com https://github.com; img-src 'self' data: https://*.githubusercontent.com; font-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Local-first multi-agent CLI orchestrator.",
+    "longDescription": "TOAD spawns and coordinates multiple coding-agent CLIs (Claude, Codex, Gemini) into structured teams with risk-policy gates, durable event sourcing, and a desktop dashboard.",
+    "resources": [],
+    "externalBin": [],
+    "copyright": "Copyright (c) 2026"
+  },
+  "plugins": {
+    "shell": {
+      "open": true
+    }
+  }
+}

@@ -1,0 +1,11 @@
+# Rust build artifacts
+target/
+
+# Tauri-generated build outputs
+gen/
+
+# Per-platform bundle outputs
+src-tauri/target/
+
+# Note: Cargo.lock IS committed for binary crates per Rust convention,
+# so it's intentionally not listed here.

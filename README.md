@@ -129,6 +129,20 @@ cd ..; npm.cmd run api:dev
 # now http://127.0.0.1:3001/ serves the UI
 ```
 
+For a real desktop app (one icon, one window, no terminals), there's a
+Tauri 2 wrapper at [`toad-local/ui/src-tauri/`](toad-local/ui/src-tauri/):
+
+```powershell
+cd C:\Project-TOAD\toad-local\ui
+npm.cmd install              # one-time
+npm.cmd run tauri:icon ..\toad-source.png   # one-time, needs a 1024x1024 PNG
+npm.cmd run tauri:dev        # spawns API + opens TOAD in a real window
+npm.cmd run tauri:build      # builds .msi/.exe (Win), .dmg/.app (Mac), .AppImage (Linux)
+```
+
+Setup details (Rust toolchain, platform-native deps, icon generation) live in
+[`toad-local/ui/TAURI.md`](toad-local/ui/TAURI.md).
+
 ## Architecture in five paragraphs
 
 **Durable events, transient processes.** The source of truth is the SQLite
@@ -323,20 +337,23 @@ built-in `node:test` runner — no Jest, Vitest, or other harness.
 
 Tracked on the roadmap; flagged here so nothing is hidden:
 
-- **Phase 4 polish items**: toast system (currently quiet by default per
-  setting, but no toast renderer yet), live log viewer, runtime cost
-  dashboard, stuck-runtime alerts as toasts, full audit-log viewer.
-- **OpenAI / OpenCode plan-auth**: stubs in place, need the actual CLI auth
-  command shapes confirmed before wiring.
-- **Tauri desktop wrapper**: planned as the production shipping target;
-  currently the UI runs in a browser pointing at the local API.
+- **OpenCode plan-auth**: not wired — OpenCode is API-only by design (no
+  subscription/plan auth flow exists for it). The Providers tab hides the
+  plan-auth toggle for it accordingly.
+- **Tauri desktop wrapper**: scaffold landed at
+  [`toad-local/ui/src-tauri/`](toad-local/ui/src-tauri/) with
+  `npm run tauri:dev` / `tauri:build` scripts. The Rust shell spawns the
+  Node orchestrator as a child process and shows the React UI in a system
+  webview. First end-to-end build needs Rust 1.70+ on PATH and
+  generated icons (`npm run tauri:icon path/to/source.png`) — see
+  [`toad-local/ui/TAURI.md`](toad-local/ui/TAURI.md) for the full setup.
 - **Backend GitHub-driven actions** (creating PRs, branch protection
   detection): the UI surface for GitHub auth is real and the token is
   stored, but the orchestrator doesn't yet *use* the token for anything
   beyond verifying the user.
 - **Plan-auth status caching**: each call to `provider_auth_status` shells
-  out to the CLI synchronously. For most users this is fine (~50ms);
-  caching is on the to-do list if it becomes a hot path.
+  out to the CLI / reads the auth file synchronously. For most users this
+  is fine (~5-50ms); caching is on the to-do list if it becomes a hot path.
 
 The `HANDOFF-NEXT-AGENT.md` at the repo root tracks the rolling state
 between sessions — read that first if you're picking up the project cold.
