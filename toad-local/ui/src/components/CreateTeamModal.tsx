@@ -54,6 +54,7 @@ export function CreateTeamModal({
   const [autoApprove, setAutoApprove] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [validationOpen, setValidationOpen] = useState(false);
   const [projectMode, setProjectMode] = useState<ProjectMode>('list');
   const [project, setProject] = useState(RECENT_PROJECTS[0]);
   const [customPath, setCustomPath] = useState('');
@@ -61,6 +62,12 @@ export function CreateTeamModal({
   const [leadProvider, setLeadProvider] = useState('anthropic');
   const [leadModel, setLeadModel] = useState('Opus 4.6');
   const [leadPrompt, setLeadPrompt] = useState('');
+  const [validationInstall, setValidationInstall] = useState('');
+  const [validationLint, setValidationLint] = useState('');
+  const [validationTypecheck, setValidationTypecheck] = useState('');
+  const [validationTest, setValidationTest] = useState('');
+  const [validationBuild, setValidationBuild] = useState('');
+  const [validationSecurity, setValidationSecurity] = useState('');
   const [description, setDescription] = useState('');
   const [submit, setSubmit] = useState<SubmitState>({ kind: 'idle' });
 
@@ -119,12 +126,27 @@ export function CreateTeamModal({
           ...(cwd ? { cwd } : {}),
         }));
 
+    // Pack validation commands; only include keys the user actually filled in
+    // so the backend's normalizer doesn't see empty strings.
+    const validation: Record<string, string> = {};
+    if (validationInstall.trim()) validation.installCommand = validationInstall.trim();
+    if (validationLint.trim()) validation.lintCommand = validationLint.trim();
+    if (validationTypecheck.trim()) validation.typecheckCommand = validationTypecheck.trim();
+    if (validationTest.trim()) validation.testCommand = validationTest.trim();
+    if (validationBuild.trim()) validation.buildCommand = validationBuild.trim();
+    if (validationSecurity.trim()) validation.securityCommand = validationSecurity.trim();
+
     try {
       setSubmit({ kind: 'creating' });
       await callTool({
         actor,
         method: 'team_create',
-        args: { teamId, lead, teammates },
+        args: {
+          teamId,
+          lead,
+          teammates,
+          ...(Object.keys(validation).length > 0 ? { validation } : {}),
+        },
         idempotencyKey: `team-create-${teamId}-${Date.now()}`,
       });
 
@@ -468,6 +490,49 @@ export function CreateTeamModal({
                   </div>
                   <div className="sub">All tools execute without confirmation. Use with trusted code only.</div>
                 </div>
+              </div>
+            </div>
+          </div>
+
+          <div className={`collapser ${validationOpen ? 'open' : ''}`}>
+            <div className="collapser-head" onClick={() => setValidationOpen(!validationOpen)}>
+              <div className="icon-circle"><Icon name="check" size={13} /></div>
+              <div style={{ flex: 1 }}>
+                <div className="collapser-title">
+                  Validation commands
+                  <span className="badge">Optional</span>
+                </div>
+                <div className="collapser-sub">
+                  Default install / lint / typecheck / test / build / security commands. New tasks pre-fill from these unless you override per-task.
+                </div>
+              </div>
+              <Icon name="chevronDown" size={14} className="chev" />
+            </div>
+            <div className="collapser-body">
+              {(
+                [
+                  { label: 'Install', placeholder: 'pnpm install', value: validationInstall, set: setValidationInstall },
+                  { label: 'Lint', placeholder: 'pnpm lint', value: validationLint, set: setValidationLint },
+                  { label: 'Typecheck', placeholder: 'pnpm tsc --noEmit', value: validationTypecheck, set: setValidationTypecheck },
+                  { label: 'Test', placeholder: 'pnpm test', value: validationTest, set: setValidationTest },
+                  { label: 'Build', placeholder: 'pnpm build', value: validationBuild, set: setValidationBuild },
+                  { label: 'Security', placeholder: 'pnpm audit --prod', value: validationSecurity, set: setValidationSecurity },
+                ] as const
+              ).map((row) => (
+                <div className="field" key={row.label}>
+                  <label>{row.label}</label>
+                  <input
+                    className="field-input mono"
+                    value={row.value}
+                    onChange={(e) => row.set(e.target.value)}
+                    placeholder={row.placeholder}
+                    disabled={inFlight}
+                    style={{ fontSize: 12 }}
+                  />
+                </div>
+              ))}
+              <div className="field-hint">
+                Each populated command becomes a runnable validation step on every task this team picks up. Leave blank to skip that step.
               </div>
             </div>
           </div>

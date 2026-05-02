@@ -273,7 +273,7 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
   makeTool({
     name: COMMANDS.TEAM_CREATE,
     title: 'Create / Update Team Config',
-    description: 'Persist a team configuration (lead + teammates with their launch parameters). Upserts on teamId.',
+    description: 'Persist a team configuration (lead + teammates with their launch parameters). Upserts on teamId. Optional `validation` block sets the team\'s default install/lint/typecheck/test/build/security commands — new tasks pre-fill from these unless overridden per-task.',
     required: ['teamId'],
     properties: {
       teamId: { type: 'string', minLength: 1 },
@@ -281,6 +281,18 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
       teammates: {
         type: 'array',
         items: TEAM_MEMBER_SCHEMA,
+      },
+      validation: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          installCommand: { type: 'string', minLength: 1 },
+          lintCommand: { type: 'string', minLength: 1 },
+          typecheckCommand: { type: 'string', minLength: 1 },
+          testCommand: { type: 'string', minLength: 1 },
+          buildCommand: { type: 'string', minLength: 1 },
+          securityCommand: { type: 'string', minLength: 1 },
+        },
       },
     },
   }),
