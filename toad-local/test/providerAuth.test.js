@@ -38,11 +38,13 @@ test('SUPPORTED_PROVIDERS is the expected set', () => {
   assert.deepEqual([...SUPPORTED_PROVIDERS].sort(), ['anthropic', 'gemini', 'opencode', 'openai'].sort());
 });
 
-test('getAuthStatus returns supported=false for opencode (placeholder)', () => {
+test('getAuthStatus reports opencode as API-only', () => {
   const result = getAuthStatus({ providerId: 'opencode' });
   assert.equal(result.providerId, 'opencode');
   assert.equal(result.supported, false);
+  assert.equal(result.apiOnly, true);
   assert.equal(result.signedIn, null);
+  assert.match(result.reason, /API-only|API key/i);
 });
 
 test('getAuthStatus returns unknown-provider error', () => {

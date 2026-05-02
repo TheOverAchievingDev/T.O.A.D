@@ -1,8 +1,14 @@
+import { useEffect, useState } from 'react';
 import { Icon } from '../Icon';
 import { SettingsSectionHeader, SettingsCard } from './SettingsLayout';
 import { useSectionDraft } from './useSectionDraft';
 import { SaveBar, SectionMeta } from './SectionShell';
-import { ProviderPlanAuth, type ProviderId } from './ProviderPlanAuth';
+import {
+  ProviderPlanAuth,
+  readProviderAuthStatus,
+  type ProviderId,
+  type AuthStatus,
+} from './ProviderPlanAuth';
 
 type AuthMode = 'apikey' | 'plan';
 
@@ -45,6 +51,29 @@ const DEFAULTS: ProvidersDraft = {
 
 export function ProvidersSettings() {
   const draft = useSectionDraft<ProvidersDraft>({ section: 'providers', scope: 'global', defaults: DEFAULTS });
+  const [authStatuses, setAuthStatuses] = useState<Partial<Record<ProviderId, AuthStatus>>>({});
+
+  // Probe each provider's plan-auth surface once so the auth-mode toggle can
+  // hide the "Plan / subscription" option when the provider is API-only
+  // (OpenCode) or otherwise unsupported. Cheap — backend dispatches without
+  // touching disk for unsupported providers.
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      const ids: ProviderId[] = ['anthropic', 'openai', 'gemini', 'opencode'];
+      const entries = await Promise.all(
+        ids.map(async (id) => [id, await readProviderAuthStatus(id)] as const),
+      );
+      if (cancelled) return;
+      const next: Partial<Record<ProviderId, AuthStatus>> = {};
+      for (const [id, status] of entries) {
+        if (status) next[id] = status;
+      }
+      setAuthStatuses(next);
+    }
+    void load();
+    return () => { cancelled = true; };
+  }, []);
 
   function patchProvider(id: ProviderEntry['id'], partial: Partial<ProviderEntry>) {
     draft.patch({
@@ -70,6 +99,14 @@ export function ProvidersSettings() {
           {draft.draft.providers.map((p) => {
             const authMode: AuthMode = p.authMode ?? 'apikey';
             const label = PROVIDER_LABELS[p.id];
+            const auth = authStatuses[p.id];
+            const planAuthAvailable = auth ? auth.supported === true : true;
+            // If we know the provider can't do plan auth and the user had it
+            // selected, snap them back to API key.
+            if (!planAuthAvailable && authMode === 'plan') {
+              // Defer to next tick to avoid setState during render.
+              queueMicrotask(() => patchProvider(p.id, { authMode: 'apikey' }));
+            }
             return (
               <div
                 key={p.id}
@@ -102,18 +139,22 @@ export function ProvidersSettings() {
                     >
                       API key
                     </button>
-                    <button
-                      type="button"
-                      className={authMode === 'plan' ? 'active' : ''}
-                      onClick={() => patchProvider(p.id, { authMode: 'plan' })}
-                      disabled={draft.saving}
-                    >
-                      Plan / subscription
-                    </button>
+                    {planAuthAvailable && (
+                      <button
+                        type="button"
+                        className={authMode === 'plan' ? 'active' : ''}
+                        onClick={() => patchProvider(p.id, { authMode: 'plan' })}
+                        disabled={draft.saving}
+                      >
+                        Plan / subscription
+                      </button>
+                    )}
                   </div>
                   <div className="field-hint">
                     {authMode === 'apikey'
-                      ? 'Pay-per-token using a provider API key. Key stays in settings.json on this machine.'
+                      ? !planAuthAvailable && auth?.apiOnly
+                        ? `${label} is API-only — no subscription/plan auth flow available.`
+                        : 'Pay-per-token using a provider API key. Key stays in settings.json on this machine.'
                       : `Use your ${label} subscription via the CLI's own auth (no API key needed).`}
                   </div>
                 </div>

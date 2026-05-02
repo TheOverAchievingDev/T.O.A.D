@@ -4,9 +4,11 @@ import { callTool, ToadApiError, type Actor } from '@/api/client';
 
 export type ProviderId = 'anthropic' | 'openai' | 'gemini' | 'opencode';
 
-interface AuthStatus {
+export interface AuthStatus {
   providerId: ProviderId;
   supported: boolean;
+  /** True when the provider has no plan auth at all — only API keys. */
+  apiOnly?: boolean;
   signedIn: boolean | null;
   user?: {
     email?: string | null;
@@ -17,6 +19,21 @@ interface AuthStatus {
   subscriptionType?: string | null;
   authMethod?: string | null;
   reason?: string;
+}
+
+/** Quick read of just whether plan auth is available for a provider — used
+ *  by ProvidersSettings to hide the auth-mode toggle entry for API-only
+ *  providers like OpenCode. */
+export async function readProviderAuthStatus(providerId: ProviderId): Promise<AuthStatus | null> {
+  try {
+    return await callTool<AuthStatus>({
+      actor: DEFAULT_ACTOR,
+      method: 'provider_auth_status',
+      args: { providerId },
+    });
+  } catch {
+    return null;
+  }
 }
 
 const DEFAULT_ACTOR: Actor = { teamId: 'default', agentId: 'ui-client', agentName: 'ui', role: 'human' };
@@ -162,7 +179,9 @@ export function ProviderPlanAuth({ providerId, providerLabel }: ProviderPlanAuth
           color: 'var(--fg-muted)',
         }}
       >
-        <Icon name="info" size={11} /> Plan auth for {providerLabel} not wired yet.{status.reason ? ` ${status.reason}` : ''}
+        <Icon name="info" size={11} /> {status.apiOnly
+          ? `${providerLabel} is API-only — no plan auth available. Use the API key tab.`
+          : `Plan auth for ${providerLabel} not wired yet.${status.reason ? ` ${status.reason}` : ''}`}
       </div>
     );
   }

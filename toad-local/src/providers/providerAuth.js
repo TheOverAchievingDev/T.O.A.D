@@ -79,7 +79,8 @@ const PROVIDER_COMMANDS = Object.freeze({
     loginArgs: ['auth', 'login'],
     logoutArgs: ['auth', 'logout'],
     supported: false,
-    unsupportedReason: 'OpenCode supports many models; the CLI auth shape depends on which one you’re using.',
+    apiOnly: true,
+    unsupportedReason: 'OpenCode is API-only — there is no subscription/plan auth flow. Use the API key tab.',
     statusMode: 'cli',
     statusArgs: ['auth', 'status'],
     parseStatus: parseGenericStatus,
@@ -109,6 +110,7 @@ export function getAuthStatus({ providerId, spawnSyncImpl, readFileImpl, statImp
     return {
       providerId,
       supported: false,
+      apiOnly: cfg.apiOnly === true,
       signedIn: null,
       reason: cfg.unsupportedReason,
     };
