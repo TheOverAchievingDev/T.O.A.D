@@ -23,6 +23,7 @@ interface WorkspaceProps {
   onOpenTask: (id: string) => void;
   onOpenAgent: (id: string) => void;
   onCloseAgent: () => void;
+  onOpenLogs?: (runtimeId: string) => void;
 }
 
 function ActivityStrip({ team }: { team: Team }) {
@@ -67,7 +68,7 @@ const KANBAN_COLS: { key: TaskStatus; label: string; icon: IconName }[] = [
 export function Workspace({
   team, tasks, runtimes, messages,
   cardVariant, agentInbox,
-  onCreateTeam, onCreateTask, onOpenTask, onOpenAgent, onCloseAgent,
+  onCreateTeam, onCreateTask, onOpenTask, onOpenAgent, onCloseAgent, onOpenLogs,
 }: WorkspaceProps) {
   const [selected, setSelected] = useState<string>(team.members[1]?.id ?? team.members[0]?.id ?? '');
   const [kanbanOpen, setKanbanOpen] = useState(true);
@@ -228,6 +229,7 @@ export function Workspace({
           runtimes={runtimes}
           onOpenTask={onOpenTask}
           onCreateTask={onCreateTask}
+          onOpenLogs={onOpenLogs}
         />
       </aside>
     </div>

@@ -1,11 +1,12 @@
 import { useMemo } from 'react';
-import type { Team, Tweaks, UiTask } from '@/types';
+import type { Team, Tweaks, UiTask, Runtime } from '@/types';
 import type { CommandAction } from '@/components/CommandPalette';
 import type { SetTweak } from '@/components/TweaksPanel';
 
 interface UseCommandActionsArgs {
   team: Team;
   tasks: UiTask[];
+  runtimes?: Runtime[];
   tweaks: Tweaks;
   setTweak: SetTweak;
   onOpenTask: (id: string) => void;
@@ -13,6 +14,7 @@ interface UseCommandActionsArgs {
   onCreateTeam: () => void;
   onCreateTask: () => void;
   onRefresh: () => void;
+  onOpenLogs?: (runtimeId: string) => void;
 }
 
 /** Compose every actionable destination/toggle/operation in the app into a flat
@@ -22,8 +24,8 @@ interface UseCommandActionsArgs {
  * surface = adding entries here, not threading new props into CommandPalette.
  */
 export function useCommandActions({
-  team, tasks, tweaks, setTweak,
-  onOpenTask, onOpenAgent, onCreateTeam, onCreateTask, onRefresh,
+  team, tasks, runtimes = [], tweaks, setTweak,
+  onOpenTask, onOpenAgent, onCreateTeam, onCreateTask, onRefresh, onOpenLogs,
 }: UseCommandActionsArgs): CommandAction[] {
   return useMemo<CommandAction[]>(() => {
     const actions: CommandAction[] = [];
@@ -36,6 +38,9 @@ export function useCommandActions({
       { id: 'nav.tasks', group: 'Navigate', label: 'Go to Tasks', icon: 'kanban', hint: 'kanban',
         keywords: ['kanban', 'list', 'todo'],
         run: () => setTweak('screen', 'tasks') },
+      { id: 'nav.costs', group: 'Navigate', label: 'Go to Cost dashboard', icon: 'sparkle',
+        keywords: ['cost', 'token', 'spend', 'budget', 'usage', 'billing'],
+        run: () => setTweak('screen', 'costs') },
       { id: 'nav.settings', group: 'Navigate', label: 'Go to Settings', icon: 'settings',
         keywords: ['preferences', 'config', 'options', 'github', 'providers', 'risk'],
         run: () => setTweak('screen', 'settings') },
@@ -122,6 +127,23 @@ export function useCommandActions({
       });
     }
 
+    // ---- Runtimes (one entry per live/idle runtime, opens log viewer) ----
+    if (onOpenLogs) {
+      for (const r of runtimes) {
+        const member = team.members.find((m) => m.id === r.agent);
+        const display = member ? member.name : r.agent;
+        actions.push({
+          id: `runtime.${r.id}`,
+          group: 'Agents',
+          label: `View logs · ${display}`,
+          icon: 'terminal',
+          hint: r.status,
+          keywords: [r.provider, r.model, 'logs', 'runtime', String(r.pid)],
+          run: () => onOpenLogs(r.id),
+        });
+      }
+    }
+
     // ---- Agents (one entry per team member) ----
     for (const m of team.members) {
       actions.push({
@@ -136,5 +158,5 @@ export function useCommandActions({
     }
 
     return actions;
-  }, [team, tasks, tweaks, setTweak, onOpenTask, onOpenAgent, onCreateTeam, onCreateTask, onRefresh]);
+  }, [team, tasks, runtimes, tweaks, setTweak, onOpenTask, onOpenAgent, onCreateTeam, onCreateTask, onRefresh, onOpenLogs]);
 }

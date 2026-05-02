@@ -120,6 +120,7 @@ export interface Tweaks {
     | 'workspace'
     | 'tasks'
     | 'settings'
+    | 'costs'
     | 'picker'
     | 'empty'
     | 'onboarding'

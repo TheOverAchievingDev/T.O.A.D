@@ -6,6 +6,7 @@ export type SidebarKey =
   | 'tasks'
   | 'runtimes'
   | 'approvals'
+  | 'costs'
   | 'diagnostics'
   | 'settings';
 
@@ -31,6 +32,7 @@ const DEFAULT_TOP: SidebarNavItem[] = [
   { key: 'tasks', label: 'Tasks', icon: 'kanban' },
   { key: 'runtimes', label: 'Runtimes', icon: 'cpu' },
   { key: 'approvals', label: 'Approvals', icon: 'check' },
+  { key: 'costs', label: 'Costs', icon: 'sparkle' },
   { key: 'diagnostics', label: 'Diagnostics', icon: 'info' },
 ];
 

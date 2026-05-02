@@ -10,6 +10,7 @@ interface TasksSideProps {
   runtimes: Runtime[];
   onOpenTask?: (id: string) => void;
   onCreateTask?: () => void;
+  onOpenLogs?: (runtimeId: string) => void;
 }
 
 type SideTab = 'tasks' | 'runtimes' | 'sessions' | 'files';
@@ -23,7 +24,7 @@ const PROVIDER_COLOR: Record<string, string> = {
 
 const ACTIVE_STATUSES: TaskStatus[] = ['in-progress', 'todo', 'review', 'done'];
 
-export function TasksSide({ team, tasks, runtimes, onOpenTask, onCreateTask }: TasksSideProps) {
+export function TasksSide({ team, tasks, runtimes, onOpenTask, onCreateTask, onOpenLogs }: TasksSideProps) {
   const [tab, setTab] = useState<SideTab>('tasks');
 
   useEffect(() => {
@@ -97,7 +98,7 @@ export function TasksSide({ team, tasks, runtimes, onOpenTask, onCreateTask }: T
           </div>
         ))}
 
-        {tab === 'runtimes' && <RuntimesPanel runtimes={runtimes} team={team} />}
+        {tab === 'runtimes' && <RuntimesPanel runtimes={runtimes} team={team} onOpenLogs={onOpenLogs} />}
 
         {tab === 'sessions' && (
           <div style={{ padding: '0 4px', fontSize: 12, color: 'var(--fg-muted)' }}>
@@ -133,7 +134,7 @@ export function TasksSide({ team, tasks, runtimes, onOpenTask, onCreateTask }: T
   );
 }
 
-function RuntimesPanel({ runtimes, team }: { runtimes: Runtime[]; team: Team }) {
+function RuntimesPanel({ runtimes, team, onOpenLogs }: { runtimes: Runtime[]; team: Team; onOpenLogs?: (runtimeId: string) => void }) {
   const live = runtimes.filter((r) => r.status === 'live');
   const idle = runtimes.filter((r) => r.status === 'idle');
   const totalCpu = runtimes.reduce((a, r) => a + r.cpu, 0);
@@ -144,7 +145,12 @@ function RuntimesPanel({ runtimes, team }: { runtimes: Runtime[]; team: Team }) 
     const member = team.members.find((m) => m.id === r.agent);
     const cpuPct = Math.min(100, r.cpu * 4);
     return (
-      <div className={`runtime-row ${r.status}`}>
+      <div
+        className={`runtime-row ${r.status}`}
+        onClick={() => onOpenLogs?.(r.id)}
+        style={onOpenLogs ? { cursor: 'pointer' } : undefined}
+        title={onOpenLogs ? 'Click to view logs' : undefined}
+      >
         <div className="rt-head">
           <span className="status-dot" style={{ background: r.status === 'live' ? 'var(--ok)' : 'var(--fg-dim)', boxShadow: r.status === 'live' ? '0 0 6px var(--ok)' : 'none' }} />
           <span className="rt-name">{member ? member.name : r.agent}</span>

@@ -19,6 +19,9 @@ import { RuntimeDrawer } from '@/components/RuntimeDrawer';
 import { DiagnosticsDrawer } from '@/components/DiagnosticsDrawer';
 import { CommandPalette } from '@/components/CommandPalette';
 import { SettingsScreen } from '@/components/settings/SettingsScreen';
+import { ToastProvider } from '@/components/ToastSystem';
+import { LogViewerDrawer } from '@/components/LogViewerDrawer';
+import { CostsScreen } from '@/components/CostsScreen';
 import {
   TweaksPanel,
   TweakSection,
@@ -28,10 +31,20 @@ import {
 } from '@/components/TweaksPanel';
 import { useTweaks } from '@/hooks/useTweaks';
 import { useToadData } from '@/hooks/useToadData';
+import { useSettings } from '@/hooks/useSettings';
 import { useCommandActions } from '@/hooks/useCommandActions';
 import { useCommandPaletteHotkey } from '@/hooks/useCommandPaletteHotkey';
+import { useEventToasts, type NotificationsConfig } from '@/hooks/useEventToasts';
 
 export default function App() {
+  return (
+    <ToastProvider max={6}>
+      <AppInner />
+    </ToastProvider>
+  );
+}
+
+function AppInner() {
   const [tweaks, setTweak] = useTweaks();
   const { team, tasks, runtimes, messages, loading, error, liveSource, refresh } = useToadData();
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -39,6 +52,7 @@ export default function App() {
   const [taskCreateOpen, setTaskCreateOpen] = useState(false);
   const [launchingTeamId, setLaunchingTeamId] = useState<string | null>(null);
   const [addProjectOpen, setAddProjectOpen] = useState(false);
+  const [logRuntimeId, setLogRuntimeId] = useState<string | null>(null);
   const projectRegistry = useProjects();
 
   useEffect(() => {
@@ -59,13 +73,28 @@ export default function App() {
     setTweak('agentInbox', id);
   }, [setTweak]);
 
+  // Wire SSE runtime events to toasts. Notification config is read from the
+  // backend settings store; falls back to defaults if the API is offline or
+  // the user hasn't configured it.
+  const { settings: backendSettings } = useSettings();
+  const notificationsConfig: NotificationsConfig | undefined =
+    backendSettings.notifications && typeof backendSettings.notifications === 'object'
+      ? (backendSettings.notifications as NotificationsConfig)
+      : undefined;
+  useEventToasts({
+    notifications: notificationsConfig,
+    onOpenTask: openTaskFromPalette,
+    onOpenApprovals: () => setTweak('showApprovals', true),
+  });
+
   const commandActions = useCommandActions({
-    team, tasks, tweaks, setTweak,
+    team, tasks, runtimes, tweaks, setTweak,
     onOpenTask: openTaskFromPalette,
     onOpenAgent: openAgentFromPalette,
     onCreateTeam: () => setTweak('screen', 'create'),
     onCreateTask: () => setTaskCreateOpen(true),
     onRefresh: refresh,
+    onOpenLogs: (runtimeId) => setLogRuntimeId(runtimeId),
   });
 
   // Bridge legacy global window events some components emit (titlebar runtime
@@ -95,6 +124,7 @@ export default function App() {
     if (tweaks.showDiagnostics) return 'diagnostics';
     if (tweaks.showRuntimes) return 'runtimes';
     if (tweaks.screen === 'settings') return 'settings';
+    if (tweaks.screen === 'costs') return 'costs';
     if (tweaks.screen === 'tasks') return 'tasks';
     return 'workspace';
   }, [tweaks]);
@@ -112,6 +142,9 @@ export default function App() {
         return;
       case 'approvals':
         setTweak('showApprovals', true);
+        return;
+      case 'costs':
+        setTweak('screen', 'costs');
         return;
       case 'diagnostics':
         setTweak('showDiagnostics', true);
@@ -205,6 +238,9 @@ export default function App() {
               onCreateTask={() => setTaskCreateOpen(true)}
             />
           )}
+          {tweaks.screen === 'costs' && (
+            <CostsScreen team={team} runtimes={runtimes} />
+          )}
           {tweaks.screen === 'launching' && (
             <TeamLaunchingScreen
               team={team}
@@ -244,6 +280,7 @@ export default function App() {
               }}
               onOpenAgent={(id) => setTweak('agentInbox', id)}
               onCloseAgent={() => setTweak('agentInbox', '')}
+              onOpenLogs={(id) => setLogRuntimeId(id)}
             />
           )}
         </div>
@@ -298,6 +335,13 @@ export default function App() {
 
       {tweaks.showApprovals && (
         <ApprovalsDrawer team={team} onClose={() => setTweak('showApprovals', false)} />
+      )}
+      {logRuntimeId && (
+        <LogViewerDrawer
+          runtimeId={logRuntimeId}
+          title={runtimes.find((r) => r.id === logRuntimeId)?.agent}
+          onClose={() => setLogRuntimeId(null)}
+        />
       )}
       {tweaks.showNotifs && (
         <NotificationsDrawer team={team} onClose={() => setTweak('showNotifs', false)} />
@@ -360,6 +404,7 @@ export default function App() {
                 { value: 'workspace', label: 'Workspace' },
                 { value: 'tasks', label: 'Tasks' },
                 { value: 'settings', label: 'Settings' },
+                { value: 'costs', label: 'Cost dashboard' },
                 { value: 'picker', label: 'Project picker' },
                 { value: 'empty', label: 'Empty workspace' },
                 { value: 'onboarding', label: 'Onboarding' },
