@@ -120,9 +120,16 @@ function AppInner() {
     };
   }, [setTweak]);
 
-  // Pending-approval count (seed-derived for now — Phase 3 will wire to a
-  // real `approvals_list` query).
-  const pendingApprovals = 4;
+  // §14 pending-approval badge count: tasks that the risk-classifier (or
+  // the operator at task_create) flagged as requiring human approval AND
+  // which have not yet been approved. Most-relevant when the task has
+  // reached merge_ready — that's the gate point — but we count any
+  // un-cleared gate so the user can see the queue building up earlier in
+  // the lifecycle too.
+  const pendingApprovals = useMemo(
+    () => tasks.filter((t) => t.requiresHumanApproval === true && t.humanApproved !== true).length,
+    [tasks],
+  );
 
   // The sidebar key reflects the active nav target. Drawer nav items don't
   // change `tweaks.screen` — they toggle the corresponding drawer instead.
