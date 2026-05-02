@@ -1,0 +1,141 @@
+/* App shell — outer layout wrapping titlebar + sidebar + main content. */
+
+/* Override the design's grid layout on .win so the body row can flow with
+ * banner siblings without forcing the body to share its row. */
+.win {
+  display: flex !important;
+  flex-direction: column;
+}
+
+.win > .titlebar {
+  flex: 0 0 auto;
+  height: 36px;
+}
+
+.app-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Whatever direct child the screen renders (Workspace, TasksScreen, EmptyWorkspace,
+ * etc.) needs to fill the column's remaining height. Otherwise `.workspace
+ * { height: 100% }` resolves against an indeterminate parent and collapses. */
+.app-main > * {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* SidebarNav — slim vertical activity-bar style. */
+
+.sb-nav {
+  display: flex;
+  flex-direction: column;
+  width: 64px;
+  flex-shrink: 0;
+  background: var(--bg-panel, #14130f);
+  border-right: 1px solid var(--border-soft, rgba(255,255,255,0.05));
+  padding: 8px 0;
+  overflow: hidden;
+}
+
+.sb-nav-header {
+  padding: 4px 8px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sb-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 6px;
+}
+
+.sb-nav-spacer {
+  flex: 1 1 auto;
+}
+
+.sb-nav-item {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--fg-muted, rgba(255,255,255,0.55));
+  cursor: pointer;
+  border-radius: 8px;
+  padding: 8px 4px 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font: 9.5px/1.1 var(--font-sans, system-ui);
+  letter-spacing: 0.02em;
+  transition: background 0.12s ease, color 0.12s ease;
+  position: relative;
+}
+
+.sb-nav-item:hover {
+  background: rgba(255,255,255,0.04);
+  color: var(--fg, #fff);
+}
+
+.sb-nav-item.active {
+  color: var(--fg, #fff);
+  background: rgba(217, 119, 87, 0.10);
+}
+
+.sb-nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--clay, #d97757);
+}
+
+.sb-nav-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+}
+
+.sb-nav-label {
+  font-size: 9.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.sb-nav-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--err, #e5484d);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  letter-spacing: 0;
+  box-shadow: 0 0 0 1.5px var(--bg-panel, #14130f);
+}

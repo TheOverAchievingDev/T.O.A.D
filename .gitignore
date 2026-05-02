@@ -6,6 +6,10 @@
 **/dist-electron/
 **/out/
 **/build/
+**/*.tsbuildinfo
+
+# Design source (kept locally for reference; not part of the rebuild)
+UI Sketch/
 
 # Local data
 toad-local/.toad/

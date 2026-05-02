@@ -31,6 +31,19 @@ export const COMMANDS = Object.freeze({
   TASK_HISTORY_EXPORT: 'task_history_export',
   TASK_HUMAN_APPROVE: 'task_human_approve',
   STUCK_RUNTIME_LIST: 'stuck_runtime_list',
+  SETTINGS_GET: 'settings_get',
+  SETTINGS_SET: 'settings_set',
+  GITHUB_DEVICE_START: 'github_device_start',
+  GITHUB_DEVICE_POLL: 'github_device_poll',
+  GITHUB_PAT_VERIFY: 'github_pat_verify',
+  GITHUB_DISCONNECT: 'github_disconnect',
+  GITHUB_STATUS: 'github_status',
+  RISK_POLICY_GET: 'risk_policy_get',
+  RISK_POLICY_SET: 'risk_policy_set',
+  RISK_POLICY_PREVIEW: 'risk_policy_preview',
+  PROVIDER_AUTH_STATUS: 'provider_auth_status',
+  PROVIDER_AUTH_LOGIN: 'provider_auth_login',
+  PROVIDER_AUTH_LOGOUT: 'provider_auth_logout',
 });
 
 export const MUTATING_COMMANDS = Object.freeze([
@@ -54,6 +67,12 @@ export const MUTATING_COMMANDS = Object.freeze([
   COMMANDS.TASK_PLAN_APPROVE,
   COMMANDS.TASK_PLAN_REJECT,
   COMMANDS.TASK_HUMAN_APPROVE,
+  COMMANDS.SETTINGS_SET,
+  COMMANDS.GITHUB_PAT_VERIFY,
+  COMMANDS.GITHUB_DISCONNECT,
+  COMMANDS.RISK_POLICY_SET,
+  COMMANDS.PROVIDER_AUTH_LOGIN,
+  COMMANDS.PROVIDER_AUTH_LOGOUT,
 ]);
 
 export function commandRequiresIdempotency(commandName) {

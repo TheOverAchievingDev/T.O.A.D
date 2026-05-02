@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import net from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
+import { promises as fs } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { ApiServer } from '../src/transport/apiServer.js';
 import { RuntimeEventBus } from '../src/runtime/RuntimeEventBus.js';
@@ -474,6 +478,82 @@ test('ApiServer /api/call returns 401 when token is required and Authorization h
   assert.match(JSON.parse(body).error, /unauthor/i);
   assert.equal(facadeCalled, false, 'facade must not be invoked when auth fails');
 });
+
+test('ApiServer serves static files from staticDir when configured', async () => {
+  const eventBus = new RuntimeEventBus();
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'toad-static-'));
+  await fs.writeFile(path.join(tmp, 'index.html'), '<!doctype html><title>UI</title><h1>hello</h1>');
+  await fs.writeFile(path.join(tmp, 'app.js'), 'console.log("hi")');
+  const server = new ApiServer({ eventBus, port: 0, staticDir: tmp });
+  await server.start();
+  const port = server.getPort();
+
+  try {
+    const root = await getRaw(port, '/');
+    assert.equal(root.statusCode, 200);
+    assert.match(root.headers['content-type'], /text\/html/);
+    assert.match(root.body, /<h1>hello<\/h1>/);
+
+    const js = await getRaw(port, '/app.js');
+    assert.equal(js.statusCode, 200);
+    assert.match(js.headers['content-type'], /javascript/);
+    assert.match(js.body, /console\.log/);
+
+    // SPA fallback: unknown path returns index.html
+    const fallback = await getRaw(port, '/some/route');
+    assert.equal(fallback.statusCode, 200);
+    assert.match(fallback.body, /<h1>hello<\/h1>/);
+
+    // Path traversal via URL-encoded '..' segment must be rejected. Use a raw
+    // socket because Node's http client normalizes the URL before sending.
+    const traversal = await getRawSocket(port, '/%2e%2e/etc/passwd');
+    assert.equal(traversal.statusCode, 400);
+  } finally {
+    await server.stop();
+    await fs.rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('ApiServer without staticDir returns 404 for unknown GET routes', async () => {
+  const eventBus = new RuntimeEventBus();
+  const server = new ApiServer({ eventBus, port: 0 });
+  await server.start();
+  const port = server.getPort();
+  try {
+    const res = await getRaw(port, '/nope');
+    assert.equal(res.statusCode, 404);
+  } finally {
+    await server.stop();
+  }
+});
+
+function getRawSocket(port, urlPath) {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ port, host: '127.0.0.1' }, () => {
+      socket.write(`GET ${urlPath} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
+    });
+    let raw = '';
+    socket.on('data', (chunk) => { raw += chunk.toString(); });
+    socket.on('end', () => {
+      const statusLine = raw.split('\r\n', 1)[0] || '';
+      const m = /HTTP\/1\.\d (\d{3})/.exec(statusLine);
+      const statusCode = m ? Number(m[1]) : 0;
+      resolve({ statusCode, raw });
+    });
+    socket.on('error', reject);
+  });
+}
+
+function getRaw(port, urlPath) {
+  return new Promise((resolve) => {
+    const req = http.request(`http://127.0.0.1:${port}${urlPath}`, { method: 'GET' }, (res) => {
+      let body = '';
+      res.on('data', (chunk) => { body += chunk.toString(); });
+      res.on('end', () => resolve({ statusCode: res.statusCode, headers: res.headers, body }));
+    });
+    req.end();
+  });
+}
 
 function postJson(port, payload, headers = {}) {
   return postRaw(port, JSON.stringify(payload), headers);

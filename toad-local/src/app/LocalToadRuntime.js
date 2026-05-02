@@ -20,6 +20,8 @@ import { SideEffectLog } from '../delivery/sideEffectLog.js';
 import { resolveApiToken } from '../runtime/resolveApiToken.js';
 import { shouldInjectToadMcpConfig, withClaudeMcpPermissions, writeToadMcpConfig } from '../mcp/toadMcpConfig.js';
 import { loadRiskPolicy } from '../policy/loadRiskPolicy.js';
+import { RiskPolicyStore } from '../policy/riskPolicyStore.js';
+import { SettingsStore } from '../settings/settingsStore.js';
 
 export class LocalToadRuntime {
   constructor({
@@ -45,6 +47,11 @@ export class LocalToadRuntime {
     sideEffectRetentionDays = parseRetentionDaysEnv(process.env.TOAD_SIDE_EFFECT_RETENTION_DAYS),
     dbPath = ':memory:',
     apiToken = null,
+    uiStaticDir = process.env.TOAD_UI_STATIC_DIR ?? null,
+    githubFetch = null,
+    githubClientId = null,
+    providerAuthSpawn = null,
+    providerAuthSpawnSync = null,
   } = {}) {
     this.broker = broker || new SqliteBroker({ filePath: dbPath });
     this.taskBoard = taskBoard || new SqliteTaskBoard({ filePath: dbPath });
@@ -107,6 +114,11 @@ export class LocalToadRuntime {
       typeof projectCwd === 'string' && projectCwd.length > 0
         ? loadRiskPolicy({ projectCwd })
         : null;
+    this.settingsStore = new SettingsStore({ projectCwd });
+    this.riskPolicyStore =
+      typeof projectCwd === 'string' && projectCwd.length > 0
+        ? new RiskPolicyStore({ projectCwd })
+        : null;
     this.toolFacade =
       toolFacade ||
       new LocalToolFacade({
@@ -127,6 +139,12 @@ export class LocalToadRuntime {
         mergeChecker: this.mergeChecker,
         mergeIntegrator: this.mergeIntegrator,
         riskPolicy: this.riskPolicy,
+        settingsStore: this.settingsStore,
+        riskPolicyStore: this.riskPolicyStore,
+        githubFetch,
+        githubClientId,
+        providerAuthSpawn,
+        providerAuthSpawnSync,
       });
     const db = this.runtimeRegistry?.db || this.eventLog?.db || null;
     this.sideEffectLog = db ? new SideEffectLog(db) : null;
@@ -138,6 +156,7 @@ export class LocalToadRuntime {
       port,
       token: resolveApiToken({ explicit: apiToken, projectCwd }),
       allowedOrigins: parseAllowedOriginsEnv(process.env.TOAD_API_ALLOWED_ORIGINS),
+      staticDir: uiStaticDir,
     });
     this.eventIngestor =
       eventIngestor ||

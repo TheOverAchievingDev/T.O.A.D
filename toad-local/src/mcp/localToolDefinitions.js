@@ -23,7 +23,12 @@ const TEAM_MEMBER_SCHEMA = Object.freeze({
     cwd: { type: 'string', minLength: 1 },
     env: { type: 'object', additionalProperties: { type: 'string' } },
     providerId: { type: 'string', minLength: 1 },
+    role: {
+      type: 'string',
+      enum: ['lead', 'developer', 'reviewer', 'researcher', 'debugger', 'qa', 'architect', 'designer'],
+    },
     prompt: { type: 'string' },
+    skipPermissions: { type: 'boolean' },
   },
 });
 
@@ -407,6 +412,124 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
     required: [],
     properties: {
       thresholdMs: { type: 'integer', minimum: 1 },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.SETTINGS_GET,
+    title: 'Get Settings',
+    description: '§3 Read TOAD settings. Defaults to the merged effective view (project overrides global). Pass scope: "global" or "project" to read a single tier. Settings are split into top-level sections: general, providers, github, workspace, risk, mcp, notifications, advanced.',
+    required: [],
+    properties: {
+      scope: { type: 'string', enum: ['global', 'project', 'effective'] },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.SETTINGS_SET,
+    title: 'Set Settings Section',
+    description: '§3 Write a single settings section to the chosen scope. Existing sections in the same file are preserved. Restricted to lead and human roles. Global writes go to %APPDATA%/toad/settings.json (Windows) or ~/.config/toad/settings.json (Unix). Project writes go to <projectCwd>/.toad/settings.json.',
+    required: ['scope', 'section', 'value'],
+    properties: {
+      scope: { type: 'string', enum: ['global', 'project'] },
+      section: { type: 'string', minLength: 1 },
+      value: { type: 'object' },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.GITHUB_DEVICE_START,
+    title: 'Start GitHub Device Flow',
+    description: '§3c Step 1 of GitHub OAuth Device Flow. Returns a device_code, user_code, and verification URL. The UI shows the user_code to the operator, opens the verification URL in their browser, and polls github_device_poll until the user authorizes. Restricted to lead and human roles.',
+    required: [],
+    properties: {
+      clientId: { type: 'string', minLength: 1 },
+      scopes: { type: 'array', items: { type: 'string', minLength: 1 } },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.GITHUB_DEVICE_POLL,
+    title: 'Poll GitHub Device Flow',
+    description: '§3c Step 2 of GitHub OAuth Device Flow. Exchanges the device_code for an access token. Returns { status: "granted", user, scopes } on success or { status: "pending", reason } while the operator is still authorizing. On grant, persists creds to settings.github automatically.',
+    required: ['deviceCode'],
+    properties: {
+      deviceCode: { type: 'string', minLength: 1 },
+      clientId: { type: 'string', minLength: 1 },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.GITHUB_PAT_VERIFY,
+    title: 'Verify GitHub Personal Access Token',
+    description: '§3c PAT fallback. Verifies the supplied token by calling /user, captures profile + scopes, and persists creds to settings.github. Restricted to lead and human roles.',
+    required: ['token'],
+    properties: {
+      token: { type: 'string', minLength: 1 },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.GITHUB_DISCONNECT,
+    title: 'Disconnect GitHub',
+    description: '§3c Clears stored GitHub credentials (token, user, scopes) from settings.github. Preserves clientId. Restricted to lead and human roles.',
+    required: [],
+    properties: {},
+  }),
+  makeTool({
+    name: COMMANDS.GITHUB_STATUS,
+    title: 'GitHub Connection Status',
+    description: '§3c Read-only. Returns the current GitHub connection state without exposing the token: { status: "connected" | "disconnected", source, user, scopes, connectedAt, clientIdConfigured }.',
+    required: [],
+    properties: {},
+  }),
+  makeTool({
+    name: COMMANDS.RISK_POLICY_GET,
+    title: 'Get Risk Policy',
+    description: '§3d Read .toad/risk-policy.json. Returns { rules, commandRules, path, exists, malformed } so the editor can populate from a clean slate when missing or surface a parse error.',
+    required: [],
+    properties: {},
+  }),
+  makeTool({
+    name: COMMANDS.RISK_POLICY_SET,
+    title: 'Set Risk Policy',
+    description: '§3d Replace .toad/risk-policy.json with the supplied rules + commandRules. Restricted to lead and human roles. Each rule must specify pattern (string) + at least one of riskLevel ("low"|"medium"|"high"|"critical") or requiresHumanApproval=true.',
+    required: [],
+    properties: {
+      rules: { type: 'array', items: { type: 'object' } },
+      commandRules: { type: 'array', items: { type: 'object' } },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.RISK_POLICY_PREVIEW,
+    title: 'Preview Risk Policy',
+    description: '§3d Run the supplied (or current on-disk) policy against a list of files + commands and return the §14 classifier verdict — riskLevel, requiresHumanApproval, matchedRules. Useful for the live-preview pane in the editor.',
+    required: [],
+    properties: {
+      files: { type: 'array', items: { type: 'string', minLength: 1 } },
+      commands: { type: 'array', items: { type: 'string', minLength: 1 } },
+      policy: { type: 'object' },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.PROVIDER_AUTH_STATUS,
+    title: 'Provider Plan-Auth Status',
+    description: '§3c.2 Read the current subscription/plan auth status for a provider by shelling out to its CLI (e.g. `claude auth status --json`). Returns { signedIn, user, plan, subscriptionType, authMethod } when supported, or { supported: false, reason } when the CLI auth surface for that provider isn’t wired yet.',
+    required: ['providerId'],
+    properties: {
+      providerId: { type: 'string', enum: ['anthropic', 'openai', 'opencode'] },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.PROVIDER_AUTH_LOGIN,
+    title: 'Trigger Provider Plan-Auth Login',
+    description: '§3c.2 Spawn the provider CLI’s `auth login` command (detached) so it can open a browser tab. Returns immediately with { started, pid }. Restricted to lead and human roles. The UI polls provider_auth_status until signedIn flips true.',
+    required: ['providerId'],
+    properties: {
+      providerId: { type: 'string', enum: ['anthropic', 'openai', 'opencode'] },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.PROVIDER_AUTH_LOGOUT,
+    title: 'Trigger Provider Plan-Auth Logout',
+    description: '§3c.2 Spawn the provider CLI’s `auth logout` command synchronously. Restricted to lead and human roles.',
+    required: ['providerId'],
+    properties: {
+      providerId: { type: 'string', enum: ['anthropic', 'openai', 'opencode'] },
     },
   }),
 ]);

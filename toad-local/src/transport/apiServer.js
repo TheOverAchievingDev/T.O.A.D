@@ -1,4 +1,6 @@
 import http from 'node:http';
+import path from 'node:path';
+import { promises as fs } from 'node:fs';
 import { Buffer } from 'node:buffer';
 import { timingSafeEqual } from 'node:crypto';
 
@@ -16,7 +18,9 @@ export class ApiServer {
 
   #allowedOrigins;
 
-  constructor({ eventBus, toolFacade, port = 0, maxBodyBytes = 1024 * 1024, token = null, allowedOrigins }) {
+  #staticDir;
+
+  constructor({ eventBus, toolFacade, port = 0, maxBodyBytes = 1024 * 1024, token = null, allowedOrigins, staticDir = null }) {
     if (!eventBus) {
       throw new Error('eventBus is required');
     }
@@ -27,6 +31,9 @@ export class ApiServer {
     this.#token = typeof token === 'string' && token.trim().length > 0 ? token : null;
     this.#tokenBuf = this.#token ? Buffer.from(this.#token) : null;
     this.#allowedOrigins = normalizeAllowedOrigins(allowedOrigins);
+    this.#staticDir = typeof staticDir === 'string' && staticDir.trim().length > 0
+      ? path.resolve(staticDir)
+      : null;
 
     this.#server = http.createServer((req, res) => {
       this.#handleRequest(req, res);
@@ -87,8 +94,59 @@ export class ApiServer {
       return;
     }
 
+    if (this.#staticDir && req.method === 'GET') {
+      this.#handleStaticRequest(req, res).catch(() => {
+        res.writeHead(500);
+        res.end('Internal Server Error');
+      });
+      return;
+    }
+
     res.writeHead(404);
     res.end('Not Found');
+  }
+
+  async #handleStaticRequest(req, res) {
+    const urlPath = (req.url || '/').split('?')[0];
+    const safe = sanitizeStaticPath(urlPath);
+    if (safe == null) {
+      res.writeHead(400);
+      res.end('Bad Request');
+      return;
+    }
+
+    const candidate = path.join(this.#staticDir, safe);
+    if (!candidate.startsWith(this.#staticDir)) {
+      res.writeHead(400);
+      res.end('Bad Request');
+      return;
+    }
+
+    try {
+      const stat = await fs.stat(candidate);
+      if (stat.isDirectory()) {
+        return this.#sendStaticFile(res, path.join(candidate, 'index.html'));
+      }
+      return this.#sendStaticFile(res, candidate);
+    } catch {
+      // SPA fallback — serve index.html for unmatched paths
+      try {
+        await this.#sendStaticFile(res, path.join(this.#staticDir, 'index.html'));
+      } catch {
+        res.writeHead(404);
+        res.end('Not Found');
+      }
+    }
+  }
+
+  async #sendStaticFile(res, filePath) {
+    const data = await fs.readFile(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    res.writeHead(200, {
+      'Content-Type': STATIC_MIME[ext] || 'application/octet-stream',
+      'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=3600',
+    });
+    res.end(data);
   }
 
   #setCorsHeaders(req, res) {
@@ -275,6 +333,42 @@ const DEFAULT_ALLOWED_ORIGINS = Object.freeze([
   'http://localhost:5173',
   'http://127.0.0.1:5173',
 ]);
+
+const STATIC_MIME = Object.freeze({
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+});
+
+function sanitizeStaticPath(urlPath) {
+  if (typeof urlPath !== 'string') return null;
+  let decoded;
+  try {
+    decoded = decodeURIComponent(urlPath);
+  } catch {
+    return null;
+  }
+  if (decoded.includes('\0')) return null;
+  if (!decoded.startsWith('/')) return null;
+  // Reject any segment that is exactly '..' (path traversal attempt)
+  const segments = decoded.split('/').filter((s) => s !== '');
+  if (segments.some((s) => s === '..')) return null;
+  const joined = segments.join('/');
+  if (joined === '') return 'index.html';
+  return joined;
+}
 
 function parseQueryToken(url) {
   if (typeof url !== 'string') return null;

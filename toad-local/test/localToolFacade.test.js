@@ -1,9 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import os from 'node:os';
+import path from 'node:path';
+import { promises as fs } from 'node:fs';
 import { InMemoryBroker } from '../src/broker/inMemoryBroker.js';
 import { COMMANDS } from '../src/commands/command-contract.js';
 import { InMemoryTaskBoard, TASK_EVENT_TYPES, TASK_STATUS } from '../src/task/inMemoryTaskBoard.js';
 import { LocalToolFacade } from '../src/tools/localToolFacade.js';
+import { SettingsStore } from '../src/settings/settingsStore.js';
+import { RiskPolicyStore } from '../src/policy/riskPolicyStore.js';
 
 function createFacade() {
   const broker = new InMemoryBroker();
@@ -4023,12 +4028,484 @@ test('stuck_runtime_list returns the detector output filtered to actor.teamId', 
   const result = facade.execute({
     commandName: COMMANDS.STUCK_RUNTIME_LIST,
     actor: { teamId: 'team-a', agentId: 'operator', role: 'human' },
-    args: { thresholdMs: 15 * 60_000 },
+    args: { thresholdMs: 15 * 60_000, now: '2026-05-01T22:00:00.000Z' },
   });
   // r-stuck has no events, startedAt is far in the past — flagged
-  // r-fresh ticked 1min ago — within threshold
+  // r-fresh ticked 1min ago (per fake `now`) — within threshold
   // r-other is in another team — filtered by registry
   assert.equal(result.length, 1);
   assert.equal(result[0].runtimeId, 'r-stuck');
   assert.equal(result[0].taskId, 'task-1');
+});
+
+
+// --- §3 Phase 3b: settings_get / settings_set ---
+
+test('settings_get returns merged effective settings + paths', async () => {
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'toad-set-fac1-'));
+  const settingsStore = new SettingsStore({ globalPath: path.join(tmpRoot, 'g.json'), projectCwd: tmpRoot });
+  await settingsStore.setSection({ scope: 'global', section: 'general', value: { theme: 'dark' } });
+
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    settingsStore,
+  });
+  const result = await facade.execute({
+    commandName: COMMANDS.SETTINGS_GET,
+    actor: { teamId: 'team-a', agentId: 'operator', role: 'human' },
+    args: {},
+  });
+  assert.equal(result.scope, 'effective');
+  assert.equal(result.settings.general.theme, 'dark');
+  assert.equal(result.paths.global, path.join(tmpRoot, 'g.json'));
+  assert.equal(result.paths.project, path.join(tmpRoot, '.toad', 'settings.json'));
+});
+
+test('settings_set writes a section and persists across reads', async () => {
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'toad-set-fac2-'));
+  const settingsStore = new SettingsStore({ globalPath: path.join(tmpRoot, 'g.json'), projectCwd: tmpRoot });
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    settingsStore,
+  });
+
+  const writeResult = await facade.execute({
+    commandName: COMMANDS.SETTINGS_SET,
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { scope: 'global', section: 'github', value: { user: 'alice', tokenScopes: ['repo'] } },
+    idempotencyKey: 'k-1',
+  });
+  assert.equal(writeResult.scope, 'global');
+  assert.equal(writeResult.section, 'github');
+  assert.deepEqual(writeResult.value, { user: 'alice', tokenScopes: ['repo'] });
+
+  const readResult = await facade.execute({
+    commandName: COMMANDS.SETTINGS_GET,
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { scope: 'global' },
+  });
+  assert.deepEqual(readResult.settings.github, { user: 'alice', tokenScopes: ['repo'] });
+});
+
+test('settings_set rejects bad scope/section/value', async () => {
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'toad-set-fac3-'));
+  const settingsStore = new SettingsStore({ globalPath: path.join(tmpRoot, 'g.json'), projectCwd: tmpRoot });
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    settingsStore,
+  });
+  const actor = { teamId: 'team-a', agentId: 'lead', role: 'lead' };
+
+  await assert.rejects(
+    () => facade.execute({ commandName: COMMANDS.SETTINGS_SET, actor, idempotencyKey: 'k-2', args: { scope: 'invalid', section: 'general', value: {} } }),
+    /scope must be/,
+  );
+  await assert.rejects(
+    () => facade.execute({ commandName: COMMANDS.SETTINGS_SET, actor, idempotencyKey: 'k-3', args: { scope: 'global', section: '', value: {} } }),
+    /section must be/,
+  );
+  await assert.rejects(
+    () => facade.execute({ commandName: COMMANDS.SETTINGS_SET, actor, idempotencyKey: 'k-4', args: { scope: 'global', section: 'general', value: 'oops' } }),
+    /value must be/,
+  );
+});
+
+test('settings_get throws cleanly when no settings store is configured', async () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  await assert.rejects(
+    () => facade.execute({
+      commandName: COMMANDS.SETTINGS_GET,
+      actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+      args: {},
+    }),
+    /no settings store/,
+  );
+});
+
+test('settings_set is denied for non-lead/non-human roles', async () => {
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'toad-set-fac4-'));
+  const settingsStore = new SettingsStore({ globalPath: path.join(tmpRoot, 'g.json'), projectCwd: tmpRoot });
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    settingsStore,
+  });
+  await assert.rejects(
+    async () => facade.execute({
+      commandName: COMMANDS.SETTINGS_SET,
+      actor: { teamId: 'team-a', agentId: 'rev', role: 'reviewer' },
+      idempotencyKey: 'k-deny',
+      args: { scope: 'global', section: 'general', value: { theme: 'dark' } },
+    }),
+    /role authority/,
+  );
+});
+
+// --- §3c Phase 3c: GitHub auth ---
+
+function makeGithubMock(routes) {
+  return async (url, init) => {
+    for (const [matcher, handler] of routes) {
+      if (typeof matcher === 'string' ? url === matcher : matcher.test(url)) {
+        return handler({ url, init });
+      }
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  };
+}
+
+function ghJson(body, { status = 200, scopes } = {}) {
+  const headers = {
+    get(n) {
+      if (n.toLowerCase() === 'x-oauth-scopes') return scopes ?? null;
+      return null;
+    },
+  };
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers,
+    text: async () => JSON.stringify(body),
+    json: async () => body,
+  };
+}
+
+async function makeFacadeWithSettings({ githubFetch, githubClientId } = {}) {
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'toad-gh-fac-'));
+  const settingsStore = new SettingsStore({ globalPath: path.join(tmpRoot, 'g.json'), projectCwd: tmpRoot });
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    settingsStore,
+    githubFetch,
+    githubClientId,
+  });
+  return { facade, settingsStore };
+}
+
+test('github_device_start fails when no client_id is configured', async () => {
+  const { facade } = await makeFacadeWithSettings();
+  await assert.rejects(
+    async () => facade.execute({
+      commandName: COMMANDS.GITHUB_DEVICE_START,
+      actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+      args: {},
+    }),
+    /no OAuth client_id/,
+  );
+});
+
+test('github_device_start returns user code + verification URL', async () => {
+  const githubFetch = makeGithubMock([
+    [/login\/device\/code$/, () => ghJson({
+      device_code: 'dc_xyz', user_code: 'AAAA-BBBB',
+      verification_uri: 'https://github.com/login/device',
+      expires_in: 900, interval: 5,
+    })],
+  ]);
+  const { facade } = await makeFacadeWithSettings({ githubFetch, githubClientId: 'cid-toad' });
+  const result = await facade.execute({
+    commandName: COMMANDS.GITHUB_DEVICE_START,
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: {},
+  });
+  assert.equal(result.userCode, 'AAAA-BBBB');
+  assert.equal(result.verificationUri, 'https://github.com/login/device');
+  assert.equal(result.interval, 5);
+});
+
+test('github_device_poll returns pending while user is authorizing', async () => {
+  const githubFetch = makeGithubMock([
+    [/login\/oauth\/access_token$/, () => ghJson({ error: 'authorization_pending' })],
+  ]);
+  const { facade } = await makeFacadeWithSettings({ githubFetch, githubClientId: 'cid' });
+  const result = await facade.execute({
+    commandName: COMMANDS.GITHUB_DEVICE_POLL,
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { deviceCode: 'dc' },
+    idempotencyKey: 'k-poll',
+  });
+  assert.equal(result.status, 'pending');
+  assert.equal(result.reason, 'authorization_pending');
+});
+
+test('github_device_poll persists creds and returns granted on access_token', async () => {
+  const githubFetch = makeGithubMock([
+    [/login\/oauth\/access_token$/, () => ghJson({ access_token: 'gho_real', token_type: 'bearer', scope: 'repo,read:user' })],
+    [/api\.github\.com\/user$/, () => ghJson({ login: 'octocat', id: 1, name: 'O', avatar_url: 'a', html_url: 'h' }, { scopes: 'repo, read:user' })],
+  ]);
+  const { facade, settingsStore } = await makeFacadeWithSettings({ githubFetch, githubClientId: 'cid' });
+
+  const result = await facade.execute({
+    commandName: COMMANDS.GITHUB_DEVICE_POLL,
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { deviceCode: 'dc' },
+    idempotencyKey: 'k-grant',
+  });
+  assert.equal(result.status, 'granted');
+  assert.equal(result.user.login, 'octocat');
+
+  const persisted = await settingsStore.readGlobalRaw();
+  assert.equal(persisted.github.source, 'device');
+  assert.equal(persisted.github.accessToken, 'gho_real');
+  assert.equal(persisted.github.user.login, 'octocat');
+});
+
+test('github_pat_verify returns rejected on bad credentials', async () => {
+  const githubFetch = makeGithubMock([
+    [/api\.github\.com\/user$/, () => ghJson({ message: 'Bad credentials' }, { status: 401 })],
+  ]);
+  const { facade, settingsStore } = await makeFacadeWithSettings({ githubFetch });
+  const result = await facade.execute({
+    commandName: COMMANDS.GITHUB_PAT_VERIFY,
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { token: 'pat_bad' },
+    idempotencyKey: 'k-pat-bad',
+  });
+  assert.equal(result.status, 'rejected');
+  assert.equal(result.httpStatus, 401);
+  const persisted = await settingsStore.readGlobalRaw();
+  assert.equal(persisted.github?.accessToken ?? null, null);
+});
+
+test('github_pat_verify persists token + user + scopes on success', async () => {
+  const githubFetch = makeGithubMock([
+    [/api\.github\.com\/user$/, () => ghJson({ login: 'alice', id: 7 }, { scopes: 'repo' })],
+  ]);
+  const { facade, settingsStore } = await makeFacadeWithSettings({ githubFetch });
+  const result = await facade.execute({
+    commandName: COMMANDS.GITHUB_PAT_VERIFY,
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { token: 'pat_good' },
+    idempotencyKey: 'k-pat-ok',
+  });
+  assert.equal(result.status, 'verified');
+  const persisted = await settingsStore.readGlobalRaw();
+  assert.equal(persisted.github.source, 'pat');
+  assert.equal(persisted.github.accessToken, 'pat_good');
+  assert.deepEqual(persisted.github.scopes, ['repo']);
+  assert.equal(persisted.github.user.login, 'alice');
+});
+
+test('github_status reports disconnected without creds, connected after', async () => {
+  const githubFetch = makeGithubMock([
+    [/api\.github\.com\/user$/, () => ghJson({ login: 'bob', id: 9 }, { scopes: 'repo' })],
+  ]);
+  const { facade } = await makeFacadeWithSettings({ githubFetch });
+
+  const before = await facade.execute({
+    commandName: COMMANDS.GITHUB_STATUS,
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: {},
+  });
+  assert.equal(before.status, 'disconnected');
+
+  await facade.execute({
+    commandName: COMMANDS.GITHUB_PAT_VERIFY,
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { token: 'pat_z' },
+    idempotencyKey: 'k-pat-z',
+  });
+
+  const after = await facade.execute({
+    commandName: COMMANDS.GITHUB_STATUS,
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: {},
+  });
+  assert.equal(after.status, 'connected');
+  assert.equal(after.source, 'pat');
+  assert.equal(after.user.login, 'bob');
+});
+
+test('github_disconnect clears creds but preserves clientId', async () => {
+  const { facade, settingsStore } = await makeFacadeWithSettings();
+  await settingsStore.setSection({
+    scope: 'global', section: 'github',
+    value: { source: 'pat', accessToken: 't', user: { login: 'x' }, scopes: ['repo'], clientId: 'cid-keep' },
+  });
+  await facade.execute({
+    commandName: COMMANDS.GITHUB_DISCONNECT,
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: {},
+    idempotencyKey: 'k-disc',
+  });
+  const persisted = await settingsStore.readGlobalRaw();
+  assert.equal(persisted.github.accessToken ?? null, null);
+  assert.equal(persisted.github.user ?? null, null);
+  assert.equal(persisted.github.clientId, 'cid-keep');
+});
+
+// --- §3d Phase 3d: risk policy editor ---
+
+async function makeFacadeWithRiskPolicy() {
+  const projectCwd = await fs.mkdtemp(path.join(os.tmpdir(), 'toad-rpol-fac-'));
+  const riskPolicyStore = new RiskPolicyStore({ projectCwd });
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    riskPolicyStore,
+  });
+  return { facade, riskPolicyStore, projectCwd };
+}
+
+test('risk_policy_get returns empty + exists=false on a fresh project', async () => {
+  const { facade } = await makeFacadeWithRiskPolicy();
+  const result = await facade.execute({
+    commandName: COMMANDS.RISK_POLICY_GET,
+    actor: { teamId: 't', agentId: 'lead', role: 'lead' },
+    args: {},
+  });
+  assert.equal(result.exists, false);
+  assert.deepEqual(result.rules, []);
+});
+
+test('risk_policy_set persists rules + commandRules', async () => {
+  const { facade, riskPolicyStore } = await makeFacadeWithRiskPolicy();
+  await facade.execute({
+    commandName: COMMANDS.RISK_POLICY_SET,
+    actor: { teamId: 't', agentId: 'lead', role: 'lead' },
+    idempotencyKey: 'k-rpset',
+    args: {
+      rules: [{ pattern: '.env*', riskLevel: 'critical', requiresHumanApproval: true }],
+      commandRules: [{ pattern: 'rm -rf', riskLevel: 'high' }],
+    },
+  });
+  const reread = await riskPolicyStore.read();
+  assert.equal(reread.rules[0].pattern, '.env*');
+  assert.equal(reread.commandRules[0].pattern, 'rm -rf');
+});
+
+test('risk_policy_preview classifies against the supplied policy', async () => {
+  const { facade } = await makeFacadeWithRiskPolicy();
+  const verdict = await facade.execute({
+    commandName: COMMANDS.RISK_POLICY_PREVIEW,
+    actor: { teamId: 't', agentId: 'lead', role: 'lead' },
+    args: {
+      files: ['.env.production', 'src/app.ts'],
+      commands: [],
+      policy: {
+        rules: [
+          { pattern: '.env*', riskLevel: 'critical', requiresHumanApproval: true },
+        ],
+      },
+    },
+  });
+  assert.equal(verdict.riskLevel, 'critical');
+  assert.equal(verdict.requiresHumanApproval, true);
+  assert.equal(verdict.matchedRules.length, 1);
+  assert.equal(verdict.matchedRules[0].pattern, '.env*');
+});
+
+test('risk_policy_set is denied for non-lead/non-human roles', async () => {
+  const { facade } = await makeFacadeWithRiskPolicy();
+  await assert.rejects(
+    async () => facade.execute({
+      commandName: COMMANDS.RISK_POLICY_SET,
+      actor: { teamId: 't', agentId: 'rev', role: 'reviewer' },
+      idempotencyKey: 'k-rp-deny',
+      args: { rules: [], commandRules: [] },
+    }),
+    /role authority/,
+  );
+});
+
+// --- §3c.2 Phase 3c.2: provider plan-auth ---
+
+test('provider_auth_status anthropic happy path returns signedIn:true', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    providerAuthSpawnSync: () => ({
+      status: 0,
+      stdout: JSON.stringify({ authenticated: true, email: 'kayden@example.com', subscriptionType: 'pro' }),
+      stderr: '',
+      error: null,
+    }),
+  });
+  const result = facade.execute({
+    commandName: COMMANDS.PROVIDER_AUTH_STATUS,
+    actor: { teamId: 't', agentId: 'lead', role: 'lead' },
+    args: { providerId: 'anthropic' },
+  });
+  assert.equal(result.signedIn, true);
+  assert.equal(result.user.email, 'kayden@example.com');
+  assert.equal(result.subscriptionType, 'pro');
+});
+
+test('provider_auth_status returns supported=false for openai (placeholder)', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  const result = facade.execute({
+    commandName: COMMANDS.PROVIDER_AUTH_STATUS,
+    actor: { teamId: 't', agentId: 'lead', role: 'lead' },
+    args: { providerId: 'openai' },
+  });
+  assert.equal(result.supported, false);
+  assert.equal(result.signedIn, null);
+});
+
+test('provider_auth_login dispatches spawn with the right args', () => {
+  let captured = null;
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    providerAuthSpawn: (cli, args) => {
+      captured = { cli, args };
+      return { pid: 7, unref() {} };
+    },
+  });
+  const result = facade.execute({
+    commandName: COMMANDS.PROVIDER_AUTH_LOGIN,
+    actor: { teamId: 't', agentId: 'lead', role: 'lead' },
+    args: { providerId: 'anthropic' },
+    idempotencyKey: 'k-paul',
+  });
+  assert.equal(result.started, true);
+  assert.equal(captured.cli, 'claude');
+  assert.deepEqual(captured.args, ['auth', 'login']);
+});
+
+test('provider_auth_logout dispatches synchronous spawn', () => {
+  let captured = null;
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    providerAuthSpawnSync: (cli, args) => {
+      captured = { cli, args };
+      return { status: 0, stdout: '', stderr: '', error: null };
+    },
+  });
+  const result = facade.execute({
+    commandName: COMMANDS.PROVIDER_AUTH_LOGOUT,
+    actor: { teamId: 't', agentId: 'lead', role: 'lead' },
+    args: { providerId: 'anthropic' },
+    idempotencyKey: 'k-pa-out',
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(captured.args, ['auth', 'logout']);
+});
+
+test('provider_auth_login is denied for non-lead/non-human roles', async () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    providerAuthSpawn: () => ({ pid: 1, unref() {} }),
+  });
+  await assert.rejects(
+    async () => facade.execute({
+      commandName: COMMANDS.PROVIDER_AUTH_LOGIN,
+      actor: { teamId: 't', agentId: 'rev', role: 'reviewer' },
+      args: { providerId: 'anthropic' },
+      idempotencyKey: 'k-pa-deny',
+    }),
+    /role authority/,
+  );
 });

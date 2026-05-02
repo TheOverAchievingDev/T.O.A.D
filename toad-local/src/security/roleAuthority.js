@@ -30,6 +30,11 @@ const COMMON_READ_TOOLS = Object.freeze([
   'diagnostics_run',
   'task_history_export',
   'stuck_runtime_list',
+  'settings_get',
+  'github_status',
+  'risk_policy_get',
+  'risk_policy_preview',
+  'provider_auth_status',
 ]);
 
 export const ROLE_TOOLS = Object.freeze({

@@ -14,13 +14,25 @@ import { assertRoleCanCallTool } from '../security/roleAuthority.js';
 import { runDiagnostics } from '../diagnostics/runDiagnostics.js';
 import { detectStuckRuntimes, DEFAULT_THRESHOLD_MS as STUCK_DEFAULT_THRESHOLD_MS } from '../diagnostics/stuckRuntimeDetector.js';
 import { classify as classifyRisk } from '../policy/riskClassifier.js';
+import {
+  requestDeviceCode as githubRequestDeviceCode,
+  exchangeDeviceCode as githubExchangeDeviceCode,
+  verifyPersonalAccessToken as githubVerifyPat,
+  getCurrentUser as githubGetCurrentUser,
+} from '../github/githubAuth.js';
+import {
+  getAuthStatus as providerGetAuthStatus,
+  triggerAuthLogin as providerTriggerAuthLogin,
+  triggerAuthLogout as providerTriggerAuthLogout,
+  SUPPORTED_PROVIDERS,
+} from '../providers/providerAuth.js';
 
 // §17: review-feedback severity scale, ordered low → high blocking weight.
 export const REVIEW_FEEDBACK_SEVERITIES = Object.freeze(['nit', 'minor', 'major', 'blocking']);
 import { computeDiff as defaultComputeDiff } from '../task/diffComputer.js';
 
 export class LocalToolFacade {
-  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null, mergeIntegrator = null, riskPolicy = null }) {
+  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null, mergeIntegrator = null, riskPolicy = null, settingsStore = null, riskPolicyStore = null, githubFetch = null, githubClientId = null, providerAuthSpawn = null, providerAuthSpawnSync = null }) {
     if (!broker) throw new TypeError('broker is required');
     if (!taskBoard) throw new TypeError('taskBoard is required');
     this.broker = broker;
@@ -46,6 +58,20 @@ export class LocalToolFacade {
     // §14: project-local risk policy. Null = no auto-classification (back-compat).
     // Accepts policies with either `rules` (file matching), `commandRules`
     // (Bash command matching, §14 follow-up), or both.
+    // §3 settings store. Null = no settings persistence available — get/set
+    // commands return errors when called.
+    this.settingsStore = settingsStore && typeof settingsStore.readEffective === 'function' ? settingsStore : null;
+    this.riskPolicyStore = riskPolicyStore && typeof riskPolicyStore.read === 'function' ? riskPolicyStore : null;
+    // §3c GitHub auth. `githubFetch` injectable so tests don't hit the network;
+    // production callers leave it null and we fall back to globalThis.fetch.
+    this.githubFetch = typeof githubFetch === 'function' ? githubFetch : null;
+    this.githubClientId =
+      typeof githubClientId === 'string' && githubClientId.length > 0
+        ? githubClientId
+        : (process.env.TOAD_GITHUB_CLIENT_ID || null);
+    // §3c.2 Provider plan-auth. Injectable so tests don't actually fork.
+    this.providerAuthSpawn = typeof providerAuthSpawn === 'function' ? providerAuthSpawn : null;
+    this.providerAuthSpawnSync = typeof providerAuthSpawnSync === 'function' ? providerAuthSpawnSync : null;
     this.riskPolicy =
       riskPolicy && (Array.isArray(riskPolicy.rules) || Array.isArray(riskPolicy.commandRules))
         ? riskPolicy
@@ -131,6 +157,32 @@ export class LocalToolFacade {
         return this.#humanApprove(actor, command.idempotencyKey, args);
       case COMMANDS.STUCK_RUNTIME_LIST:
         return this.#stuckRuntimeList(actor, args);
+      case COMMANDS.SETTINGS_GET:
+        return this.#settingsGet(args);
+      case COMMANDS.SETTINGS_SET:
+        return this.#settingsSet(args);
+      case COMMANDS.GITHUB_DEVICE_START:
+        return this.#githubDeviceStart(args);
+      case COMMANDS.GITHUB_DEVICE_POLL:
+        return this.#githubDevicePoll(args);
+      case COMMANDS.GITHUB_PAT_VERIFY:
+        return this.#githubPatVerify(args);
+      case COMMANDS.GITHUB_DISCONNECT:
+        return this.#githubDisconnect();
+      case COMMANDS.GITHUB_STATUS:
+        return this.#githubStatus();
+      case COMMANDS.RISK_POLICY_GET:
+        return this.#riskPolicyGet();
+      case COMMANDS.RISK_POLICY_SET:
+        return this.#riskPolicySet(args);
+      case COMMANDS.RISK_POLICY_PREVIEW:
+        return this.#riskPolicyPreview(args);
+      case COMMANDS.PROVIDER_AUTH_STATUS:
+        return this.#providerAuthStatus(args);
+      case COMMANDS.PROVIDER_AUTH_LOGIN:
+        return this.#providerAuthLogin(args);
+      case COMMANDS.PROVIDER_AUTH_LOGOUT:
+        return this.#providerAuthLogout(args);
       default:
         throw new Error(`unsupported command: ${commandName}`);
     }
@@ -1108,9 +1160,253 @@ export class LocalToolFacade {
     return detectStuckRuntimes({
       runtimes,
       latestEventByRuntime,
-      now: new Date().toISOString(),
+      now: typeof args?.now === 'string' ? args.now : new Date().toISOString(),
       thresholdMs,
     });
+  }
+
+  /**
+   * §3 settings_get. Returns the merged effective settings (global ⊕ project)
+   * with a `_sources` map indicating which file each section came from.
+   * Optional `args.scope` ('global' | 'project') returns the raw single-tier
+   * file instead — useful for editors that want to know exactly what to write.
+   */
+  async #settingsGet(args) {
+    if (!this.settingsStore) {
+      throw new Error('settings_get: no settings store configured');
+    }
+    if (args?.scope === 'global') {
+      return { settings: await this.settingsStore.readGlobalRaw(), scope: 'global' };
+    }
+    if (args?.scope === 'project') {
+      return { settings: await this.settingsStore.readProjectRaw(), scope: 'project' };
+    }
+    return {
+      settings: await this.settingsStore.readEffective(),
+      scope: 'effective',
+      paths: {
+        global: this.settingsStore.getGlobalPath(),
+        project: this.settingsStore.getProjectPath(),
+      },
+    };
+  }
+
+  /**
+   * §3 settings_set. Updates one section (top-level key) at the chosen scope.
+   * args: { scope: 'global' | 'project', section: string, value: object }
+   */
+  async #settingsSet(args) {
+    if (!this.settingsStore) {
+      throw new Error('settings_set: no settings store configured');
+    }
+    const scope = args?.scope;
+    const section = args?.section;
+    const value = args?.value;
+    if (scope !== 'global' && scope !== 'project') {
+      throw new Error(`settings_set: scope must be 'global' or 'project'`);
+    }
+    if (typeof section !== 'string' || section.length === 0) {
+      throw new Error('settings_set: section must be a non-empty string');
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('settings_set: value must be a plain object');
+    }
+    const written = await this.settingsStore.setSection({ scope, section, value });
+    return { scope, section, value: written };
+  }
+
+  // ---- §3c GitHub auth ----------------------------------------------------
+
+  /** Resolve the OAuth client_id, falling back to settings.github.clientId
+   *  when no env var or constructor override was provided. */
+  async #resolveGithubClientId() {
+    if (this.githubClientId) return this.githubClientId;
+    if (!this.settingsStore) return null;
+    const merged = await this.settingsStore.readEffective();
+    const fromSettings = merged?.github?.clientId;
+    return typeof fromSettings === 'string' && fromSettings.length > 0 ? fromSettings : null;
+  }
+
+  async #githubDeviceStart(args) {
+    const clientId = (typeof args?.clientId === 'string' && args.clientId.length > 0)
+      ? args.clientId
+      : await this.#resolveGithubClientId();
+    if (!clientId) {
+      throw new Error('github_device_start: no OAuth client_id configured (set TOAD_GITHUB_CLIENT_ID or settings.github.clientId)');
+    }
+    const scopes = Array.isArray(args?.scopes) && args.scopes.length > 0 ? args.scopes : undefined;
+    return githubRequestDeviceCode({ clientId, scopes, fetchImpl: this.githubFetch });
+  }
+
+  async #githubDevicePoll(args) {
+    const deviceCode = requireString(args?.deviceCode, 'args.deviceCode');
+    const clientId = (typeof args?.clientId === 'string' && args.clientId.length > 0)
+      ? args.clientId
+      : await this.#resolveGithubClientId();
+    if (!clientId) {
+      throw new Error('github_device_poll: no OAuth client_id configured');
+    }
+    const result = await githubExchangeDeviceCode({ clientId, deviceCode, fetchImpl: this.githubFetch });
+    if (result.status === 'granted') {
+      const verified = await githubGetCurrentUser({ token: result.accessToken, fetchImpl: this.githubFetch });
+      if (verified.ok) {
+        await this.#persistGithubCreds({
+          source: 'device',
+          accessToken: result.accessToken,
+          tokenType: result.tokenType,
+          scopes: verified.scopes.length ? verified.scopes : result.scopes,
+          user: verified.user,
+        });
+        return { status: 'granted', user: verified.user, scopes: verified.scopes };
+      }
+      // Token is somehow invalid right after issuance — surface as a soft error.
+      return { status: 'pending', reason: 'token_validation_failed' };
+    }
+    return result;
+  }
+
+  async #githubPatVerify(args) {
+    const token = requireString(args?.token, 'args.token');
+    const verified = await githubVerifyPat({ token, fetchImpl: this.githubFetch });
+    if (!verified.ok) {
+      return { status: 'rejected', httpStatus: verified.status ?? null };
+    }
+    await this.#persistGithubCreds({
+      source: 'pat',
+      accessToken: token,
+      tokenType: 'token',
+      scopes: verified.scopes,
+      user: verified.user,
+    });
+    return { status: 'verified', user: verified.user, scopes: verified.scopes };
+  }
+
+  async #githubDisconnect() {
+    if (!this.settingsStore) {
+      throw new Error('github_disconnect: no settings store configured');
+    }
+    // Preserve clientId if set; clear creds.
+    const merged = await this.settingsStore.readEffective();
+    const next = { ...(merged?.github && typeof merged.github === 'object' ? merged.github : {}) };
+    delete next.accessToken;
+    delete next.tokenType;
+    delete next.scopes;
+    delete next.user;
+    delete next.source;
+    delete next.connectedAt;
+    delete next._sources; // strip synthetic key if it leaked in
+    await this.settingsStore.setSection({ scope: 'global', section: 'github', value: next });
+    return { status: 'disconnected' };
+  }
+
+  async #githubStatus() {
+    if (!this.settingsStore) {
+      return { status: 'no-settings-store' };
+    }
+    const merged = await this.settingsStore.readEffective();
+    const gh = merged?.github;
+    if (!gh || typeof gh !== 'object' || !gh.accessToken) {
+      return { status: 'disconnected', clientIdConfigured: !!(this.githubClientId || gh?.clientId) };
+    }
+    return {
+      status: 'connected',
+      source: gh.source || 'unknown',
+      user: gh.user ?? null,
+      scopes: Array.isArray(gh.scopes) ? gh.scopes : [],
+      connectedAt: gh.connectedAt ?? null,
+      clientIdConfigured: !!(this.githubClientId || gh.clientId),
+    };
+  }
+
+  // ---- §3d Risk-policy editor --------------------------------------------
+
+  async #riskPolicyGet() {
+    if (!this.riskPolicyStore) {
+      throw new Error('risk_policy_get: no risk-policy store configured (project must be set)');
+    }
+    return this.riskPolicyStore.read();
+  }
+
+  async #riskPolicySet(args) {
+    if (!this.riskPolicyStore) {
+      throw new Error('risk_policy_set: no risk-policy store configured');
+    }
+    const rules = Array.isArray(args?.rules) ? args.rules : [];
+    const commandRules = Array.isArray(args?.commandRules) ? args.commandRules : [];
+    const written = await this.riskPolicyStore.write({ rules, commandRules });
+    return written;
+  }
+
+  /**
+   * Run the proposed (or current) policy against a list of files + commands
+   * and return what the §14 classifier would decide. Used by the editor's
+   * live preview pane.
+   */
+  async #riskPolicyPreview(args) {
+    const files = Array.isArray(args?.files) ? args.files.map(String) : [];
+    const commands = Array.isArray(args?.commands) ? args.commands.map(String) : [];
+    let policy;
+    if (args?.policy && typeof args.policy === 'object') {
+      policy = {
+        rules: Array.isArray(args.policy.rules) ? args.policy.rules : [],
+        commandRules: Array.isArray(args.policy.commandRules) ? args.policy.commandRules : [],
+      };
+    } else if (this.riskPolicyStore) {
+      const current = await this.riskPolicyStore.read();
+      policy = { rules: current.rules, commandRules: current.commandRules };
+    } else {
+      policy = { rules: [], commandRules: [] };
+    }
+    return classifyRisk({ files, commands, policy });
+  }
+
+  // ---- §3c.2 Provider plan-auth ------------------------------------------
+
+  #providerAuthStatus(args) {
+    const providerId = requireString(args?.providerId, 'args.providerId');
+    return providerGetAuthStatus({
+      providerId,
+      spawnSyncImpl: this.providerAuthSpawnSync,
+    });
+  }
+
+  #providerAuthLogin(args) {
+    const providerId = requireString(args?.providerId, 'args.providerId');
+    return providerTriggerAuthLogin({
+      providerId,
+      spawnImpl: this.providerAuthSpawn,
+    });
+  }
+
+  #providerAuthLogout(args) {
+    const providerId = requireString(args?.providerId, 'args.providerId');
+    return providerTriggerAuthLogout({
+      providerId,
+      spawnSyncImpl: this.providerAuthSpawnSync,
+    });
+  }
+
+  /**
+   * Persist GitHub credentials. Merges into existing github section so we
+   * don't blow away `clientId` or other unrelated fields.
+   */
+  async #persistGithubCreds({ source, accessToken, tokenType, scopes, user }) {
+    if (!this.settingsStore) {
+      throw new Error('cannot persist GitHub creds: no settings store configured');
+    }
+    const merged = await this.settingsStore.readEffective();
+    const existing = (merged?.github && typeof merged.github === 'object') ? { ...merged.github } : {};
+    delete existing._sources;
+    const next = {
+      ...existing,
+      source,
+      accessToken,
+      tokenType,
+      scopes: Array.isArray(scopes) ? scopes : [],
+      user,
+      connectedAt: new Date().toISOString(),
+    };
+    await this.settingsStore.setSection({ scope: 'global', section: 'github', value: next });
   }
 
   #emitToolCallDenied(actor, commandName, err) {

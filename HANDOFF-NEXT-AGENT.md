@@ -1,6 +1,37 @@
 # TOAD Local Rebuild Handoff
 
-Last updated: 2026-05-01 local session (slices A–F: Level-4 verify + merge-integration + stuck-runtime detector + command rules + review severity + task schema fields)
+Last updated: 2026-05-01 local session (slices A–F + Phase 1 + Phase 2 + Phase 3 UI + provider plan-auth)
+
+**Push state**: 526 backend tests pass (was 504 at start of session). UI typecheck + production build green (405 kB JS / 108 kB gzipped, 71 modules). Committed and pushed.
+
+Latest slice: provider plan-auth (§3c.2). Each provider in **Settings → Providers** has an "Auth method" segmented control — API key vs Plan/subscription. Plan auth shells out to the provider's CLI (`claude auth status --json` / `claude auth login` / `claude auth logout`) so users can use their Claude Pro/Max (and eventually ChatGPT Plus / OpenCode) subscription instead of pasting an API key. New module `src/providers/providerAuth.js`, three new MCP tools (`provider_auth_status` / `provider_auth_login` / `provider_auth_logout`), 12 module tests + 5 facade tests. Anthropic is fully wired; OpenAI/OpenCode return `{ supported: false }` placeholders until the user confirms which CLIs they have installed.
+
+Phase 3 (settings + GitHub + risk-policy editor): full 8-tab Settings shell (`General` / `Providers` / `GitHub` / `Workspace` / `Risk policies` / `MCP servers` / `Notifications` / `Advanced`). Two-tier settings store at `%APPDATA%/toad/settings.json` (global) + `<projectCwd>/.toad/settings.json` (project override). New backend modules: `src/settings/settingsStore.js`, `src/policy/riskPolicyStore.js`, `src/github/githubAuth.js`. New MCP tools: `settings_get/set`, `github_device_start/poll/pat_verify/disconnect/status`, `risk_policy_get/set/preview`. UI hooks: `useSettings`, `useSectionDraft`. GitHub Device Flow + PAT fallback both work end-to-end. Risk-policy editor has a live-preview pane that runs the §14 classifier against sample files/commands.
+
+Phase 2 (sidebar nav + lifecycle): slim 64px left sidebar (Workspace / Tasks / Runtimes / Approvals / Diagnostics / Settings), command palette (⌘K) with fuzzy search across all surfaces, focused TasksScreen with kanban+list toggle, TeamLaunchingScreen between team_create and running workspace, multi-project tab switcher in titlebar (localStorage-backed), per-task §14 risk badge with reasoning popover (TaskRiskBadge), review-feedback composer with severity tags (`review_decide` wired), task-creation form (`task_create` with full slice F schema).
+
+Empty-state policy: live API + empty DB now shows "Create your first task" CTA per surface (TasksScreen / Workspace kanban / TasksSide right rail) instead of silently falling back to seed. Seed fallback only kicks in when API is unreachable (orange banner).
+
+Phase-1 UI port (earlier in session, in parallel with Codex):
+
+- Claude: `CreateTeamModal.tsx` (wires `team_create` + `team_launch`), `TaskDetailModal.tsx` + `task-detail/PlanSection.tsx` + `task-detail/DiffSection.tsx` + `task-detail/ValidationsSection.tsx` (wires `task_history_export` + `task_comment`), `ApprovalsDrawer.tsx` (wires `approval_respond` for tool-level + `task_human_approve` for §14 task-gate via `scope: 'task-gate'` switch).
+- Codex: `TweaksPanel.tsx` (603 LOC + subcomponents `TweakSection` / `TweakRadio` / `TweakSelect` / `TweakToggle` / `TweakSlider` / `TweakText` / `TweakNumber` / `TweakColor` / `TweakButton` / `TweakRow`), `EmptyWorkspace.tsx`, `OnboardingScreen.tsx`, `ProjectPicker.tsx`, `ProvidersModal.tsx`, `NotificationsDrawer.tsx`, `RuntimeDrawer.tsx`, `DiagnosticsDrawer.tsx`.
+
+App.tsx wires the lot:
+- `tweaks.screen` switches between `workspace` / `empty` / `onboarding` / `picker` / `create` (modal) / `task` (modal). All five primary screens are reachable via the screen tweak (or via the new `Settings` titlebar button which opens TweaksPanel with screen + overlay toggles).
+- `tweaks.show*` flags drive the five drawers / modals (`showProviders`, `showNotifs`, `showApprovals`, `showRuntimes`, `showDiagnostics`, `showTweaks`).
+- App listens for legacy global events (`toad:open-runtimes`, `toad:open-providers`, `toad:open-notifs`) and toggles the corresponding tweaks so the existing in-component CustomEvent dispatchers from the design keep working.
+- Titlebar got an Approvals button with a pending-count badge, a Diagnostics button, and the existing `Settings` icon now toggles the TweaksPanel.
+
+Backend touchpoint added in this slice: `TEAM_MEMBER_SCHEMA` in `src/mcp/localToolDefinitions.js` now exposes `role` (enum of the six roles) and `skipPermissions` (bool) so the UI's CreateTeamModal can persist them through `team_create`. Schema test suite still 11/11.
+
+UI verification: `npm run typecheck` clean, `npm run build` produces 309.76 kB JS / 84.61 kB gzipped (45 modules transformed). Vite dev serves all 8 Codex components + 3 Claude modals at HTTP 200. Backend full test suite 504/504 pass.
+
+Phase 2 next (per `docs/superpowers/specs/2026-05-01-toad-ui-roadmap.md`): left navigation sidebar, command palette (⌘K), team-launching watch screen, multi-project tab switching, per-task risk badge popover, review-feedback composer with severity tags, task-history viewer, task-creation form, agent restart/kill controls, model-picker shared component.
+
+Earlier in same session: ported the user's design drop into the React 18 + TypeScript + Vite shell at `toad-local/ui/`. Workspace screen, agent cards (3 variants), org chart, conv rail, tasks/runtimes side panel, agent inbox, titlebar — typed API client, SSE hook, projection-shaped data hook, seed-data fallback. ApiServer gained opt-in `staticDir` for single-process production hosting (`TOAD_UI_STATIC_DIR` env). Two new static-middleware tests including a path-traversal guard via raw socket.
+
+Pre-existing flaky test fixed: `localToolFacade.test.js` "stuck_runtime_list returns the detector output" hardcoded 2026-05-01 timestamps but used wall-clock `now` — passed only inside a ~10-minute window. Made `args.now` overridable on the facade so the test pins `now: '2026-05-01T22:00:00.000Z'`.
 
 Update from same session: shipped six slices in one go after the §14 risk-policy + human-approval gate landed.
 
@@ -11,7 +42,7 @@ Update from same session: shipped six slices in one go after the §14 risk-polic
 - **E — §17 review severity tags**: `review_decide` feedback items now accept optional `severity: 'nit'|'minor'|'major'|'blocking'`. Persisted on the projection. Unknown severities silently dropped (don't reject the whole review for a typo). MCP schema updated. 1 projection test.
 - **F — §1 remaining task schema**: `priority` (`low|medium|high|urgent`), `assignedRole` (one of the six roles), `testCommands`, `expectedDeliverables`, `dependencyTaskIds` all on `task_create` + projection. Enums validated. §10 dependency enforcement is now unblocked. 2 projection tests + 1 facade enum test.
 
-Full `npm.cmd test` passes (502 tests across 41 files, 0 fail; was 435 at slice start).
+Full `npm.cmd test` passes (504 tests across 41 files, 0 fail; was 435 at slice start, +69 across slices A–F + UI/static-dir + flaky-stuck-runtime fix). UI typecheck + production build both green.
 
 Prior: §14 promoted from PARTIAL to REAL (partial). The `.toad/risk-policy.json` config drives a pattern-based classifier (`src/policy/riskClassifier.js`) that runs at `review_request` time and may auto-elevate `task.riskLevel` and flip `requiresHumanApproval` via a new `RISK_CLASSIFIED` event. Plan doc: `docs/superpowers/plans/2026-05-01-risk-policy-human-approval-gate.md`.
 
