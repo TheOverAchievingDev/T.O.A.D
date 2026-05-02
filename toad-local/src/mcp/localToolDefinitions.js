@@ -511,7 +511,7 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
     description: '§3c.2 Read the current subscription/plan auth status for a provider by shelling out to its CLI (e.g. `claude auth status --json`). Returns { signedIn, user, plan, subscriptionType, authMethod } when supported, or { supported: false, reason } when the CLI auth surface for that provider isn’t wired yet.',
     required: ['providerId'],
     properties: {
-      providerId: { type: 'string', enum: ['anthropic', 'openai', 'opencode'] },
+      providerId: { type: 'string', enum: ['anthropic', 'openai', 'gemini', 'opencode'] },
     },
   }),
   makeTool({
@@ -520,7 +520,7 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
     description: '§3c.2 Spawn the provider CLI’s `auth login` command (detached) so it can open a browser tab. Returns immediately with { started, pid }. Restricted to lead and human roles. The UI polls provider_auth_status until signedIn flips true.',
     required: ['providerId'],
     properties: {
-      providerId: { type: 'string', enum: ['anthropic', 'openai', 'opencode'] },
+      providerId: { type: 'string', enum: ['anthropic', 'openai', 'gemini', 'opencode'] },
     },
   }),
   makeTool({
@@ -529,7 +529,7 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
     description: '§3c.2 Spawn the provider CLI’s `auth logout` command synchronously. Restricted to lead and human roles.',
     required: ['providerId'],
     properties: {
-      providerId: { type: 'string', enum: ['anthropic', 'openai', 'opencode'] },
+      providerId: { type: 'string', enum: ['anthropic', 'openai', 'gemini', 'opencode'] },
     },
   }),
   makeTool({

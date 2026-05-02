@@ -4438,7 +4438,7 @@ test('provider_auth_status anthropic happy path returns signedIn:true', () => {
   assert.equal(result.subscriptionType, 'pro');
 });
 
-test('provider_auth_status returns supported=false for openai (placeholder)', () => {
+test('provider_auth_status returns supported=false for opencode (placeholder)', () => {
   const facade = new LocalToolFacade({
     broker: new InMemoryBroker(),
     taskBoard: new InMemoryTaskBoard(),
@@ -4446,7 +4446,7 @@ test('provider_auth_status returns supported=false for openai (placeholder)', ()
   const result = facade.execute({
     commandName: COMMANDS.PROVIDER_AUTH_STATUS,
     actor: { teamId: 't', agentId: 'lead', role: 'lead' },
-    args: { providerId: 'openai' },
+    args: { providerId: 'opencode' },
   });
   assert.equal(result.supported, false);
   assert.equal(result.signedIn, null);

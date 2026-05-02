@@ -17,6 +17,7 @@ interface ProviderEntry {
 const PROVIDER_LABELS: Record<ProviderId, string> = {
   anthropic: 'Anthropic',
   openai: 'OpenAI Codex',
+  gemini: 'Gemini',
   opencode: 'OpenCode',
 };
 
@@ -37,6 +38,7 @@ const DEFAULTS: ProvidersDraft = {
   providers: [
     { id: 'anthropic', apiKey: '', defaultModel: 'Sonnet 4.6', costCapDailyUsd: 50, authMode: 'apikey' },
     { id: 'openai', apiKey: '', defaultModel: '5.4', costCapDailyUsd: 50, authMode: 'apikey' },
+    { id: 'gemini', apiKey: '', defaultModel: 'gemini-2.5-pro', costCapDailyUsd: 0, authMode: 'apikey' },
     { id: 'opencode', apiKey: '', defaultModel: 'GLM-4.6', costCapDailyUsd: 0, authMode: 'apikey' },
   ],
 };

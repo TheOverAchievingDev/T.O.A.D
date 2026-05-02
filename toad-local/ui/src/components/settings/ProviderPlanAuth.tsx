@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../Icon';
 import { callTool, ToadApiError, type Actor } from '@/api/client';
 
-export type ProviderId = 'anthropic' | 'openai' | 'opencode';
+export type ProviderId = 'anthropic' | 'openai' | 'gemini' | 'opencode';
 
 interface AuthStatus {
   providerId: ProviderId;

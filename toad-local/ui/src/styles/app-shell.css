@@ -139,3 +139,7 @@
   letter-spacing: 0;
   box-shadow: 0 0 0 1.5px var(--bg-panel, #14130f);
 }
+
+/* Gemini glyph — design CSS only ships colors for anthropic / openai /
+ * opencode. Adding gemini here keeps the design files untouched. */
+.provider-glyph.gemini { background: oklch(0.74 0.13 80); }
