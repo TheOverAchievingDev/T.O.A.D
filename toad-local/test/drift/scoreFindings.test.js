@@ -69,3 +69,28 @@ test('scoreFindings produces category scores filled-bar style (100 = healthy)', 
   assert.equal(result.categoryScores.test_truth, 100);
   assert.equal(result.categoryScores.risk, 100);
 });
+
+test('scoreFindings on an empty array returns the healthy baseline', () => {
+  const result = scoreFindings([]);
+  assert.equal(result.teamScore, 0);
+  assert.equal(result.status, 'healthy');
+  assert.deepEqual(result.perTaskScores, {});
+  assert.deepEqual(result.categoryScores, {
+    architecture: 100, checklist: 100, slice_scope: 100,
+    test_truth: 100, risk: 100,
+  });
+  // Same when called with undefined (defensive Array.isArray guard).
+  const undef = scoreFindings(undefined);
+  assert.equal(undef.teamScore, 0);
+  assert.equal(undef.status, 'healthy');
+});
+
+test('STATUS_THRESHOLDS is sorted ascending by max — protects statusForScore from silent breakage', async () => {
+  const { STATUS_THRESHOLDS } = await import('../../src/drift/scoreFindings.js');
+  for (let i = 1; i < STATUS_THRESHOLDS.length; i += 1) {
+    assert.ok(
+      STATUS_THRESHOLDS[i].max > STATUS_THRESHOLDS[i - 1].max,
+      `STATUS_THRESHOLDS must be sorted ascending — ${i} (${STATUS_THRESHOLDS[i].max}) <= ${i - 1} (${STATUS_THRESHOLDS[i - 1].max})`
+    );
+  }
+});
