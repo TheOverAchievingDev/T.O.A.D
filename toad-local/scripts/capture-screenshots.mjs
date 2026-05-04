@@ -200,10 +200,87 @@ function killTree(proc) {
   }
 }
 
+/**
+ * Push some demo data into the sidecar so screenshots show populated
+ * dashboards instead of empty states. Idempotent — safe to re-run.
+ *
+ * Seeds: one team (`symphony-demo`), 5 tasks across the lifecycle, and
+ * triggers a drift_run so the dashboard has findings + history.
+ */
+async function seedDemoData() {
+  const TEAM_ID = 'symphony-demo';
+  const ACTOR = { teamId: TEAM_ID, agentId: 'screenshot-bot', role: 'human' };
+  const apiCall = async (method, args, idempotencyKey) => {
+    const body = { actor: ACTOR, method, args };
+    if (idempotencyKey) body.idempotencyKey = idempotencyKey;
+    const res = await fetch(`http://${SIDECAR_HOST}:${SIDECAR_PORT}/api/call`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      console.warn(`  seed ${method} → HTTP ${res.status}: ${text.slice(0, 200)}`);
+      return null;
+    }
+    return res.json();
+  };
+
+  // 1. Team — idempotent: team_create errors on dup, we ignore.
+  await apiCall('team_create', {
+    teamId: TEAM_ID,
+    lead: { agentId: 'lead', providerId: 'anthropic', model: 'sonnet-4', cwd: '.' },
+    teammates: [
+      { agentId: 'dev-1', role: 'developer', providerId: 'anthropic', model: 'sonnet-4' },
+      { agentId: 'reviewer-1', role: 'reviewer', providerId: 'openai', model: 'gpt-5' },
+      { agentId: 'tester-1', role: 'tester', providerId: 'gemini', model: 'gemini-2.5-pro' },
+    ],
+  }, `seed-team-${TEAM_ID}`);
+
+  // 2. Tasks across the lifecycle — gives the kanban actual cards.
+  const tasks = [
+    { id: 't_demo_1', subject: 'Wire OAuth Device Flow into Settings', status: 'in_progress', ownerId: 'dev-1' },
+    { id: 't_demo_2', subject: 'Risk policy: forbid edits to .env files', status: 'review', ownerId: 'reviewer-1' },
+    { id: 't_demo_3', subject: 'Add per-task drift score badge', status: 'testing', ownerId: 'tester-1' },
+    { id: 't_demo_4', subject: 'Document the §-numbered hardening checklist', status: 'merge_ready', ownerId: 'dev-1' },
+    { id: 't_demo_5', subject: 'Refactor RuntimeSupervisor for stuck-runtime detection', status: 'done', ownerId: 'dev-1' },
+  ];
+  for (const t of tasks) {
+    await apiCall('task_create', {
+      taskId: t.id, subject: t.subject, ownerId: t.ownerId,
+      // Status is set in the create event — orchestrator accepts it.
+      status: t.status,
+    }, `seed-task-${t.id}`);
+  }
+
+  // 3. Trigger drift run so the dashboard has findings + a history row.
+  await apiCall('drift_run', { teamId: TEAM_ID, trigger: 'manual' });
+  // Run twice so the sparkline has at least 2 points.
+  await sleep(200);
+  await apiCall('drift_run', { teamId: TEAM_ID, trigger: 'periodic' });
+}
+
 async function captureScreens(playwright, { headed = false } = {}) {
   const browser = await playwright.chromium.launch({ headless: !headed });
   const context = await browser.newContext({ viewport: VIEWPORT });
   const page = await context.newPage();
+
+  // Inject localStorage BEFORE the page loads so useProjects + useTweaks
+  // see a configured project on first render. Without this, the welcome
+  // screen takes over and we can't reach the populated views.
+  await context.addInitScript(() => {
+    try {
+      localStorage.setItem('toad.projects', JSON.stringify({
+        projects: [{ id: 'p_demo', name: 'symphony-demo', path: 'C:/symphony-demo' }],
+        activeId: 'p_demo',
+      }));
+      localStorage.setItem('toad.tweaks', JSON.stringify({
+        screen: 'workspace',
+        theme: 'dark',
+        layout: 'kanban',
+      }));
+    } catch { /* ignore */ }
+  });
 
   // Capture every kind of failure signal Playwright exposes.
   page.on('pageerror', (err) => console.warn('[ui] pageerror:', err.message));
@@ -331,6 +408,10 @@ async function main() {
       await waitForUrl(VITE_URL, 120_000, 'Vite UI');
       console.log(`Vite UI ready at ${VITE_URL}`);
     }
+
+    console.log('\nSeeding demo data (team + tasks + drift findings)...');
+    await seedDemoData();
+    console.log('Seed complete.');
 
     console.log('\nCapturing screens...\n');
     const headed = process.env.HEADED === '1';
