@@ -65,13 +65,27 @@ if (driftDb) {
     },
   });
   driftMonitor.start();
-  // NOTE: there is no task_event fan-out hook in dev-api-server today —
-  // taskBoard.appendEvent is called directly from inside LocalToolFacade
-  // command handlers and does not emit to any subscriber. The periodic
-  // ticker (every 60s) still drives drift evaluation; we lose only the
-  // event-driven off-cycle runs on review/testing/merge_ready/done.
-  // Wiring that requires a follow-up that adds a subscriber to taskBoard
-  // (or wraps appendEvent) — not done here per Task 16 instructions.
+  // Off-cycle drift triggers on lifecycle transitions. taskBoard now
+  // exposes a subscribe(fn) API (added alongside this wiring) — every
+  // successful appendEvent fires registered subscribers with the event
+  // payload. DriftMonitor.notifyTaskEvent only acts on
+  // task.status_changed → review/testing/merge_ready/done; everything
+  // else is a no-op, so the subscription is cheap.
+  if (typeof runtime.taskBoard?.subscribe === 'function') {
+    runtime.taskBoard.subscribe((event) => {
+      driftMonitor.notifyTaskEvent({
+        teamId: event.teamId,
+        eventType: event.eventType,
+        payload: event.payload,
+      }).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.warn('[drift] notifyTaskEvent failed', err && err.message ? err.message : err);
+      });
+    });
+  } else {
+    // eslint-disable-next-line no-console
+    console.warn('[drift] taskBoard does not support subscribe() — only the 60s tick will drive drift');
+  }
 } else {
   // eslint-disable-next-line no-console
   console.warn('[drift] no SQLite handle available on runtime — drift engine disabled');

@@ -759,3 +759,89 @@ test('task events are idempotent by idempotencyKey', () => {
   assert.equal(second.inserted, false);
   assert.equal(second.event.eventId, first.event.eventId);
 });
+
+// ─── Subscriber API (drift-monitor fan-out + future hooks) ───────────────
+
+test('InMemoryTaskBoard.subscribe fires subscriber after appendEvent', () => {
+  const board = new InMemoryTaskBoard();
+  const calls = [];
+  board.subscribe((event) => calls.push(event));
+
+  board.appendEvent({
+    teamId: 'team-a',
+    taskId: 'task-1',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead',
+    payload: { subject: 'X' },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].teamId, 'team-a');
+  assert.equal(calls[0].taskId, 'task-1');
+  assert.equal(calls[0].eventType, TASK_EVENT_TYPES.CREATED);
+});
+
+test('InMemoryTaskBoard.subscribe supports multiple subscribers', () => {
+  const board = new InMemoryTaskBoard();
+  const a = []; const b = [];
+  board.subscribe((e) => a.push(e));
+  board.subscribe((e) => b.push(e));
+  board.appendEvent({
+    teamId: 't', taskId: 'x', eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead', payload: { subject: 'X' },
+  });
+  assert.equal(a.length, 1);
+  assert.equal(b.length, 1);
+});
+
+test('InMemoryTaskBoard.subscribe returns an unsubscribe fn', () => {
+  const board = new InMemoryTaskBoard();
+  const calls = [];
+  const off = board.subscribe((e) => calls.push(e));
+
+  board.appendEvent({
+    teamId: 't', taskId: 'a', eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead', payload: { subject: 'A' },
+  });
+  off();
+  board.appendEvent({
+    teamId: 't', taskId: 'b', eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead', payload: { subject: 'B' },
+  });
+  assert.equal(calls.length, 1, 'second event should not fire post-unsubscribe');
+});
+
+test('InMemoryTaskBoard does NOT fire subscribers on idempotent dedup hit', () => {
+  const board = new InMemoryTaskBoard();
+  const calls = [];
+  board.subscribe((e) => calls.push(e));
+
+  const args = {
+    teamId: 't', taskId: 'x', eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead', idempotencyKey: 'k1', payload: { subject: 'X' },
+  };
+  board.appendEvent(args);
+  board.appendEvent(args); // dedup
+
+  assert.equal(calls.length, 1, 'subscriber should fire once, not twice');
+});
+
+test('InMemoryTaskBoard subscriber errors do NOT break appendEvent', () => {
+  const board = new InMemoryTaskBoard();
+  // Capture console.warn so the test output stays clean.
+  const origWarn = console.warn;
+  let warnCount = 0;
+  console.warn = () => { warnCount += 1; };
+  try {
+    board.subscribe(() => { throw new Error('subscriber blew up'); });
+    // Append must still succeed and return inserted=true.
+    const result = board.appendEvent({
+      teamId: 't', taskId: 'x', eventType: TASK_EVENT_TYPES.CREATED,
+      actorId: 'lead', payload: { subject: 'X' },
+    });
+    assert.equal(result.inserted, true);
+    assert.equal(warnCount, 1, 'subscriber error should be logged via console.warn');
+  } finally {
+    console.warn = origWarn;
+  }
+});

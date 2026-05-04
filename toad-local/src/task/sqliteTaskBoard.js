@@ -5,12 +5,29 @@ import {
 import { jsonParseObject, jsonStringify, openToadDatabase } from '../storage/sqlite.js';
 
 export class SqliteTaskBoard {
+  #subscribers = new Set();
+
   constructor({ filePath = ':memory:', db = null } = {}) {
     this.db = db || openToadDatabase(filePath);
   }
 
   close() {
     this.db.close();
+  }
+
+  /**
+   * Register a subscriber that fires AFTER each successfully-inserted event.
+   * Mirrors InMemoryTaskBoard.subscribe's contract — see that class for
+   * full docs. Subscribers do NOT fire on idempotent dedup hits, and
+   * subscriber exceptions are caught + logged so they can't break the
+   * orchestrator's write path.
+   */
+  subscribe(fn) {
+    if (typeof fn !== 'function') {
+      throw new TypeError('SqliteTaskBoard.subscribe: fn must be a function');
+    }
+    this.#subscribers.add(fn);
+    return () => { this.#subscribers.delete(fn); };
   }
 
   appendEvent(input) {
@@ -47,7 +64,20 @@ export class SqliteTaskBoard {
       jsonStringify(event.payload)
     );
 
-    return { inserted: true, event: this.#getEvent(event.eventId) };
+    const inserted = this.#getEvent(event.eventId);
+    this.#fireSubscribers(inserted);
+    return { inserted: true, event: inserted };
+  }
+
+  #fireSubscribers(event) {
+    for (const fn of this.#subscribers) {
+      try {
+        fn(event);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[taskBoard] subscriber threw:', err && err.message ? err.message : err);
+      }
+    }
   }
 
   listEvents({ teamId, taskId } = {}) {

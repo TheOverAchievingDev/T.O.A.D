@@ -39,6 +39,25 @@ export const TASK_RISK_LEVELS = Object.freeze(['low', 'medium', 'high', 'critica
 export class InMemoryTaskBoard {
   #events = [];
   #idempotency = new Map();
+  #subscribers = new Set();
+
+  /**
+   * Register a subscriber that fires AFTER each successfully-inserted event.
+   * Returns an unsubscribe function. Subscribers do NOT fire on idempotent
+   * dedup hits — only on actually-new events. Subscriber exceptions are
+   * caught and logged so a misbehaving subscriber can't break event
+   * persistence (the orchestrator must always succeed regardless).
+   *
+   * Used by DriftMonitor to fire off-cycle drift runs on lifecycle
+   * transitions; future slices may add audit / SSE / webhook subscribers.
+   */
+  subscribe(fn) {
+    if (typeof fn !== 'function') {
+      throw new TypeError('InMemoryTaskBoard.subscribe: fn must be a function');
+    }
+    this.#subscribers.add(fn);
+    return () => { this.#subscribers.delete(fn); };
+  }
 
   appendEvent(input) {
     const event = createTaskEvent(input);
@@ -53,7 +72,19 @@ export class InMemoryTaskBoard {
       this.#idempotency.set(event.idempotencyKey, event.eventId);
     }
     this.#events.push(event);
+    this.#fireSubscribers(event);
     return { inserted: true, event };
+  }
+
+  #fireSubscribers(event) {
+    for (const fn of this.#subscribers) {
+      try {
+        fn(event);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[taskBoard] subscriber threw:', err && err.message ? err.message : err);
+      }
+    }
   }
 
   listEvents({ teamId, taskId } = {}) {

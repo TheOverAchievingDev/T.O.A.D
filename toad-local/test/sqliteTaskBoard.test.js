@@ -107,3 +107,60 @@ test('SqliteTaskBoard task events are idempotent', () => {
   });
 });
 
+// ─── Subscriber API (drift-monitor fan-out + future hooks) ───────────────
+
+test('SqliteTaskBoard.subscribe fires on appendEvent and supports unsubscribe', () => {
+  withBoard((board) => {
+    const calls = [];
+    const off = board.subscribe((event) => calls.push(event));
+
+    board.appendEvent({
+      teamId: 't', taskId: 'a',
+      eventType: TASK_EVENT_TYPES.CREATED,
+      actorId: 'lead', payload: { subject: 'A' },
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].taskId, 'a');
+
+    off();
+    board.appendEvent({
+      teamId: 't', taskId: 'b',
+      eventType: TASK_EVENT_TYPES.CREATED,
+      actorId: 'lead', payload: { subject: 'B' },
+    });
+    assert.equal(calls.length, 1, 'no fire after unsubscribe');
+  });
+});
+
+test('SqliteTaskBoard does NOT fire subscribers on idempotent dedup hit', () => {
+  withBoard((board) => {
+    const calls = [];
+    board.subscribe((e) => calls.push(e));
+    const args = {
+      teamId: 't', taskId: 'x', eventType: TASK_EVENT_TYPES.CREATED,
+      actorId: 'lead', idempotencyKey: 'k1', payload: { subject: 'X' },
+    };
+    board.appendEvent(args);
+    board.appendEvent(args);
+    assert.equal(calls.length, 1);
+  });
+});
+
+test('SqliteTaskBoard subscriber errors do NOT break appendEvent', () => {
+  withBoard((board) => {
+    const origWarn = console.warn;
+    console.warn = () => {};
+    try {
+      board.subscribe(() => { throw new Error('boom'); });
+      const result = board.appendEvent({
+        teamId: 't', taskId: 'x',
+        eventType: TASK_EVENT_TYPES.CREATED,
+        actorId: 'lead', payload: { subject: 'X' },
+      });
+      assert.equal(result.inserted, true);
+    } finally {
+      console.warn = origWarn;
+    }
+  });
+});
+
