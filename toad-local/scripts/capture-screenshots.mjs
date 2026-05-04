@@ -20,7 +20,8 @@
 
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { createConnection } from 'node:net';
@@ -134,6 +135,37 @@ async function ensureOutDir() {
   await mkdir(OUT_DIR, { recursive: true });
 }
 
+/**
+ * Resolve the bearer token the sidecar will accept. Mirrors
+ * src/runtime/resolveApiToken.js's precedence so we authenticate the
+ * same way the production sidecar will:
+ *
+ *   1. process.env.TOAD_API_TOKEN
+ *   2. <projectCwd>/.toad/api-token (the persistent on-disk token)
+ *   3. null  (sidecar runs unauthenticated)
+ *
+ * If we find a token, both seed calls and Playwright's page-level
+ * fetches send it as Authorization: Bearer. If we don't, requests go
+ * tokenless and the sidecar accepts everything.
+ */
+async function resolveSidecarToken() {
+  const envToken = process.env.TOAD_API_TOKEN;
+  if (typeof envToken === 'string' && envToken.trim().length > 0) {
+    return envToken.trim();
+  }
+  // dev-api-server.mjs uses TOAD_PROJECT_CWD || process.cwd(). We're
+  // launched from REPO_ROOT, so use the same default.
+  const projectCwd = process.env.TOAD_PROJECT_CWD || REPO_ROOT;
+  const tokenPath = join(projectCwd, '.toad', 'api-token');
+  if (existsSync(tokenPath)) {
+    try {
+      const raw = (await readFile(tokenPath, 'utf8')).trim();
+      if (raw.length > 0) return raw;
+    } catch { /* ignore */ }
+  }
+  return null;
+}
+
 async function alreadyListening(host, port, timeoutMs = 1500) {
   // Quick TCP probe to see if a service is already bound. We don't want
   // to double-spawn if the user has the dev stack already running.
@@ -207,15 +239,17 @@ function killTree(proc) {
  * Seeds: one team (`symphony-demo`), 5 tasks across the lifecycle, and
  * triggers a drift_run so the dashboard has findings + history.
  */
-async function seedDemoData() {
+async function seedDemoData(token) {
   const TEAM_ID = 'symphony-demo';
   const ACTOR = { teamId: TEAM_ID, agentId: 'screenshot-bot', role: 'human' };
+  const headers = { 'content-type': 'application/json' };
+  if (token) headers['authorization'] = `Bearer ${token}`;
   const apiCall = async (method, args, idempotencyKey) => {
     const body = { actor: ACTOR, method, args };
     if (idempotencyKey) body.idempotencyKey = idempotencyKey;
     const res = await fetch(`http://${SIDECAR_HOST}:${SIDECAR_PORT}/api/call`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers,
       body: JSON.stringify(body),
     });
     if (!res.ok) {
@@ -260,9 +294,17 @@ async function seedDemoData() {
   await apiCall('drift_run', { teamId: TEAM_ID, trigger: 'periodic' });
 }
 
-async function captureScreens(playwright, { headed = false } = {}) {
+async function captureScreens(playwright, { headed = false, token = null } = {}) {
   const browser = await playwright.chromium.launch({ headless: !headed });
-  const context = await browser.newContext({ viewport: VIEWPORT });
+  const contextOpts = { viewport: VIEWPORT };
+  // If the sidecar has auth on (TOAD_API_TOKEN env or persisted
+  // .toad/api-token), Playwright stamps the same Bearer header on every
+  // fetch the page makes — so the UI's tokenless XHRs become
+  // authenticated and stop 401-ing.
+  if (token) {
+    contextOpts.extraHTTPHeaders = { authorization: `Bearer ${token}` };
+  }
+  const context = await browser.newContext(contextOpts);
   const page = await context.newPage();
 
   // Inject localStorage BEFORE the page loads so useProjects + useTweaks
@@ -359,6 +401,12 @@ async function main() {
 
   await ensureOutDir();
   const playwright = await ensurePlaywright();
+  const token = await resolveSidecarToken();
+  if (token) {
+    console.log(`Detected sidecar token (length=${token.length}) — stamping auth on all requests.`);
+  } else {
+    console.log('No sidecar token configured — running unauthenticated.');
+  }
 
   let sidecar = null;
   let vite = null;
@@ -375,18 +423,14 @@ async function main() {
     if (await alreadyListening(SIDECAR_HOST, SIDECAR_PORT)) {
       console.log(`Sidecar already running on ${SIDECAR_HOST}:${SIDECAR_PORT} (using as-is — make sure auth matches the UI)`);
     } else {
-      console.log('Booting sidecar API (unauthenticated mode for screenshots)...');
+      console.log('Booting sidecar API...');
       sidecar = spawnBackground('node', ['--no-warnings', 'scripts/dev-api-server.mjs'], {
         cwd: REPO_ROOT,
         silent: true,
-        // Force unauthenticated mode so the UI's tokenless requests don't 401.
-        // The user's shell may have TOAD_API_TOKEN exported globally; clearing
-        // it for THIS spawn is the simplest way to avoid the token mismatch
-        // between the sidecar (with token) and Vite (no VITE_TOAD_API_TOKEN).
-        // Note: per src/transport/apiServer.js, if TOAD_API_TOKEN is empty,
-        // ALL requests are accepted — fine for local screenshot capture but
-        // do NOT use this script against a sidecar exposed beyond localhost.
-        env: { TOAD_API_TOKEN: '' },
+        // Inherit env. The token (env OR persisted .toad/api-token file)
+        // is resolved by resolveSidecarToken() and stamped onto both seed
+        // calls and Playwright's request headers, so we don't need to
+        // disable auth — both ends just speak the same token.
       }, 'sidecar');
       await waitForUrl(SIDECAR_HEALTH_URL, 30_000, 'sidecar API');
       console.log(`Sidecar API ready at http://${SIDECAR_HOST}:${SIDECAR_PORT}`);
@@ -410,13 +454,13 @@ async function main() {
     }
 
     console.log('\nSeeding demo data (team + tasks + drift findings)...');
-    await seedDemoData();
+    await seedDemoData(token);
     console.log('Seed complete.');
 
     console.log('\nCapturing screens...\n');
     const headed = process.env.HEADED === '1';
     if (headed) console.log('(HEADED=1 — Chromium will open visibly)');
-    const ok = await captureScreens(playwright, { headed });
+    const ok = await captureScreens(playwright, { headed, token });
     if (!ok) {
       console.error('\nCapture aborted because the UI did not render.');
       console.error('Inspect the HTML dump or re-run with HEADED=1.');
