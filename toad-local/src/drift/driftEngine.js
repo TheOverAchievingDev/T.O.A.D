@@ -58,7 +58,7 @@ export class DriftEngine {
         }
       } catch (err) {
         findings.push({
-          id: `f_check_error_${check.name}_${runId.slice(4, 12)}`,
+          id: `f_check_error_${teamId}_${check.name}`,
           runId,
           teamId,
           taskId: null,
