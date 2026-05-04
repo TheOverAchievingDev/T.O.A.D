@@ -20,9 +20,10 @@
 
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { mkdir, access } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
+import { createConnection } from 'node:net';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -32,7 +33,10 @@ const OUT_DIR = join(REPO_ROOT, 'docs', 'screenshots');
 const VIEWPORT = { width: 1440, height: 900 };
 const SIDECAR_HOST = '127.0.0.1';
 const SIDECAR_PORT = 3001;
-const VITE_HOST = '127.0.0.1';
+// Vite binds to "localhost" by default. On Windows, IPv4 vs IPv6 resolution
+// for `localhost` is system-dependent — using the literal hostname avoids
+// the 127.0.0.1 vs ::1 mismatch that bites our probe.
+const VITE_HOST = 'localhost';
 const VITE_PORT = 5173;
 
 const SIDECAR_HEALTH_URL = `http://${SIDECAR_HOST}:${SIDECAR_PORT}/api/teams`;
@@ -126,16 +130,15 @@ async function ensureOutDir() {
   await mkdir(OUT_DIR, { recursive: true });
 }
 
-async function alreadyListening(host, port) {
+async function alreadyListening(host, port, timeoutMs = 1500) {
   // Quick TCP probe to see if a service is already bound. We don't want
   // to double-spawn if the user has the dev stack already running.
   return new Promise((resolveProbe) => {
-    const net = require('node:net');
-    const sock = net
-      .connect(port, host)
-      .once('connect', () => { sock.end(); resolveProbe(true); })
-      .once('error', () => { resolveProbe(false); });
-  }).catch(() => false);
+    const sock = createConnection({ host, port, timeout: timeoutMs });
+    sock.once('connect', () => { sock.end(); resolveProbe(true); });
+    sock.once('error', () => { resolveProbe(false); });
+    sock.once('timeout', () => { sock.destroy(); resolveProbe(false); });
+  });
 }
 
 async function waitForUrl(url, timeoutMs = 30_000, label = url) {
@@ -267,11 +270,16 @@ async function main() {
       console.log(`Vite already running on ${VITE_HOST}:${VITE_PORT}`);
     } else {
       console.log('Booting Vite UI dev server...');
+      // NOT silent — Vite's first-run dependency optimization can take 30–
+      // 60 seconds and we want the user to see progress. Vite prints
+      // "Local: http://localhost:5173/" when ready.
       vite = spawnBackground('npm', ['run', 'dev'], {
         cwd: UI_DIR,
-        silent: true,
+        silent: false,
       }, 'vite');
-      await waitForUrl(VITE_URL, 60_000, 'Vite UI');
+      // Vite first-run can spend a while pre-bundling deps, so we give it
+      // a generous window. The waitForUrl probe re-tries every 500ms.
+      await waitForUrl(VITE_URL, 120_000, 'Vite UI');
       console.log(`Vite UI ready at ${VITE_URL}`);
     }
 
