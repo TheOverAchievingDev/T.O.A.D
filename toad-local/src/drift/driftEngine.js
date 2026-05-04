@@ -48,7 +48,7 @@ export class DriftEngine {
     const findings = [];
     for (const check of this.checks) {
       try {
-        const out = check.fn({ snapshot }) || [];
+        const out = (await check.fn({ snapshot })) || [];
         for (const f of out) {
           findings.push({
             ...f,
