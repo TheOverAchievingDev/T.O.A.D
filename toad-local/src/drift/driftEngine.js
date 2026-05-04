@@ -1,24 +1,46 @@
 import { randomUUID } from 'node:crypto';
 import { buildSnapshot } from './buildSnapshot.js';
 import { scoreFindings } from './scoreFindings.js';
-import { DETERMINISTIC_CHECKS } from './checks/index.js';
+import { ALL_CHECKS } from './checks/index.js';
+import { escalationGate } from './llm/escalationGate.js';
+
+const DEFAULT_SETTINGS = Object.freeze({
+  drift: Object.freeze({
+    // Default opt-out: LLM tier is a no-op unless callers explicitly
+    // enable it via settings.drift.llmTierEnabled. Callers that don't
+    // pass settings (back-compat with the slice-1 engine) get the
+    // deterministic-only behavior they had before.
+    llmTierEnabled: false,
+    escalationThreshold: 41,
+    tier2CooldownMs: 300_000,
+    tier2ScoreDelta: 10,
+    tier1ModelOverride: null,
+    tier2ModelOverride: null,
+  }),
+});
 
 /**
- * Orchestrator for slice-1 drift evaluation.
+ * Slice-2 orchestrator for drift evaluation.
  *
  *   1. buildSnapshot(teamId)
- *   2. run every registered check, collect findings
- *   3. stamp each finding with runId + teamId + scoreFindings()
- *   4. driftStore.recordRun (deletes prior, inserts new, prunes history)
- *   5. return DriftRunResult with last 30 history rows for the sparkline
+ *   2. Run tier-1 checks (deterministic + LLM tier 1 if enabled)
+ *   3. Score tier-1 findings
+ *   4. escalationGate decides whether to run tier 2
+ *      - Skip if score below threshold OR cooldown active OR no material change
+ *      - Escalate otherwise
+ *   5. If escalate: run tier-2 checks; on failure record the failure but
+ *      still update cooldown so we don't hammer a failing CLI
+ *   6. Combine, score, persist, return DriftRunResult with `llm: {tier1, tier2}`
  *
  * Per-team mutex: only one runDrift({teamId}) is in flight at a time.
- * Overlapping callers share the in-flight Promise (no double work).
+ * In-memory cooldown state: lost on sidecar restart (acceptable per spec
+ * §4.3 — heuristic re-warms in <60s).
  */
 export class DriftEngine {
-  #inflight = new Map(); // teamId -> Promise<DriftRunResult>
+  #inflight = new Map();
+  #tier2Cooldown = new Map(); // teamId -> { lastRunAt, lastScore }
 
-  constructor({ deps, store, checks = DETERMINISTIC_CHECKS } = {}) {
+  constructor({ deps, store, checks = ALL_CHECKS, settings = DEFAULT_SETTINGS, now = Date.now } = {}) {
     if (!deps) throw new TypeError('DriftEngine: deps required');
     if (!store || typeof store.recordRun !== 'function') {
       throw new TypeError('DriftEngine: store with recordRun required');
@@ -26,6 +48,8 @@ export class DriftEngine {
     this.deps = deps;
     this.store = store;
     this.checks = checks;
+    this.settings = settings;
+    this.now = now;
   }
 
   async runDrift({ teamId, trigger = 'manual' } = {}) {
@@ -44,38 +68,82 @@ export class DriftEngine {
   async #runDriftInner({ teamId, trigger }) {
     const runId = `run_${randomUUID()}`;
     const snapshot = await buildSnapshot({ teamId, deps: this.deps });
+    const driftSettings = this.settings.drift ?? DEFAULT_SETTINGS.drift;
+    const llmEnabled = driftSettings.llmTierEnabled !== false;
 
-    const findings = [];
-    for (const check of this.checks) {
+    // Partition checks by tier.
+    const tier1Checks = this.checks.filter((c) => c.tier === 1);
+    const tier2Checks = this.checks.filter((c) => c.tier === 2);
+
+    // Run tier 1 (deterministic + LLM tier 1 if enabled).
+    const tier1Findings = [];
+    let tier1Status = 'completed';
+    for (const check of tier1Checks) {
+      // Skip LLM checks if the tier is disabled in settings.
+      if (!llmEnabled && check.name.startsWith('check_llm_')) continue;
       try {
-        const out = (await check.fn({ snapshot })) || [];
-        for (const f of out) {
-          findings.push({
-            ...f,
-            runId,
-            teamId,
-          });
-        }
+        const out = (await check.fn({ snapshot, settings: this.settings })) || [];
+        for (const f of out) tier1Findings.push({ ...f, runId, teamId });
       } catch (err) {
-        findings.push({
-          id: `f_check_error_${teamId}_${check.name}`,
-          runId,
-          teamId,
-          taskId: null,
-          category: 'risk',
-          severity: 'medium',
-          checkName: check.name,
-          title: `Check ${check.name} threw during evaluation`,
-          evidence: [String(err && err.message ? err.message : err)],
-          expected: 'check returns DriftFinding[]',
-          actual: 'check threw an exception',
-          recommendedCorrection: `Inspect ${check.name}'s implementation against the snapshot it received.`,
-          autoFixable: false,
-        });
+        tier1Findings.push(this.#metaFinding(check.name, runId, teamId, err));
       }
     }
 
-    const { teamScore, status, perTaskScores, categoryScores } = scoreFindings(findings);
+    // Score tier 1 to decide on escalation.
+    const tier1Score = scoreFindings(tier1Findings).teamScore;
+
+    // Decide tier 2.
+    let tier2Findings = [];
+    let tier2Status = 'skipped:below_threshold';
+
+    if (!llmEnabled) {
+      tier1Status = 'skipped:disabled';
+      tier2Status = 'skipped:disabled';
+    } else if (tier2Checks.length > 0) {
+      const cooldown = this.#tier2Cooldown.get(teamId) ?? null;
+      const verdict = escalationGate({
+        tier1Score,
+        threshold: driftSettings.escalationThreshold,
+        cooldownMs: driftSettings.tier2CooldownMs,
+        scoreDelta: driftSettings.tier2ScoreDelta,
+        lastT2RunAt: cooldown?.lastRunAt ?? null,
+        lastT2Score: cooldown?.lastScore ?? null,
+        now: this.now(),
+      });
+      if (verdict.escalate) {
+        try {
+          for (const check of tier2Checks) {
+            const out = (await check.fn({
+              snapshot,
+              settings: this.settings,
+              tier1Findings,
+            })) || [];
+            for (const f of out) tier2Findings.push({ ...f, runId, teamId });
+          }
+          tier2Status = 'completed';
+          this.#tier2Cooldown.set(teamId, {
+            lastRunAt: this.now(),
+            lastScore: tier1Score,
+          });
+        } catch (err) {
+          tier2Status = { failed: err && err.message ? err.message : String(err) };
+          // Still update cooldown so we don't hammer a failing CLI.
+          this.#tier2Cooldown.set(teamId, {
+            lastRunAt: this.now(),
+            lastScore: tier1Score,
+          });
+        }
+      } else if (verdict.reason === 'cooldown' || verdict.reason === 'no_material_change') {
+        tier2Status = 'skipped:cooldown';
+      } else {
+        // verdict.reason === 'below_threshold' (or invalid_score, etc)
+        tier2Status = 'skipped:below_threshold';
+      }
+    }
+
+    // Combine + score everything.
+    const allFindings = [...tier1Findings, ...tier2Findings];
+    const { teamScore, status, perTaskScores, categoryScores } = scoreFindings(allFindings);
 
     this.store.recordRun({
       runId,
@@ -86,7 +154,7 @@ export class DriftEngine {
       categoryScores,
       perTaskScores,
       trigger,
-      findings,
+      findings: allFindings,
     });
 
     const history = this.store.listScoreHistory({ teamId, limit: 30 })
@@ -97,11 +165,30 @@ export class DriftEngine {
       asOf: snapshot.asOf,
       teamScore,
       status,
-      findings,
+      findings: allFindings,
       categoryScores,
       perTaskScores,
       history,
       trigger,
+      llm: {
+        tier1: tier1Status,
+        tier2: tier2Status,
+      },
+    };
+  }
+
+  #metaFinding(checkName, runId, teamId, err) {
+    return {
+      id: `f_check_error_${teamId}_${checkName}`,
+      runId, teamId, taskId: null,
+      category: 'risk', severity: 'medium',
+      checkName,
+      title: `Check ${checkName} threw during evaluation`,
+      evidence: [String(err && err.message ? err.message : err)],
+      expected: 'check returns DriftFinding[]',
+      actual: 'check threw an exception',
+      recommendedCorrection: `Inspect ${checkName}'s implementation against the snapshot it received.`,
+      autoFixable: false,
     };
   }
 }
