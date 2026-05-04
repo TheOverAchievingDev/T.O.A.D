@@ -58,6 +58,7 @@ export const ROLE_TOOLS = Object.freeze({
     'task_plan_propose',
     'task_plan_approve',
     'task_plan_reject',
+    'drift_run',
     'foundry_session_create',
     'foundry_message_add',
     'foundry_chat_turn',

@@ -1,5 +1,8 @@
 import { join } from 'node:path';
 import { LocalToadRuntime } from '../src/app/LocalToadRuntime.js';
+import { SqliteDriftStore } from '../src/drift/driftStore.js';
+import { DriftEngine } from '../src/drift/driftEngine.js';
+import { DriftMonitor } from '../src/drift/driftMonitor.js';
 
 // Project resolution:
 //   - TOAD_PROJECT_CWD env (set by the Tauri shell when the user picks a
@@ -19,6 +22,61 @@ const dbPath =
   (projectCwd ? join(projectCwd, '.toad', 'toad.db') : ':memory:');
 const runtime = new LocalToadRuntime({ projectCwd, dbPath });
 
+// §-drift wiring — Task 16:
+// LocalToadRuntime constructs db / taskBoard / eventLog / foundryStore /
+// worktreeManager / runtimeRegistry internally, so we reach into the
+// already-built instance to assemble the drift store + engine + monitor.
+// The facade reads `driftEngine` lazily at command-dispatch time, so
+// late-injecting it onto runtime.toolFacade is sufficient for drift_run
+// to work in production.
+const driftDb =
+  runtime.runtimeRegistry?.db ||
+  runtime.eventLog?.db ||
+  runtime.taskBoard?.db ||
+  null;
+let driftMonitor = null;
+if (driftDb) {
+  const driftStore = new SqliteDriftStore({ db: driftDb });
+  const driftEngine = new DriftEngine({
+    deps: {
+      taskBoard: runtime.taskBoard,
+      eventLog: runtime.eventLog,
+      foundryStore: runtime.foundryStore,
+      worktreeManager: runtime.worktreeManager,
+      // diffComputer not constructed in LocalToadRuntime — buildSnapshot
+      // tolerates missing optional deps.
+    },
+    store: driftStore,
+  });
+  if (runtime.toolFacade) {
+    runtime.toolFacade.driftEngine = driftEngine;
+  }
+  driftMonitor = new DriftMonitor({
+    engine: driftEngine,
+    listLiveTeams: () => {
+      const runtimes = runtime.runtimeRegistry?.listRuntimes?.() ?? [];
+      const liveTeams = new Set(
+        runtimes
+          .filter((r) => r && (r.status === 'running' || r.status === 'live' || r.status === 'starting'))
+          .map((r) => r.teamId)
+          .filter((tid) => typeof tid === 'string' && tid.length > 0)
+      );
+      return Array.from(liveTeams);
+    },
+  });
+  driftMonitor.start();
+  // NOTE: there is no task_event fan-out hook in dev-api-server today —
+  // taskBoard.appendEvent is called directly from inside LocalToolFacade
+  // command handlers and does not emit to any subscriber. The periodic
+  // ticker (every 60s) still drives drift evaluation; we lose only the
+  // event-driven off-cycle runs on review/testing/merge_ready/done.
+  // Wiring that requires a follow-up that adds a subscriber to taskBoard
+  // (or wraps appendEvent) — not done here per Task 16 instructions.
+} else {
+  // eslint-disable-next-line no-console
+  console.warn('[drift] no SQLite handle available on runtime — drift engine disabled');
+}
+
 await runtime.start();
 
 const port = process.env.TOAD_API_PORT || '3001';
@@ -31,6 +89,9 @@ if (projectCwd) {
 console.log(`Symphony AI database at ${dbPath}`);
 
 async function shutdown() {
+  if (driftMonitor && typeof driftMonitor.stop === 'function') {
+    driftMonitor.stop();
+  }
   await runtime.close();
   process.exit(0);
 }

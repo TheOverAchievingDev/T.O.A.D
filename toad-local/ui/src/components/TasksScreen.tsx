@@ -4,6 +4,8 @@ import { roleStyle } from '@/data/roles';
 import { Icon, type IconName } from './Icon';
 import { TaskRiskBadge } from './TaskRiskBadge';
 import { EmptyTasksState } from './EmptyTasksState';
+import { useDrift } from '@/hooks/useDrift';
+import { DriftBadge } from './DriftBadge';
 
 type TasksView = 'kanban' | 'list';
 
@@ -33,6 +35,11 @@ const STATUS_LABEL: Record<TaskStatus, string> = {
 export function TasksScreen({ team, tasks, onOpenTask, onCreateTask }: TasksScreenProps) {
   const [view, setView] = useState<TasksView>('kanban');
   const [query, setQuery] = useState('');
+  // Mirror App.tsx's DriftScreen wiring: team.name is the team id used by
+  // the backend. Drift findings carry taskId — UiTask.id IS that taskId
+  // (see normalizeTask in useToadData).
+  const { data: drift } = useDrift({ teamId: team.name || null });
+  const perTask = drift?.perTaskScores ?? {};
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -143,6 +150,7 @@ export function TasksScreen({ team, tasks, onOpenTask, onCreateTask }: TasksScre
                             style={{ marginLeft: 6 }}
                           />
                         )}
+                        <DriftBadge score={perTask[t.id]} />
                         {member && (
                           <span style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--accent)' }}>
                             {member.name}
@@ -194,6 +202,7 @@ export function TasksScreen({ team, tasks, onOpenTask, onCreateTask }: TasksScre
                         variant="full"
                       />
                     )}
+                    <DriftBadge score={perTask[t.id]} />
                     {member && (
                       <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--accent)' }}>
                         ● {member.name}

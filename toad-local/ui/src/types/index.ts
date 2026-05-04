@@ -137,6 +137,7 @@ export interface Tweaks {
     | 'foundry'
     | 'costs'
     | 'audit'
+    | 'drift'
     | 'picker'
     | 'empty'
     | 'onboarding'

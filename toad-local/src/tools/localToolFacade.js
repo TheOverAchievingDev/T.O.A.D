@@ -49,7 +49,7 @@ export class LocalToolFacade {
   #claudeQuotaCache = null;
   #claudeQuotaInflight = null;
 
-  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, foundryStore = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null, mergeIntegrator = null, remoteMergePolicy = null, riskPolicy = null, settingsStore = null, riskPolicyStore = null, githubFetch = null, githubClientId = null, providerAuthSpawn = null, providerAuthSpawnSync = null, providerAuthReadFile = null, providerAuthStat = null, claudeUsageProbe = null, runGit = null, openaiFetch = null, deliveryWorker = null }) {
+  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, foundryStore = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null, mergeIntegrator = null, remoteMergePolicy = null, riskPolicy = null, settingsStore = null, riskPolicyStore = null, githubFetch = null, githubClientId = null, providerAuthSpawn = null, providerAuthSpawnSync = null, providerAuthReadFile = null, providerAuthStat = null, claudeUsageProbe = null, driftEngine = null, runGit = null, openaiFetch = null, deliveryWorker = null }) {
     if (!broker) throw new TypeError('broker is required');
     if (!taskBoard) throw new TypeError('taskBoard is required');
     this.broker = broker;
@@ -114,6 +114,7 @@ export class LocalToolFacade {
     // Override the live claude /usage pty probe in tests. Production
     // leaves this null and we fall back to the imported probeClaudeUsage.
     this.claudeUsageProbe = typeof claudeUsageProbe === 'function' ? claudeUsageProbe : null;
+    this.driftEngine = driftEngine && typeof driftEngine.runDrift === 'function' ? driftEngine : null;
     // git invoker for tools that need to read the project's git state
     // (e.g. github_origin_remote). Injectable so tests don't shell out.
     this.runGit = typeof runGit === 'function' ? runGit : defaultRunGit;
@@ -282,6 +283,8 @@ export class LocalToolFacade {
         return this.#gitSetRemote(args);
       case COMMANDS.GITHUB_CREATE_REPOSITORY:
         return this.#githubCreateRepository(args);
+      case COMMANDS.DRIFT_RUN:
+        return this.#driftRun(actor, args);
       default:
         throw new Error(`unsupported command: ${commandName}`);
     }
@@ -1487,6 +1490,19 @@ export class LocalToolFacade {
    * /usage slash command — would require node-pty to scrape, queued as a
    * follow-up.
    */
+  async #driftRun(actor, args) {
+    if (!this.driftEngine) {
+      throw new Error('drift engine not configured for this facade');
+    }
+    const teamId = (typeof args?.teamId === 'string' && args.teamId.length > 0)
+      ? args.teamId
+      : actor.teamId;
+    const trigger = ['manual', 'periodic', 'task_event'].includes(args?.trigger)
+      ? args.trigger
+      : 'manual';
+    return this.driftEngine.runDrift({ teamId, trigger });
+  }
+
   async #usageSummary(_actor, _args) {
     // Plan tier — graceful fallback when claude isn't installed/signed in.
     const plan = { tier: 'unknown', loggedIn: false, provider: 'claude' };

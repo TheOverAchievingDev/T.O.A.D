@@ -5752,3 +5752,45 @@ test('provider_auth_login is denied for non-lead/non-human roles', async () => {
     /role authority/,
   );
 });
+
+test('LocalToolFacade drift_run delegates to driftEngine and returns DriftRunResult shape', async () => {
+  const fakeEngine = {
+    async runDrift({ teamId, trigger }) {
+      assert.equal(teamId, 'team-a');
+      assert.equal(trigger, 'manual');
+      return {
+        runId: 'run_1', asOf: '2026-05-04T10:00:00Z',
+        teamScore: 18, status: 'healthy', findings: [],
+        categoryScores: { architecture: 100 }, perTaskScores: {},
+        history: [], trigger: 'manual',
+      };
+    },
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    driftEngine: fakeEngine,
+  });
+  const result = await facade.execute({
+    commandName: COMMANDS.DRIFT_RUN,
+    actor: { teamId: 'team-a', agentId: 'ui-client', role: 'human' },
+    args: { trigger: 'manual' },
+  });
+  assert.equal(result.teamScore, 18);
+  assert.equal(result.status, 'healthy');
+});
+
+test('LocalToolFacade drift_run rejects when no driftEngine is configured', async () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  await assert.rejects(
+    facade.execute({
+      commandName: COMMANDS.DRIFT_RUN,
+      actor: { teamId: 'team-a', agentId: 'ui-client', role: 'human' },
+      args: {},
+    }),
+    /drift engine not configured/i
+  );
+});

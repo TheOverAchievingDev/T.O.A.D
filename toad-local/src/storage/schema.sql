@@ -226,3 +226,42 @@ CREATE TABLE IF NOT EXISTS foundry_artifacts (
 
 CREATE INDEX IF NOT EXISTS idx_foundry_artifacts_session
   ON foundry_artifacts(session_id, kind, updated_at);
+
+-- Drift Monitor (slice 1) — see docs/superpowers/specs/2026-05-03-drift-monitor-design.md
+-- Findings are replaced wholesale per run (delete-by-team_id, insert-new).
+CREATE TABLE IF NOT EXISTS drift_findings (
+  finding_id      TEXT PRIMARY KEY,
+  run_id          TEXT NOT NULL,
+  team_id         TEXT NOT NULL,
+  task_id         TEXT,
+  category        TEXT NOT NULL,
+  severity        TEXT NOT NULL,
+  check_name      TEXT NOT NULL,
+  title           TEXT NOT NULL,
+  evidence_json   TEXT NOT NULL,
+  expected        TEXT NOT NULL,
+  actual          TEXT NOT NULL,
+  recommended     TEXT NOT NULL,
+  auto_fixable    INTEGER NOT NULL DEFAULT 0,
+  created_at      TEXT NOT NULL,
+  FOREIGN KEY (team_id) REFERENCES teams(team_id)
+);
+CREATE INDEX IF NOT EXISTS idx_drift_findings_team ON drift_findings(team_id);
+CREATE INDEX IF NOT EXISTS idx_drift_findings_task ON drift_findings(task_id);
+CREATE INDEX IF NOT EXISTS idx_drift_findings_run  ON drift_findings(run_id);
+
+-- One row per run; pruned to last 500 per team.
+CREATE TABLE IF NOT EXISTS drift_score_history (
+  run_id              TEXT PRIMARY KEY,
+  team_id             TEXT NOT NULL,
+  team_score          INTEGER NOT NULL,
+  status              TEXT NOT NULL,
+  category_scores_json TEXT NOT NULL,
+  per_task_scores_json TEXT NOT NULL,
+  findings_count      INTEGER NOT NULL,
+  trigger             TEXT NOT NULL,
+  created_at          TEXT NOT NULL,
+  FOREIGN KEY (team_id) REFERENCES teams(team_id)
+);
+CREATE INDEX IF NOT EXISTS idx_drift_score_history_team_time
+  ON drift_score_history(team_id, created_at DESC);
