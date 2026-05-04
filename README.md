@@ -378,7 +378,7 @@ Tests use Node's built-in `node:test` runner — no Jest, Vitest, or other harne
 
 Tracked on the roadmap; flagged here so nothing is hidden:
 
-- **Drift monitor slice 2.** LLM-semantic check tier (Haiku tier-1 always, Opus 4.7 / GPT-5 / Gemini 2.5 Pro tier-2 when score crosses the warning threshold), enrich `buildSnapshot` with `fileContents` so `checkProviderLogicLeakage` fires on real diffs, register `drift_run` in MCP tool definitions for non-UI callers. (Item 3 lift-`useDrift`-to-App and Item 2 taskBoard fan-out shipped in `ce86a07` + `56d8c4c`.)
+- **Drift monitor slice 3 + ongoing follow-ups.** Slice 2 (LLM-semantic check tier) shipped in `dde2a1b` — Haiku/Mini/Flash always-on, Opus 4.7 / GPT-5 / Gemini 2.5 Pro escalation when score crosses Warning (41+) with cooldown + score-delta gating. Slice 3 (correction-task generation) plus all engine/UI/settings/provider polish items are catalogued in `toad-local/docs/superpowers/specs/2026-05-04-drift-followups-tracker.md` — start there when picking drift work back up.
 - **Infrastructure plugin system.** Plugins for Railway / Vercel / Render / EAS / Supabase / etc. so agents can provision DBs, deploy previews, kick mobile builds, etc. — auth is CLI-mediated (same pattern as provider plan-auth), tools are MCP-exposed and risk-classified. Captured at `toad-local/docs/superpowers/specs/2026-05-04-infrastructure-plugin-system-idea.md`. Pursue after drift slice 2/3.
 - **OpenCode plan-auth.** Not wired — OpenCode is API-only by design. The Providers tab hides the plan-auth toggle accordingly.
 - **GUI launcher.** Standalone "Symphony AI launcher" that boots all servers + the app, shows server status, captures error reports — separate sub-project, brainstorming pending.
