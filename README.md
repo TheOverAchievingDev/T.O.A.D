@@ -74,7 +74,7 @@ C:\Project-TOAD\
    │  ├─ transport/apiServer.js # HTTP + SSE bridge for the UI
    │  ├─ policy/                # §14 risk classifier + risk-policy store
    │  ├─ settings/              # §3 two-tier settings store
-   │  ├─ github/                # §3c GitHub Device Flow + PAT auth
+   │  ├─ github/                # §3c GitHub Device Flow + PAT auth + REST client
    │  ├─ providers/             # §3c.2 plan-auth helpers
    │  └─ diagnostics/           # §13 stuck-runtime detector + diagnostic checks
    ├─ test/                     # 526+ tests, pure node:test
@@ -292,14 +292,24 @@ Each LLM provider has its own subscription/plan auth managed by its CLI:
 
 - **Anthropic**: `claude auth status --json` / `claude auth login` /
   `claude auth logout` — fully wired.
-- **OpenAI Codex**: stubbed — needs the actual CLI auth surface confirmed
-  before wiring.
-- **OpenCode**: stubbed — depends on which model.
+- **OpenAI Codex**: wired via filesystem detection of `~/.codex/auth.json`
+  plus `codex login` / `codex logout` (the CLI exposes login/logout as
+  top-level commands, not under an `auth` prefix).
+- **Gemini**: wired via filesystem detection of
+  `~/.gemini/oauth_creds.json` and `~/.gemini/google_accounts.json`, with
+  `gemini auth login` / `gemini auth logout`.
+- **OpenCode**: API-only by design — no subscription/plan auth flow
+  exists. The Providers tab hides the plan-auth toggle for it
+  accordingly.
 
 In **Settings → Providers**, switch any provider's "Auth method" segmented
 control to **Plan / subscription** to see the per-provider auth panel next
 to the model selection. Status pulls from the CLI, sign-in spawns
-`<cli> auth login` and polls every 5 seconds until you authorize.
+`<cli> auth login` and polls every 5 seconds until you authorize. Status
+results are cached at module level
+([`providerAuthCache.ts`](toad-local/ui/src/components/settings/providerAuthCache.ts))
+so the toggle row and per-provider badge share a single fetch and stay in
+sync after a login or logout.
 
 ## Environment variables
 
@@ -342,18 +352,36 @@ Tracked on the roadmap; flagged here so nothing is hidden:
   plan-auth toggle for it accordingly.
 - **Tauri desktop wrapper**: scaffold landed at
   [`toad-local/ui/src-tauri/`](toad-local/ui/src-tauri/) with
-  `npm run tauri:dev` / `tauri:build` scripts. The Rust shell spawns the
-  Node orchestrator as a child process and shows the React UI in a system
-  webview. First end-to-end build needs Rust 1.70+ on PATH and
-  generated icons (`npm run tauri:icon path/to/source.png`) — see
+  `npm run tauri:dev` / `tauri:build` scripts. Rust shell + Node-sidecar +
+  React UI all compile cleanly (`cargo check` and `cargo build` both pass
+  on Windows with the placeholder icons currently committed). Real TOAD
+  branding still needs to land in
+  [`src-tauri/icons/`](toad-local/ui/src-tauri/icons/) before public
+  release — drop a 1024×1024 PNG over `src-tauri/toad-source.png` and run
+  `npm run tauri:icon src-tauri/toad-source.png`. See
   [`toad-local/ui/TAURI.md`](toad-local/ui/TAURI.md) for the full setup.
-- **Backend GitHub-driven actions** (creating PRs, branch protection
-  detection): the UI surface for GitHub auth is real and the token is
-  stored, but the orchestrator doesn't yet *use* the token for anything
-  beyond verifying the user.
-- **Plan-auth status caching**: each call to `provider_auth_status` shells
-  out to the CLI / reads the auth file synchronously. For most users this
-  is fine (~5-50ms); caching is on the to-do list if it becomes a hot path.
+- **Backend GitHub-driven actions**: complete —
+  [`src/github/githubApi.js`](toad-local/src/github/githubApi.js) exposes
+  `getRepository`, `getBranchProtection`, and `createPullRequest`, and
+  [`src/task/remoteMergePolicy.js`](toad-local/src/task/remoteMergePolicy.js)
+  + [`src/task/buildRemoteMergePolicy.js`](toad-local/src/task/buildRemoteMergePolicy.js)
+  wire branch protection into the §19 merge gate. When a task transitions
+  `merge_ready → done` and the remote base branch's protection requires
+  PRs, the local merge is refused with a clear error pointing at
+  `github_create_pull_request`. The orchestrator stays advisory when the
+  origin remote isn't on github.com or no token is stored — only an
+  explicit "protected AND requires PR" verdict blocks the transition,
+  so transient GitHub outages don't stop teams from completing tasks.
+  Tools surfaced to agents: `github_get_repository`,
+  `github_get_branch_protection`, `github_origin_remote` (all in
+  `COMMON_READ_TOOLS`); plus the mutating `github_create_pull_request`
+  (lead/human only, idempotency key required). The Task Detail modal in
+  the UI shows an "Open pull request" affordance via
+  [`OpenPullRequestButton`](toad-local/ui/src/components/OpenPullRequestButton.tsx)
+  that auto-discovers the origin repo, calls
+  `github_create_pull_request` with the task's worktree + base, and
+  surfaces 422 validation errors verbatim ("PR already exists", "head
+  not pushed").
 
 The `HANDOFF-NEXT-AGENT.md` at the repo root tracks the rolling state
 between sessions — read that first if you're picking up the project cold.

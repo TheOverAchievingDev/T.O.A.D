@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
 import type { RoleId, Provider } from '@/types';
 import { ROLES, ROLE_KEYS, roleStyle } from '@/data/roles';
 import { SEED_PROVIDERS } from '@/data/seed';
 import { Icon } from './Icon';
+import { PlanUsagePanel } from './PlanUsagePanel';
 import { callTool, ToadApiError, type Actor } from '@/api/client';
+import { useProjects } from '@/hooks/useProjects';
 
 interface MemberDraft {
   id: number;
@@ -14,11 +16,31 @@ interface MemberDraft {
   model: string;
 }
 
+export interface CreateTeamSeed {
+  /** Pre-fill the team name. */
+  teamName?: string;
+  /** Pre-fill the lead's launch prompt. */
+  leadPrompt?: string;
+  /** Pre-fill the lead's provider (anthropic / openai / gemini / opencode). */
+  leadProvider?: string;
+  /** Pre-fill the team's project path. */
+  projectPath?: string;
+  /** Pre-fill the teammate roster. Each entry becomes a MemberDraft. */
+  members?: Array<{
+    name: string;
+    role: Exclude<RoleId, 'lead'>;
+    provider?: string;
+    model?: string;
+  }>;
+}
+
 interface CreateTeamModalProps {
   onClose: () => void;
   onCreated?: (teamId: string) => void;
   actor?: Actor;
   providers?: Provider[];
+  /** Optional pre-fill (used by Foundry → CreateTeamModal handoff). */
+  seed?: CreateTeamSeed;
 }
 
 type ProjectMode = 'list' | 'custom';
@@ -32,36 +54,48 @@ type SubmitState =
 
 const DEFAULT_ACTOR: Actor = { teamId: 'system', agentId: 'ui-client', agentName: 'ui', role: 'human' };
 
-const RECENT_PROJECTS = ['ide-test', 'symphonyv3', 'Harmony', 'orchestrator'];
-
-const INITIAL_MEMBERS: MemberDraft[] = [
-  { id: 1, name: 'alice', role: 'reviewer', provider: 'anthropic', model: 'Default' },
-  { id: 2, name: 'tom', role: 'developer', provider: 'anthropic', model: 'Default' },
-  { id: 3, name: 'rex', role: 'researcher', provider: 'openai', model: '5.4' },
-];
+// Empty defaults — the modal is opened with a blank slate so the user
+// fills in real team details. Was previously seeded with sample names.
+const INITIAL_MEMBERS: MemberDraft[] = [];
 
 export function CreateTeamModal({
   onClose,
   onCreated,
   actor = DEFAULT_ACTOR,
   providers = SEED_PROVIDERS,
+  seed,
 }: CreateTeamModalProps) {
-  const [teamName, setTeamName] = useState('signal-ops');
+  const seededMembers = useMemo<MemberDraft[]>(() => {
+    if (!seed?.members) return INITIAL_MEMBERS;
+    return seed.members.map((m, i) => ({
+      id: i + 1,
+      name: m.name,
+      role: m.role,
+      provider: m.provider ?? 'anthropic',
+      model: m.model ?? 'Default',
+    }));
+  }, [seed]);
+  const [teamName, setTeamName] = useState(seed?.teamName ?? '');
   const [solo, setSolo] = useState(false);
-  const [members, setMembers] = useState<MemberDraft[]>(INITIAL_MEMBERS);
+  const [members, setMembers] = useState<MemberDraft[]>(seededMembers);
   const [expandedMember, setExpandedMember] = useState<number | null>(null);
   const [runAfterCreate, setRunAfterCreate] = useState(true);
   const [autoApprove, setAutoApprove] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [validationOpen, setValidationOpen] = useState(false);
-  const [projectMode, setProjectMode] = useState<ProjectMode>('list');
-  const [project, setProject] = useState(RECENT_PROJECTS[0]);
-  const [customPath, setCustomPath] = useState('');
+  const [projectMode, setProjectMode] = useState<ProjectMode>(seed?.projectPath ? 'custom' : 'list');
+  const projectRegistry = useProjects();
+  const recentProjects = useMemo(
+    () => projectRegistry.projects,
+    [projectRegistry.projects],
+  );
+  const [project, setProject] = useState(recentProjects[0]?.path ?? '');
+  const [customPath, setCustomPath] = useState(seed?.projectPath ?? '');
   const [effort, setEffort] = useState<EffortLevel>('medium');
-  const [leadProvider, setLeadProvider] = useState('anthropic');
+  const [leadProvider, setLeadProvider] = useState(seed?.leadProvider ?? 'anthropic');
   const [leadModel, setLeadModel] = useState('Opus 4.6');
-  const [leadPrompt, setLeadPrompt] = useState('');
+  const [leadPrompt, setLeadPrompt] = useState(seed?.leadPrompt ?? '');
   const [validationInstall, setValidationInstall] = useState('');
   const [validationLint, setValidationLint] = useState('');
   const [validationTypecheck, setValidationTypecheck] = useState('');
@@ -80,6 +114,12 @@ export function CreateTeamModal({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose, submit.kind]);
+
+  useEffect(() => {
+    if (projectMode !== 'list') return;
+    if (project) return;
+    if (recentProjects[0]?.path) setProject(recentProjects[0].path);
+  }, [project, projectMode, recentProjects]);
 
   const updateMember = (id: number, patch: Partial<MemberDraft>) =>
     setMembers((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
@@ -216,6 +256,15 @@ export function CreateTeamModal({
         </div>
 
         <div className="modal-body">
+          {/* Provider plan/quota at-a-glance — operators picking which
+              CLI to delegate roles to want to see headroom before
+              choosing. Compact variant trims height since the modal is
+              already dense. */}
+          <div className="field">
+            <label style={{ marginBottom: 6 }}>Provider plans</label>
+            <PlanUsagePanel variant="compact" />
+          </div>
+
           <div className="field">
             <label>Team name</label>
             <input
@@ -372,7 +421,16 @@ export function CreateTeamModal({
                     style={{ flex: 1 }}
                     disabled={inFlight}
                   >
-                    {RECENT_PROJECTS.map((p) => <option key={p} value={p}>{p}</option>)}
+                    {recentProjects.length === 0 && (
+                      <option value="" disabled>
+                        No projects yet — open a folder first
+                      </option>
+                    )}
+                    {recentProjects.map((p) => (
+                      <option key={p.id} value={p.path}>
+                        {p.name}
+                      </option>
+                    ))}
                   </select>
                 ) : (
                   <input

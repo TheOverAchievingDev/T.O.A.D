@@ -94,6 +94,43 @@ export class SqliteBroker {
     return rows.map((row) => this.#rowToMessage(row));
   }
 
+  /**
+   * List agent-targeted messages whose only delivery attempt was a fallback
+   * (offline_queue) — i.e. the originating process couldn't resolve the
+   * recipient. Used by the main sidecar's retry sweep to re-attempt delivery
+   * with its own (live) adapters/directory.
+   *
+   * Skips messages that already have a successful runtime_stdin (or
+   * runtime_bridge) delivery — those landed correctly the first time.
+   *
+   * Returns messages in oldest-first order so the recipient sees them in
+   * causal order. Caller is responsible for invoking the DeliveryWorker
+   * with each message id.
+   */
+  listMessagesNeedingDelivery({ limit = 200 } = {}) {
+    const rows = this.db.prepare(
+      `
+        SELECT m.*
+        FROM messages m
+        WHERE m.to_kind = 'agent'
+          AND NOT EXISTS (
+            SELECT 1 FROM delivery_attempts da
+            WHERE da.message_id = m.message_id
+              AND da.status = 'committed'
+              AND da.delivery_kind IN ('runtime_stdin', 'runtime_bridge')
+          )
+          AND EXISTS (
+            SELECT 1 FROM delivery_attempts da
+            WHERE da.message_id = m.message_id
+              AND da.delivery_kind = 'offline_queue'
+          )
+        ORDER BY m.created_at ASC, m.message_id ASC
+        LIMIT ?
+      `
+    ).all(Number.isInteger(limit) && limit > 0 ? limit : 200);
+    return rows.map((row) => this.#rowToMessage(row));
+  }
+
   listMessages({ teamId = null, conversationId = null, limit = null } = {}) {
     const clauses = [];
     const params = [];

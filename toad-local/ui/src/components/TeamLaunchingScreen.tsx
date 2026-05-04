@@ -57,6 +57,12 @@ export function TeamLaunchingScreen({
   team, runtimes, launchingTeamId, onContinue, onCancel, autoContinueDelayMs = 1500,
 }: TeamLaunchingScreenProps) {
   const [eventOverrides, setEventOverrides] = useState<Record<string, MemberStatus>>({});
+  // Tracks runtime IDs that have emitted ANY event after spawn — proves the
+  // agent process is actually responsive, not just running. Without this,
+  // a freshly-spawned process shows "live" the instant `child_process.spawn`
+  // returns, even though the agent CLI hasn't said anything yet. The
+  // progress bar would jump to 100% before any work has begun.
+  const [runtimesAcknowledged, setRuntimesAcknowledged] = useState<Set<string>>(() => new Set());
 
   // Listen to live runtime events so the screen advances as each agent comes
   // online, even if the polled runtimes list hasn't refreshed yet.
@@ -64,10 +70,18 @@ export function TeamLaunchingScreen({
     onEvent: (event: RuntimeEvent) => {
       if (!event?.type || !event.runtimeId) return;
       if (!event.type.startsWith('runtime')) return;
+      // Any event from this runtime proves it's responsive.
+      const rid = String(event.runtimeId);
+      setRuntimesAcknowledged((prev) => {
+        if (prev.has(rid)) return prev;
+        const next = new Set(prev);
+        next.add(rid);
+        return next;
+      });
       const status = (event.payload as { status?: string } | undefined)?.status;
       if (!status) return;
       if (status === 'live' || status === 'launching' || status === 'error' || status === 'queued') {
-        setEventOverrides((prev) => ({ ...prev, [String(event.runtimeId)]: status as MemberStatus }));
+        setEventOverrides((prev) => ({ ...prev, [rid]: status as MemberStatus }));
       }
     },
   });
@@ -81,14 +95,22 @@ export function TeamLaunchingScreen({
         : runtimes.find((r) => r.agent === m.id) ?? null;
       const baseStatus = memberStatusFromRuntime(rt);
       const override = expectedRuntimeId ? eventOverrides[expectedRuntimeId] : undefined;
+      let status = override ?? baseStatus;
+      // If the supervisor reports the process as live but we haven't seen
+      // any output from it yet, downgrade to "launching" — the CLI is
+      // booting + reading the launch prompt, not actually working yet.
+      const rid = rt?.id ?? expectedRuntimeId;
+      if (status === 'live' && rid && !runtimesAcknowledged.has(rid)) {
+        status = 'launching';
+      }
       return {
         member: m,
-        status: override ?? baseStatus,
-        runtimeId: rt?.id ?? expectedRuntimeId ?? null,
+        status,
+        runtimeId: rid ?? null,
         detail: rt ? `pid ${rt.pid}` : undefined,
       };
     });
-  }, [team, runtimes, launchingTeamId, eventOverrides]);
+  }, [team, runtimes, launchingTeamId, eventOverrides, runtimesAcknowledged]);
 
   const liveCount = memberStates.filter((s) => s.status === 'live').length;
   const totalCount = memberStates.length;

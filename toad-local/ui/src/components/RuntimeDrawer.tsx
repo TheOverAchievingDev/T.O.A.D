@@ -188,6 +188,30 @@ export function RuntimeDrawer({ onClose, team }: RuntimeDrawerProps) {
   const [tab, setTab] = useState<RuntimeTab>('activity');
   const [autoScroll, setAutoScroll] = useState(true);
   const [composer, setComposer] = useState('');
+  // Guard: the rest of this drawer renders a hardcoded RUNTIME snapshot.
+  // Until it's wired to live data, hide that content when there's no real
+  // team to render so we don't show fake "tom@signal-ops" details.
+  if (team.members.length === 0) {
+    return (
+      <div className="drawer-backdrop" onClick={onClose}>
+        <div className="drawer rt-drawer" onClick={(e) => e.stopPropagation()}>
+          <div className="rt-head" style={{ padding: '20px 18px' }}>
+            <div className="rt-head-top">
+              <div style={{ flex: 1, fontSize: 14, color: 'var(--fg-muted)' }}>
+                No active runtime to inspect.
+              </div>
+              <button className="icon-btn" onClick={onClose} type="button">
+                <Icon name="x" size={16} />
+              </button>
+            </div>
+            <div className="dim" style={{ fontSize: 12, marginTop: 12 }}>
+              Launch a team to see runtime activity, token usage, and live agent context here.
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
   const member = team.members.find((candidate) => candidate.id === RUNTIME.agentId);
   const totalContextTokens = CONTEXT_BREAKDOWN.reduce((total, item) => total + item.tokens, 0);
   const budgetPct = (totalContextTokens / 200_000) * 100;

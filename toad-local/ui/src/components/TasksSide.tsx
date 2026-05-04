@@ -144,6 +144,7 @@ function RuntimesPanel({ runtimes, team, onOpenLogs }: { runtimes: Runtime[]; te
   const RuntimeRow = ({ r }: { r: Runtime }) => {
     const member = team.members.find((m) => m.id === r.agent);
     const cpuPct = Math.min(100, r.cpu * 4);
+    const activity = member?.activity ?? null;
     return (
       <div
         className={`runtime-row ${r.status}`}
@@ -170,6 +171,51 @@ function RuntimesPanel({ runtimes, team, onOpenLogs }: { runtimes: Runtime[]; te
           <span style={{ color: 'var(--fg-dim)', marginLeft: 'auto' }} className="mono">{r.uptime}</span>
         </div>
         <div className="rt-bar"><span style={{ width: `${cpuPct}%` }} /></div>
+        {activity ? (
+          <div
+            style={{
+              gridColumn: '1 / -1',
+              marginTop: 6,
+              padding: '5px 7px',
+              borderRadius: 5,
+              background: 'rgba(255,255,255,0.04)',
+              fontSize: 10.5,
+              color: 'var(--fg-muted)',
+              display: 'flex',
+              gap: 5,
+              alignItems: 'flex-start',
+              fontFamily: 'var(--font-mono, monospace)',
+            }}
+            title={`${activity.kind} · ${activity.at}`}
+          >
+            <span
+              style={{
+                color:
+                  activity.kind === 'tool'
+                    ? '#7cd1ff'
+                    : activity.kind === 'text'
+                      ? '#9eff9e'
+                      : activity.kind === 'thinking'
+                        ? '#ffcd66'
+                        : 'var(--fg-dim)',
+                flexShrink: 0,
+              }}
+            >
+              {activity.kind === 'tool' ? '⚙' : activity.kind === 'text' ? '💬' : activity.kind === 'thinking' ? '✻' : '·'}
+            </span>
+            <span
+              style={{
+                overflow: 'hidden',
+                display: '-webkit-box',
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical',
+                wordBreak: 'break-word',
+              } as React.CSSProperties}
+            >
+              {activity.label}
+            </span>
+          </div>
+        ) : null}
       </div>
     );
   };

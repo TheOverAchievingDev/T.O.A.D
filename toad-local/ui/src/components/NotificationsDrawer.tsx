@@ -33,69 +33,11 @@ export interface NotificationsDrawerProps {
   onClose: () => void;
 }
 
-const NOTIFICATIONS: NotificationItem[] = [
-  {
-    id: 'n1',
-    kind: 'approval',
-    time: 'just now',
-    agent: 'tom',
-    title: 'Tool approval needed',
-    body: 'tom wants to run `rm -rf node_modules` in ide-test',
-    actions: ['Approve', 'Deny'],
-  },
-  {
-    id: 'n2',
-    kind: 'approval',
-    time: '1m ago',
-    agent: 'rex',
-    title: 'Tool approval needed',
-    body: 'rex wants to fetch deepgram.com/docs/streaming',
-    actions: ['Approve', 'Deny'],
-  },
-  {
-    id: 'n3',
-    kind: 'validation-failed',
-    time: '3m ago',
-    agent: 'tom',
-    title: 'Tests failed on T-481',
-    body: 'stream.test.ts - 2 failed of 11 (1.7s)',
-    actions: ['Open task', 'Re-run'],
-  },
-  {
-    id: 'n4',
-    kind: 'scope-drift',
-    time: '8m ago',
-    agent: 'tom',
-    title: 'Scope drift on T-481',
-    body: 'tom modified src/billing/* - outside expected files',
-    actions: ['Open diff', 'Acknowledge'],
-  },
-  {
-    id: 'n5',
-    kind: 'repeated-fail',
-    time: '12m ago',
-    agent: 'alice',
-    title: 'Repeated test failures',
-    body: 'T-477 has failed validation 3x in a row',
-    actions: ['Open task'],
-  },
-  {
-    id: 'n6',
-    kind: 'agent-stop',
-    time: '26m ago',
-    agent: 'dee',
-    title: 'Agent stopped',
-    body: "dee exited with code 0 - 'idle timeout 20m'",
-    actions: ['Restart'],
-  },
-  {
-    id: 'n7',
-    kind: 'info',
-    time: '1h ago',
-    title: 'DB retention pruned 2,142 events',
-    body: 'Older than 14 days - 18 MB freed',
-  },
-];
+// Notifications come from the live SSE event stream — drawer starts empty
+// and fills in as runtime events arrive. The previous static seed list has
+// been removed (was misleading — looked like real notifications even when
+// nothing was happening).
+const NOTIFICATIONS: NotificationItem[] = [];
 
 const KIND_META: Record<NotificationKind, NotificationKindMeta> = {
   approval: { icon: 'info', color: 'var(--warn)', label: 'Approval' },

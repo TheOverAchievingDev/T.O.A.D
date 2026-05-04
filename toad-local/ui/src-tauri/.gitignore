@@ -9,3 +9,8 @@ src-tauri/target/
 
 # Note: Cargo.lock IS committed for binary crates per Rust convention,
 # so it's intentionally not listed here.
+
+# Local icon source — each contributor drops a 1024x1024 PNG here and runs
+# `npm run tauri:icon`. The generated icons in icons/ ARE committed so the
+# build works without regenerating, but the source PNG is per-machine.
+toad-source.png

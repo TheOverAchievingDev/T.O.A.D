@@ -17,6 +17,16 @@ export interface RoleMeta {
 
 export type AgentStatus = 'thinking' | 'live' | 'idle' | 'launching' | 'error';
 
+export type AgentActivityKind = 'text' | 'tool' | 'thinking' | 'idle';
+
+export interface AgentActivity {
+  kind: AgentActivityKind;
+  /** Short human-readable label (e.g. "Reading product-brief.md", "Created task CP-001"). */
+  label: string;
+  /** ISO timestamp the activity was observed. */
+  at: string;
+}
+
 export interface Agent {
   id: string;
   name: string;
@@ -29,6 +39,10 @@ export interface Agent {
   provider: string;
   model: string;
   tasksDone: number;
+  /** Live signal of what this agent is doing right now, derived from SSE
+   *  runtime events (tool_use, assistant_text, etc.). null when no event
+   *  has been observed yet for this runtime. */
+  activity?: AgentActivity | null;
 }
 
 export type TeamStatus = 'running' | 'launching' | 'idle' | 'stopped';
@@ -120,6 +134,7 @@ export interface Tweaks {
     | 'workspace'
     | 'tasks'
     | 'settings'
+    | 'foundry'
     | 'costs'
     | 'audit'
     | 'picker'

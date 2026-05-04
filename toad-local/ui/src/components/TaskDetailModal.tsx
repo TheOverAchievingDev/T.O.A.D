@@ -3,13 +3,16 @@ import type { Team, UiTask, TaskRiskLevel, MatchedRiskRule } from '@/types';
 import { ROLES, roleStyle } from '@/data/roles';
 import { Icon, type IconName } from './Icon';
 import { callTool, ToadApiError, type Actor } from '@/api/client';
-import { PlanSection } from './task-detail/PlanSection';
-import { DiffSection } from './task-detail/DiffSection';
-import { ValidationsSection } from './task-detail/ValidationsSection';
+// PlanSection / DiffSection / ValidationsSection are temporarily unused —
+// they need real backend data flow before they go back in. See comment
+// above the section block in render.
 import { TaskRiskBadge } from './TaskRiskBadge';
 import { ReviewComposer } from './ReviewComposer';
 import { TaskLifecycle } from './TaskLifecycle';
-import { SEED_PLAN, SEED_DIFF_FILES, SEED_VALIDATIONS } from './task-detail/seed';
+import { OpenPullRequestButton } from './OpenPullRequestButton';
+// Plan/Diff/Validations come from the backend task projection. Until those
+// are wired through to this modal, the sections are gated on real data
+// rather than rendered with the legacy seed constants.
 
 type ActivityKind = 'create' | 'log' | 'change' | 'comment' | 'approval' | 'stage';
 
@@ -34,6 +37,8 @@ interface TaskDetailData {
   reviewerId: string;
   createdAgo: string;
   branch: string;
+  baseBranch: string | null;
+  worktreeBranch: string | null;
   description: string;
   attachments: { name: string; size: string; kind: 'code' | 'doc' }[];
   changes: { file: string; added: number; removed: number }[];
@@ -41,6 +46,14 @@ interface TaskDetailData {
   requiresHumanApproval?: boolean;
   humanApproved?: boolean;
   matchedRules?: MatchedRiskRule[];
+  // Rich content from the lead's EARS-spec task_create calls — surfaced
+  // in the description column when present so the assigned agent (and
+  // the operator reviewing) can see the full contract for the task.
+  priority?: string;
+  acceptanceCriteria?: string[];
+  expectedDeliverables?: string[];
+  dependencyTaskIds?: string[];
+  testCommands?: string[];
 }
 
 interface BackendTaskEvent {
@@ -61,17 +74,35 @@ interface BackendTaskEvent {
 }
 
 interface BackendTask {
-  id: string;
+  // Backend's task projection writes `taskId` + `subject`. Older test
+  // fixtures used `id` + `title`. Accept both so the modal isn't empty
+  // just because the field name shifted.
+  id?: string;
+  taskId?: string;
   title?: string;
-  status?: UiTask['status'];
+  subject?: string;
+  status?: string;
   assignedRole?: string;
+  ownerId?: string | null;
   description?: string;
   branch?: string;
+  baseBranch?: string;
+  worktree?: { branch?: string; status?: string } | null;
   createdAt?: string;
   riskLevel?: TaskRiskLevel | null;
   requiresHumanApproval?: boolean;
   humanApproved?: boolean;
+  // Backend post-2026-05-03 stores nested approval object; legacy fixtures
+  // used the flat boolean. UI must accept both.
+  humanApproval?: { approved?: boolean };
   matchedRules?: MatchedRiskRule[];
+  // Rich fields surfaced from the projection — populated by task_create
+  // when the lead follows the EARS-spec system prompt.
+  acceptanceCriteria?: string[];
+  expectedDeliverables?: string[];
+  dependencyTaskIds?: string[];
+  testCommands?: string[];
+  priority?: string;
 }
 
 interface BackendHistory {
@@ -80,45 +111,26 @@ interface BackendHistory {
   runtimeEvents?: BackendTaskEvent[];
 }
 
-const SEED_DETAIL: TaskDetailData = {
-  id: 'T-481',
-  shortId: '5efa854c',
-  title: 'Streaming buffer for transcription',
-  status: 'in-progress',
-  assigneeId: 'tom',
-  leadId: 'lead',
-  reviewerId: 'alice',
-  createdAgo: 'about 3 hours ago',
-  branch: 'feature/transcribe-v2',
-  description: `Implement a streaming transcription buffer in src/audio/stream.ts that exposes streamTranscribe() as an async iterator. Preserve the current 4096-frame default chunk size and allow override via the AUDIO_CHUNK_FRAMES env var.
-
-Requirements:
-- Single index.ts with no new dependencies
-- Buffer flush on pause must emit any partial frame (don't drop trailing audio)
-- Dual-reversal guard around stream pause/resume
-- Emit a 'partial' event for in-progress transcripts`,
-  attachments: [
-    { name: 'src/audio/stream.ts', size: '264 lines', kind: 'code' },
-    { name: 'audio-pipeline.md', size: '2 KB', kind: 'doc' },
-    { name: 'stream.test.ts', size: '180 lines', kind: 'code' },
-  ],
-  changes: [
-    { file: 'src/audio/stream.ts', added: 128, removed: 41 },
-    { file: 'src/audio/buffer.ts', added: 22, removed: 8 },
-    { file: 'tests/stream.test.ts', added: 64, removed: 0 },
-  ],
+// Empty defaults for first render before the API responds. The modal
+// only opens via a real task click, so these are placeholders that
+// get filled in by the task_history_export call below — never user-
+// visible mock data.
+const EMPTY_DETAIL: TaskDetailData = {
+  id: '',
+  shortId: '',
+  title: '',
+  status: 'todo',
+  assigneeId: '',
+  leadId: '',
+  reviewerId: '',
+  createdAgo: '',
+  branch: '',
+  baseBranch: null,
+  worktreeBranch: null,
+  description: '',
+  attachments: [],
+  changes: [],
 };
-
-const SEED_TIMELINE: ActivityEvent[] = [
-  { kind: 'create', actor: 'lead', time: '14:00', body: 'Created task and assigned to tom' },
-  { kind: 'log', actor: 'tom', time: '14:03', body: 'Started work — pulled chunking logic into src/audio/stream.ts' },
-  { kind: 'change', actor: 'tom', time: '14:31', file: 'src/audio/stream.ts', added: 128, removed: 41, msg: 'Add streamTranscribe() async iterator' },
-  { kind: 'log', actor: 'tom', time: '14:32', body: 'Tests: 8 passed (1.2s) · stream.test.ts' },
-  { kind: 'comment', actor: 'tom', time: '14:34', body: 'Implementation complete. Single file, no external deps.' },
-  { kind: 'comment', actor: 'alice', time: '14:38', body: 'Review of #5efa854c — looking solid. Verified the dual-reversal guard catches the race.' },
-  { kind: 'approval', actor: 'alice', time: '14:39', body: 'Meets all requirements; clean implementation.' },
-  { kind: 'stage', actor: 'lead', time: '14:45', body: 'Moved to Review stage' },
-];
 
 function formatTime(iso: string | undefined): string {
   if (!iso) return '';
@@ -274,21 +286,22 @@ export function TaskDetailModal({ team, taskId, task, onClose, actor = DEFAULT_A
   const [filter, setFilter] = useState<TimelineFilter>('all');
   const [composer, setComposer] = useState('');
   const [detail, setDetail] = useState<TaskDetailData>(() => {
-    if (!task) return SEED_DETAIL;
+    if (!task) return EMPTY_DETAIL;
+    const safeId = task.id || taskId || '';
     return {
-      ...SEED_DETAIL,
-      id: task.id,
-      shortId: task.id.slice(0, 8),
-      title: task.title,
+      ...EMPTY_DETAIL,
+      id: safeId,
+      shortId: safeId.slice(0, 8),
+      title: task.title || safeId,
       status: task.status,
-      assigneeId: task.assignee || SEED_DETAIL.assigneeId,
+      assigneeId: task.assignee || EMPTY_DETAIL.assigneeId,
       riskLevel: task.riskLevel ?? null,
       requiresHumanApproval: task.requiresHumanApproval,
       humanApproved: task.humanApproved,
       matchedRules: task.matchedRules,
     };
   });
-  const [timeline, setTimeline] = useState<ActivityEvent[]>(SEED_TIMELINE);
+  const [timeline, setTimeline] = useState<ActivityEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [posting, setPosting] = useState(false);
@@ -317,19 +330,54 @@ export function TaskDetailModal({ team, taskId, task, onClose, actor = DEFAULT_A
       .then((res) => {
         if (cancelled) return;
         if (res?.task) {
+          // Backend projection uses `taskId`/`subject`; legacy fixtures
+          // used `id`/`title`. Read both so we never render an empty
+          // header when the task itself has data.
+          const t = res.task;
+          const taskIdOut = t.taskId ?? t.id ?? '';
+          const titleOut = t.subject ?? t.title ?? taskIdOut;
+          // Status mapping: backend uses pending/in_progress/completed;
+          // UI's TaskStatus union expects todo/in-progress/done.
+          const statusMap: Record<string, UiTask['status']> = {
+            pending: 'todo', todo: 'todo',
+            in_progress: 'in-progress', 'in-progress': 'in-progress',
+            review: 'review',
+            completed: 'done', done: 'done',
+            blocked: 'blocked', rejected: 'rejected',
+          };
+          const status = statusMap[t.status ?? 'pending'] ?? 'todo';
+          // assigneeId: prefer ownerId (an actual agentId) over
+          // assignedRole when both present, since ownerId is what the
+          // sidebar matches against. Apply the same tester→qa mapping
+          // used in the workspace agent normalization.
+          const rawAssignee = t.ownerId ?? t.assignedRole ?? '';
+          const assignee = rawAssignee === 'tester' ? 'qa' : rawAssignee;
+          const humanApprovedOut =
+            (t.humanApproval && t.humanApproval.approved === true)
+            || t.humanApproved === true;
           setDetail((prev) => ({
             ...prev,
-            id: res.task!.id,
-            shortId: res.task!.id.slice(0, 8),
-            title: res.task!.title ?? res.task!.id,
-            status: (res.task!.status ?? 'in-progress') as UiTask['status'],
-            description: res.task!.description ?? prev.description,
-            branch: res.task!.branch ?? prev.branch,
-            assigneeId: res.task!.assignedRole ?? prev.assigneeId,
-            riskLevel: res.task!.riskLevel ?? prev.riskLevel,
-            requiresHumanApproval: res.task!.requiresHumanApproval ?? prev.requiresHumanApproval,
-            humanApproved: res.task!.humanApproved ?? prev.humanApproved,
-            matchedRules: Array.isArray(res.task!.matchedRules) ? res.task!.matchedRules : prev.matchedRules,
+            id: taskIdOut,
+            shortId: taskIdOut.slice(0, 8),
+            title: titleOut,
+            status,
+            description: t.description ?? prev.description,
+            branch: t.branch ?? prev.branch,
+            baseBranch: t.baseBranch ?? prev.baseBranch,
+            worktreeBranch:
+              (t.worktree && typeof t.worktree.branch === 'string'
+                ? t.worktree.branch
+                : null) ?? prev.worktreeBranch,
+            assigneeId: assignee || prev.assigneeId,
+            riskLevel: t.riskLevel ?? prev.riskLevel,
+            requiresHumanApproval: t.requiresHumanApproval ?? prev.requiresHumanApproval,
+            humanApproved: humanApprovedOut,
+            matchedRules: Array.isArray(t.matchedRules) ? t.matchedRules : prev.matchedRules,
+            priority: t.priority ?? prev.priority,
+            acceptanceCriteria: Array.isArray(t.acceptanceCriteria) ? t.acceptanceCriteria : prev.acceptanceCriteria,
+            expectedDeliverables: Array.isArray(t.expectedDeliverables) ? t.expectedDeliverables : prev.expectedDeliverables,
+            dependencyTaskIds: Array.isArray(t.dependencyTaskIds) ? t.dependencyTaskIds : prev.dependencyTaskIds,
+            testCommands: Array.isArray(t.testCommands) ? t.testCommands : prev.testCommands,
           }));
         }
         const merged = [
@@ -470,14 +518,82 @@ export function TaskDetailModal({ team, taskId, task, onClose, actor = DEFAULT_A
               })}
             </div>
 
-            <PlanSection team={team} plan={SEED_PLAN} />
-            <DiffSection files={SEED_DIFF_FILES} />
-            <ValidationsSection validations={SEED_VALIDATIONS} />
+            {/* Rich-content sections — populated when the lead's task_create
+                call followed the EARS-spec system prompt (acceptance, deliverables,
+                dependencies). Each block hides itself when its array is empty
+                so legacy tasks created before the prompt change don't show
+                empty placeholders. */}
+            {((detail.acceptanceCriteria && detail.acceptanceCriteria.length > 0)
+              || (detail.expectedDeliverables && detail.expectedDeliverables.length > 0)
+              || (detail.dependencyTaskIds && detail.dependencyTaskIds.length > 0)
+              || (detail.testCommands && detail.testCommands.length > 0)
+              || detail.priority) ? (
+              <div className="td-section" style={{ marginTop: 18 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14 }}>
+                  {detail.priority ? (
+                    <div>
+                      <div className="td-side-label" style={{ marginBottom: 4 }}>Priority</div>
+                      <div style={{ fontSize: 13, textTransform: 'capitalize', fontWeight: 600,
+                          color: detail.priority === 'critical' || detail.priority === 'high'
+                            ? 'var(--err, #f87171)'
+                            : detail.priority === 'medium' ? 'var(--warn, #ffcd66)' : 'var(--fg)' }}>
+                        {detail.priority}
+                      </div>
+                    </div>
+                  ) : null}
+                  {detail.dependencyTaskIds && detail.dependencyTaskIds.length > 0 ? (
+                    <div>
+                      <div className="td-side-label" style={{ marginBottom: 4 }}>Depends on</div>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {detail.dependencyTaskIds.map((dep) => (
+                          <span key={dep} className="chip mono" style={{ fontSize: 11 }}>{dep}</span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                {detail.acceptanceCriteria && detail.acceptanceCriteria.length > 0 ? (
+                  <div style={{ marginTop: 14 }}>
+                    <div className="td-side-label" style={{ marginBottom: 6 }}>Acceptance criteria</div>
+                    <ul style={{ margin: 0, paddingLeft: 20, color: 'var(--fg)', fontSize: 13, lineHeight: 1.55 }}>
+                      {detail.acceptanceCriteria.map((c, i) => <li key={i}>{c}</li>)}
+                    </ul>
+                  </div>
+                ) : null}
+
+                {detail.expectedDeliverables && detail.expectedDeliverables.length > 0 ? (
+                  <div style={{ marginTop: 14 }}>
+                    <div className="td-side-label" style={{ marginBottom: 6 }}>Expected deliverables</div>
+                    <ul style={{ margin: 0, paddingLeft: 20, color: 'var(--fg)', fontSize: 13, lineHeight: 1.55 }}>
+                      {detail.expectedDeliverables.map((c, i) => <li key={i}>{c}</li>)}
+                    </ul>
+                  </div>
+                ) : null}
+
+                {detail.testCommands && detail.testCommands.length > 0 ? (
+                  <div style={{ marginTop: 14 }}>
+                    <div className="td-side-label" style={{ marginBottom: 6 }}>Test commands</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {detail.testCommands.map((c, i) => (
+                        <code key={i} className="mono" style={{
+                          fontSize: 12,
+                          padding: '4px 8px',
+                          background: 'var(--bg-panel, rgba(255,255,255,0.04))',
+                          borderRadius: 4,
+                          color: 'var(--fg)',
+                        }}>{c}</code>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
 
             {(detail.status === 'review' || taskId) && taskId && (
               <ReviewComposer
                 taskId={taskId}
-                changedFiles={SEED_DIFF_FILES.map((f) => f.path)}
+                changedFiles={[]}
                 actor={actor}
                 onDecided={() => {
                   // Refresh would normally come from a parent. For now we just
@@ -550,6 +666,17 @@ export function TaskDetailModal({ team, taskId, task, onClose, actor = DEFAULT_A
                   </div>
                 </div>
               )}
+            </div>
+
+            <div className="td-side-block">
+              <div className="td-side-label">GitHub</div>
+              <OpenPullRequestButton
+                taskId={detail.id}
+                taskTitle={detail.title}
+                headBranch={detail.worktreeBranch ?? detail.branch ?? null}
+                baseBranch={detail.baseBranch}
+                actor={actor}
+              />
             </div>
 
             <div className="td-side-block">

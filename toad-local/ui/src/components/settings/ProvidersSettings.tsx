@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../Icon';
+import { PlanUsagePanel } from '../PlanUsagePanel';
 import { SettingsSectionHeader, SettingsCard } from './SettingsLayout';
 import { useSectionDraft } from './useSectionDraft';
 import { SaveBar, SectionMeta } from './SectionShell';
 import {
   ProviderPlanAuth,
-  readProviderAuthStatus,
   type ProviderId,
   type AuthStatus,
 } from './ProviderPlanAuth';
+import { getCachedStatus, loadAllStatuses, subscribeStatus } from './providerAuthCache';
+import { ProviderModelPicker } from './ProviderModelPicker';
 
 type AuthMode = 'apikey' | 'plan';
 
@@ -22,7 +24,7 @@ interface ProviderEntry {
 
 const PROVIDER_LABELS: Record<ProviderId, string> = {
   anthropic: 'Anthropic',
-  openai: 'OpenAI Codex',
+  openai: 'OpenAI',
   gemini: 'Gemini',
   opencode: 'OpenCode',
 };
@@ -55,24 +57,39 @@ export function ProvidersSettings() {
 
   // Probe each provider's plan-auth surface once so the auth-mode toggle can
   // hide the "Plan / subscription" option when the provider is API-only
-  // (OpenCode) or otherwise unsupported. Cheap — backend dispatches without
-  // touching disk for unsupported providers.
+  // (OpenCode) or otherwise unsupported. Reads through providerAuthCache —
+  // a cached value is reused, an in-flight fetch is shared, and we subscribe
+  // so login/logout from the badge below propagates back here without a
+  // second probe.
   useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      const ids: ProviderId[] = ['anthropic', 'openai', 'gemini', 'opencode'];
-      const entries = await Promise.all(
-        ids.map(async (id) => [id, await readProviderAuthStatus(id)] as const),
-      );
-      if (cancelled) return;
-      const next: Partial<Record<ProviderId, AuthStatus>> = {};
-      for (const [id, status] of entries) {
-        if (status) next[id] = status;
-      }
-      setAuthStatuses(next);
+    const ids: ProviderId[] = ['anthropic', 'openai', 'gemini', 'opencode'];
+
+    // Seed from cache synchronously so the toggle row doesn't flicker.
+    const seed: Partial<Record<ProviderId, AuthStatus>> = {};
+    for (const id of ids) {
+      const cached = getCachedStatus(id);
+      if (cached) seed[id] = cached;
     }
-    void load();
-    return () => { cancelled = true; };
+    if (Object.keys(seed).length > 0) setAuthStatuses(seed);
+
+    void loadAllStatuses(ids);
+
+    const unsubscribers = ids.map((id) =>
+      subscribeStatus(id, (status) => {
+        setAuthStatuses((prev) => {
+          if (status === null) {
+            if (!(id in prev)) return prev;
+            const next = { ...prev };
+            delete next[id];
+            return next;
+          }
+          return { ...prev, [id]: status };
+        });
+      }),
+    );
+    return () => {
+      for (const unsub of unsubscribers) unsub();
+    };
   }, []);
 
   function patchProvider(id: ProviderEntry['id'], partial: Partial<ProviderEntry>) {
@@ -93,6 +110,13 @@ export function ProvidersSettings() {
         description="API keys, default models, and cost caps for each CLI runtime provider."
       />
       <SectionMeta draft={draft} />
+
+      <SettingsCard
+        title="Plan & quota usage"
+        description="Live signed-in status and remaining plan quota for each subscription provider. Claude exposes session + weekly quotas via its /usage panel; Codex and Gemini show sign-in only (no quota probe yet)."
+      >
+        <PlanUsagePanel variant="full" />
+      </SettingsCard>
 
       <SettingsCard title="Per-provider settings">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -221,18 +245,15 @@ export function ProvidersSettings() {
 
       <SettingsCard
         title="Default model per role"
-        description="When a team is created without an explicit model per agent, these defaults fill in. Format: provider/model."
+        description="When a team is created without an explicit model per agent, these defaults fill in. Pick a provider, then a model."
       >
         {Object.entries(draft.draft.defaultByRole).map(([role, value]) => (
           <div key={role} className="field">
             <label style={{ textTransform: 'capitalize' }}>{role}</label>
-            <input
-              className="field-input mono"
+            <ProviderModelPicker
               value={value}
-              onChange={(e) => patchRole(role, e.target.value)}
-              placeholder="provider/model"
+              onChange={(next) => patchRole(role, next)}
               disabled={draft.saving}
-              style={{ fontSize: 12 }}
             />
           </div>
         ))}

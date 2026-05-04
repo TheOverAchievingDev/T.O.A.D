@@ -9,6 +9,22 @@ interface LogViewerDrawerProps {
   title?: string;
   onClose: () => void;
   actor?: Actor;
+  /** Optional pre-loaded runtime row so we can render metadata chips
+   *  (model, uptime, reqs) without an extra fetch. */
+  runtime?: {
+    id: string;
+    agent: string;
+    provider: string;
+    model: string;
+    pid: number;
+    status: string;
+    uptime?: string;
+    reqs?: number;
+    tokensIn?: number;
+    tokensOut?: number;
+  };
+  /** Refresh the parent's data after a Stop action lands. */
+  onAfterAction?: () => void;
 }
 
 interface AuditEvent {
@@ -74,14 +90,40 @@ function formatTime(iso?: string): string {
   }
 }
 
-export function LogViewerDrawer({ runtimeId, title, onClose, actor = DEFAULT_ACTOR }: LogViewerDrawerProps) {
+export function LogViewerDrawer({ runtimeId, title, onClose, actor = DEFAULT_ACTOR, runtime, onAfterAction }: LogViewerDrawerProps) {
   const [tab, setTab] = useState<Tab>('timeline');
   const [filter, setFilter] = useState<Filter>('all');
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [autoFollow, setAutoFollow] = useState(true);
+  const [stopping, setStopping] = useState(false);
+  const [stopError, setStopError] = useState<string | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+
+  async function stopRuntime() {
+    if (stopping) return;
+    setStopping(true);
+    setStopError(null);
+    try {
+      await callTool({
+        actor,
+        method: 'agent_stop',
+        args: { runtimeId },
+        idempotencyKey: `stop-${runtimeId}-${Date.now()}`,
+      });
+      onAfterAction?.();
+    } catch (err) {
+      const m = err instanceof ToadApiError ? err.message
+        : err instanceof Error ? err.message
+        : 'Failed to stop runtime';
+      setStopError(m);
+    } finally {
+      setStopping(false);
+    }
+  }
+
+  const isLive = runtime?.status === 'live' || runtime?.status === 'running' || runtime?.status === 'launching';
 
   // Initial fetch + manual refresh.
   async function load() {
@@ -192,6 +234,35 @@ export function LogViewerDrawer({ runtimeId, title, onClose, actor = DEFAULT_ACT
           </div>
         </div>
 
+        {/* Runtime metadata chips — populated from the runtime row when the
+            parent passes it in. Each chip is a small reified data point so
+            the operator can inspect a runtime without leaving the drawer. */}
+        {runtime ? (
+          <div style={{
+            display: 'flex', gap: 8, padding: '8px 16px',
+            borderBottom: '1px solid var(--border-soft)',
+            fontSize: 11, color: 'var(--fg-muted)', flexWrap: 'wrap',
+            alignItems: 'center',
+          }}>
+            <span className="chip" style={{ fontSize: 10.5, fontWeight: 600 }}>{runtime.provider}</span>
+            <span className="mono">{runtime.model}</span>
+            <span style={{ color: 'var(--fg-dim)' }}>·</span>
+            <span><span className="mono" style={{ color: 'var(--fg)' }}>{runtime.uptime ?? '00:00:00'}</span> uptime</span>
+            <span style={{ color: 'var(--fg-dim)' }}>·</span>
+            <span><span className="mono" style={{ color: 'var(--fg)' }}>{runtime.reqs ?? 0}</span> reqs</span>
+            {runtime.pid > 0 ? (
+              <>
+                <span style={{ color: 'var(--fg-dim)' }}>·</span>
+                <span className="mono dim">pid {runtime.pid}</span>
+              </>
+            ) : null}
+            <span style={{ marginLeft: 'auto' }}>
+              <span className={`status-dot ${runtime.status === 'live' || runtime.status === 'running' ? 'live' : runtime.status}`} style={{ marginRight: 4 }} />
+              <span style={{ textTransform: 'capitalize', fontWeight: 600, color: 'var(--fg)' }}>{runtime.status}</span>
+            </span>
+          </div>
+        ) : null}
+
         <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border-soft)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <div className="seg">
             <button
@@ -267,6 +338,38 @@ export function LogViewerDrawer({ runtimeId, title, onClose, actor = DEFAULT_ACT
             <TimelineView events={filtered} />
           ) : (
             <StdoutView text={stdoutText} />
+          )}
+        </div>
+
+        {/* Action toolbar: Stop the runtime when it's live, and any
+            transient stop-error messaging. Stop calls agent_stop and
+            asks the parent to refresh after — the row will flip to
+            "stopped" and the dot animation will clear. */}
+        <div style={{
+          padding: '10px 14px',
+          borderTop: '1px solid var(--border-soft)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+        }}>
+          {stopError ? (
+            <span style={{ fontSize: 11, color: 'var(--err, #f87171)', flex: 1 }}>{stopError}</span>
+          ) : (
+            <span style={{ flex: 1 }} />
+          )}
+          {isLive ? (
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => void stopRuntime()}
+              disabled={stopping}
+              style={{ color: 'var(--danger, #f87171)' }}
+              title="Send SIGTERM to this runtime (agent_stop)"
+            >
+              <Icon name="x" size={11} /> {stopping ? 'Stopping…' : 'Stop runtime'}
+            </button>
+          ) : (
+            <span className="dim" style={{ fontSize: 11 }}>Runtime is not live — relaunch the team to restart.</span>
           )}
         </div>
       </div>

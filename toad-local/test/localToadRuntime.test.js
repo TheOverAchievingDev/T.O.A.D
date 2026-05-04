@@ -56,6 +56,76 @@ test('LocalToadRuntime launches an agent and sends a delivered message through i
   assert.equal(JSON.parse(child.stdin.writes[0]).message.content[0].text, 'Plan the next task.');
 });
 
+test('LocalToadRuntime delivers launch prompt before resolving launchAgent', async () => {
+  const child = createFakeChild();
+  let resolveSend;
+  let captured = null;
+  const adapter = {
+    async sendTurn(input) {
+      captured = input;
+      return new Promise((resolve) => {
+        resolveSend = () => resolve({ accepted: true, responseState: 'accepted_by_runtime' });
+      });
+    },
+  };
+  const runtime = new LocalToadRuntime({
+    spawnProcess() {
+      return child;
+    },
+    createAdapter() {
+      return adapter;
+    },
+  });
+
+  const launch = runtime.launchAgent({
+    teamId: 'team-a',
+    agentId: 'lead',
+    runtimeId: 'runtime-lead-1',
+    command: 'claude',
+    prompt: 'Start the project plan.',
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const early = await Promise.race([
+    launch.then(() => 'resolved'),
+    new Promise((resolve) => setTimeout(() => resolve('pending'), 0)),
+  ]);
+  assert.equal(early, 'pending');
+  assert.equal(captured.message.text, 'Start the project plan.');
+
+  resolveSend();
+  const result = await launch;
+  assert.equal(result.runtimeId, 'runtime-lead-1');
+});
+
+test('LocalToadRuntime fails launch when prompt delivery fails', async () => {
+  const child = createFakeChild();
+  const runtime = new LocalToadRuntime({
+    spawnProcess() {
+      return child;
+    },
+    createAdapter() {
+      return {
+        async sendTurn() {
+          throw new Error('stdin closed');
+        },
+      };
+    },
+  });
+
+  await assert.rejects(
+    () => runtime.launchAgent({
+      teamId: 'team-a',
+      agentId: 'lead',
+      runtimeId: 'runtime-lead-1',
+      command: 'claude',
+      prompt: 'Start the project plan.',
+    }),
+    /launch prompt delivery failed for runtime-lead-1: stdin closed/,
+  );
+  assert.deepEqual(child.killCalls, ['SIGTERM']);
+});
+
 test('LocalToadRuntime injects a TOAD MCP config into Claude launches', async () => {
   const child = createFakeChild();
   const projectCwd = mkdtempSync(join(tmpdir(), 'toad-runtime-mcp-'));
@@ -163,6 +233,83 @@ test('LocalToadRuntime preserves caller-provided MCP config args', async () => {
     });
 
     assert.deepEqual(captured.args, ['--mcp-config', 'existing.json']);
+  } finally {
+    await runtime.close();
+    rmSync(projectCwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+test('LocalToadRuntime injects --append-system-prompt when launchInput.systemPrompt is provided', async () => {
+  // The team launcher attaches a per-member systemPrompt (team identity,
+  // teammates, role guidance). The runtime must convert that into the CLI
+  // flag --append-system-prompt so claude.exe actually receives it on
+  // boot. Without this wiring the prompt is silently dropped and we're
+  // back to the "lead boots idle" failure mode confirmed in the sidecar
+  // logs on 2026-05-02.
+  const child = createFakeChild();
+  const projectCwd = mkdtempSync(join(tmpdir(), 'toad-runtime-sysprompt-'));
+  const dbPath = join(projectCwd, '.toad', 'toad.db');
+  let captured = null;
+  const runtime = new LocalToadRuntime({
+    projectCwd,
+    dbPath,
+    spawnProcess(command, args, options) {
+      captured = { command, args, options };
+      return child;
+    },
+  });
+
+  try {
+    await runtime.launchAgent({
+      teamId: 'team-a',
+      agentId: 'lead',
+      runtimeId: 'runtime-lead-sysprompt',
+      command: 'claude',
+      cwd: projectCwd,
+      role: 'lead',
+      systemPrompt: 'You are the lead of team-a. Coordinate via message_send.',
+    });
+
+    const idx = captured.args.indexOf('--append-system-prompt');
+    assert.notEqual(idx, -1, '--append-system-prompt should appear in spawn args');
+    assert.equal(
+      captured.args[idx + 1],
+      'You are the lead of team-a. Coordinate via message_send.',
+      'system prompt value follows the flag',
+    );
+  } finally {
+    await runtime.close();
+    rmSync(projectCwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+test('LocalToadRuntime omits --append-system-prompt when no systemPrompt is set', async () => {
+  // Bare launches (tests, smoke runs, single-agent diagnostics) should not
+  // get an injected system prompt — only the team_launch path attaches one.
+  // This guards against the flag accidentally appearing for callers who
+  // never opted in.
+  const child = createFakeChild();
+  const projectCwd = mkdtempSync(join(tmpdir(), 'toad-runtime-no-sysprompt-'));
+  const dbPath = join(projectCwd, '.toad', 'toad.db');
+  let captured = null;
+  const runtime = new LocalToadRuntime({
+    projectCwd,
+    dbPath,
+    spawnProcess(command, args, options) {
+      captured = { command, args, options };
+      return child;
+    },
+  });
+
+  try {
+    await runtime.launchAgent({
+      teamId: 'team-a',
+      agentId: 'lead',
+      runtimeId: 'runtime-no-sysprompt',
+      command: 'claude',
+      cwd: projectCwd,
+    });
+    assert.equal(captured.args.includes('--append-system-prompt'), false);
   } finally {
     await runtime.close();
     rmSync(projectCwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

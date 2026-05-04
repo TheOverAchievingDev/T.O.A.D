@@ -1,5 +1,13 @@
 # Tauri icons
 
+> **Placeholder warning.** The icons currently in this directory were generated
+> from `../toad-source.png`, which is a temporary stand-in copied from the
+> upstream `claude_agent_teams_ui-main` reference UI. They are good enough to
+> let `cargo check`, `npm run tauri:dev`, and `npm run tauri:build` succeed,
+> but they MUST be replaced with TOAD's real branding before any public release.
+> Drop a real 1024×1024 PNG over `../toad-source.png` and re-run the command
+> below.
+
 Tauri 2 needs platform-specific icons in this folder. The names referenced in
 `../tauri.conf.json` are:
 

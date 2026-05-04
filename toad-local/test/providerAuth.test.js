@@ -53,46 +53,70 @@ test('getAuthStatus returns unknown-provider error', () => {
   assert.match(result.reason, /unknown provider/);
 });
 
-test('getAuthStatus(anthropic) parses signedIn=true with email', () => {
-  const fake = fakeSpawnSync({
-    stdout: JSON.stringify({
-      authenticated: true,
-      email: 'alice@example.com',
-      authMethod: 'oauth',
-      subscriptionType: 'pro',
-      plan: 'Claude Pro',
-    }),
+test('getAuthStatus(anthropic) returns signedIn=true when ~/.claude/.credentials.json has a fresh access token', async () => {
+  const home = (await import('node:os')).homedir();
+  const path = (await import('node:path')).default;
+  const credPath = path.join(home, '.claude', '.credentials.json');
+  const fs = fakeFsModule({
+    files: {
+      [credPath]: JSON.stringify({
+        claudeAiOauth: {
+          accessToken: 'sk-ant-oat01-x',
+          refreshToken: 'sk-ant-ort01-x',
+          expiresAt: Date.now() + 1000 * 60 * 60,
+          scopes: ['user:inference'],
+          subscriptionType: 'max',
+        },
+      }),
+    },
   });
-  const result = getAuthStatus({ providerId: 'anthropic', spawnSyncImpl: fake });
+  const result = getAuthStatus({ providerId: 'anthropic', ...fs });
   assert.equal(result.supported, true);
   assert.equal(result.signedIn, true);
-  assert.equal(result.user.email, 'alice@example.com');
-  assert.equal(result.plan, 'Claude Pro');
-  assert.equal(result.subscriptionType, 'pro');
-  assert.equal(result.authMethod, 'oauth');
+  assert.equal(result.subscriptionType, 'max');
+  assert.match(result.plan, /Claude Max/i);
+  assert.equal(result.authMethod, 'claude.ai oauth');
 });
 
-test('getAuthStatus(anthropic) returns signedIn=false on non-zero exit', () => {
-  const fake = fakeSpawnSync({ status: 1, stderr: 'not authenticated' });
-  const result = getAuthStatus({ providerId: 'anthropic', spawnSyncImpl: fake });
+test('getAuthStatus(anthropic) treats expired access token + refresh token as still signed in', async () => {
+  // The Claude Code CLI silently refreshes — TOAD should follow suit.
+  const home = (await import('node:os')).homedir();
+  const path = (await import('node:path')).default;
+  const credPath = path.join(home, '.claude', '.credentials.json');
+  const fs = fakeFsModule({
+    files: {
+      [credPath]: JSON.stringify({
+        claudeAiOauth: {
+          accessToken: 'sk-ant-oat01-old',
+          refreshToken: 'sk-ant-ort01-fresh',
+          expiresAt: Date.now() - 1000,
+          subscriptionType: 'pro',
+        },
+      }),
+    },
+  });
+  const result = getAuthStatus({ providerId: 'anthropic', ...fs });
+  assert.equal(result.signedIn, true);
+  assert.equal(result.raw.accessExpired, true);
+  assert.equal(result.raw.hasRefreshToken, true);
+});
+
+test('getAuthStatus(anthropic) returns signedIn=false when credentials file missing', () => {
+  const fs = fakeFsModule({ files: {} });
+  const result = getAuthStatus({ providerId: 'anthropic', ...fs });
   assert.equal(result.supported, true);
   assert.equal(result.signedIn, false);
-  assert.match(result.reason, /not authenticated/);
+  assert.match(result.reason, /does not exist/);
 });
 
-test('getAuthStatus(anthropic) reports CLI not installed on ENOENT', () => {
-  const fake = () => ({ status: null, stdout: '', stderr: '', error: Object.assign(new Error('not found'), { code: 'ENOENT' }) });
-  const result = getAuthStatus({ providerId: 'anthropic', spawnSyncImpl: fake });
-  assert.equal(result.signedIn, null);
-  assert.match(result.reason, /not installed|not on PATH/i);
-});
-
-test('getAuthStatus(anthropic) handles non-JSON stdout', () => {
-  const fake = fakeSpawnSync({ stdout: 'whoops not json' });
-  const result = getAuthStatus({ providerId: 'anthropic', spawnSyncImpl: fake });
-  assert.equal(result.supported, true);
+test('getAuthStatus(anthropic) returns signedIn=false when file is empty / malformed JSON', async () => {
+  const home = (await import('node:os')).homedir();
+  const path = (await import('node:path')).default;
+  const credPath = path.join(home, '.claude', '.credentials.json');
+  const fs = fakeFsModule({ files: { [credPath]: 'not json at all' } });
+  const result = getAuthStatus({ providerId: 'anthropic', ...fs });
   assert.equal(result.signedIn, false);
-  assert.match(result.reason, /non-JSON/);
+  assert.match(result.reason, /did not parse/);
 });
 
 test('getAuthStatus(openai) returns signedIn=true when ~/.codex/auth.json exists', async () => {
@@ -173,16 +197,17 @@ test('getAuthStatus(gemini) tolerates missing google_accounts.json (creds only)'
   assert.equal(result.user.email, null);
 });
 
-test('triggerAuthLogin(codex) uses `codex login` (no auth prefix)', () => {
-  let calledArgs = null;
-  const fakeSpawn = (cli, args) => {
-    calledArgs = { cli, args };
-    return { pid: 999, unref() {} };
-  };
+test('triggerAuthLogin(codex) returns manual-login instructions instead of auto-spawning', () => {
+  // The CLI's `codex login` opens an OAuth scope users don't want from
+  // TOAD. Surface manual instructions so the user runs it themselves.
+  let spawnCalled = false;
+  const fakeSpawn = () => { spawnCalled = true; return { pid: 999, unref() {} }; };
   const result = triggerAuthLogin({ providerId: 'openai', spawnImpl: fakeSpawn });
-  assert.equal(result.started, true);
-  assert.equal(calledArgs.cli, 'codex');
-  assert.deepEqual(calledArgs.args, ['login']);
+  assert.equal(result.started, false);
+  assert.equal(result.manualLogin, true);
+  assert.equal(result.cli, 'codex');
+  assert.match(result.reason, /codex login/);
+  assert.equal(spawnCalled, false, 'must NOT spawn for manual-login providers');
 });
 
 test('triggerAuthLogin(gemini) uses `gemini auth login`', () => {
@@ -197,16 +222,17 @@ test('triggerAuthLogin(gemini) uses `gemini auth login`', () => {
   assert.deepEqual(calledArgs.args, ['auth', 'login']);
 });
 
-test('triggerAuthLogin(anthropic) calls spawn and returns started=true', () => {
-  let calledArgs = null;
-  const fakeSpawn = (cli, args) => {
-    calledArgs = { cli, args };
-    return { pid: 999, unref() {} };
-  };
+test('triggerAuthLogin(anthropic) returns manual-login instructions instead of auto-spawning', () => {
+  // Claude Code's auth is managed via its own /login slash command;
+  // `claude auth login` opens a different OAuth scope (claude.ai chats).
+  let spawnCalled = false;
+  const fakeSpawn = () => { spawnCalled = true; return { pid: 999, unref() {} }; };
   const result = triggerAuthLogin({ providerId: 'anthropic', spawnImpl: fakeSpawn });
-  assert.equal(result.started, true);
-  assert.equal(calledArgs.cli, 'claude');
-  assert.deepEqual(calledArgs.args, ['auth', 'login']);
+  assert.equal(result.started, false);
+  assert.equal(result.manualLogin, true);
+  assert.equal(result.cli, 'claude');
+  assert.match(result.reason, /\/login/);
+  assert.equal(spawnCalled, false, 'must NOT spawn for manual-login providers');
 });
 
 test('triggerAuthLogin returns started=false for unsupported providers', () => {
@@ -215,9 +241,11 @@ test('triggerAuthLogin returns started=false for unsupported providers', () => {
   assert.match(result.reason, /OpenCode|wire|depends on/i);
 });
 
-test('triggerAuthLogin handles spawn throwing', () => {
+test('triggerAuthLogin handles spawn throwing for non-manual providers', () => {
+  // Gemini is still auto-spawn (its auth flow is correct), so this exercises
+  // the actual spawn-throws path.
   const fakeSpawn = () => { throw new Error('boom'); };
-  const result = triggerAuthLogin({ providerId: 'anthropic', spawnImpl: fakeSpawn });
+  const result = triggerAuthLogin({ providerId: 'gemini', spawnImpl: fakeSpawn });
   assert.equal(result.started, false);
   assert.match(result.reason, /boom/);
 });

@@ -247,6 +247,7 @@ input, textarea, select { font-family: inherit; }
   width: 7px; height: 7px;
   border-radius: 50%;
   background: var(--fg-faint);
+  position: relative;
 }
 .status-dot.live {
   background: var(--ok);
@@ -261,10 +262,36 @@ input, textarea, select { font-family: inherit; }
 .status-dot.warn { background: var(--warn); }
 .status-dot.err { background: var(--err); }
 
+/* Spinning ring around the dot when the agent has produced any activity
+ * within the last few seconds — set by AgentCard via the `.active` modifier.
+ * Sits OUTSIDE the dot via ::before so the dot color/pulse still shows
+ * underneath. The ring is intentionally thin + offset so it reads as
+ * "currently doing something" without overpowering the dot color. */
+.status-dot.active::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1.5px solid transparent;
+  border-top-color: currentColor;
+  border-right-color: currentColor;
+  color: var(--ok);
+  opacity: 0.85;
+  animation: status-spin 0.9s linear infinite;
+  pointer-events: none;
+}
+.status-dot.thinking.active::before { color: var(--clay); }
+.status-dot.warn.active::before { color: var(--warn); }
+.status-dot.err.active::before { color: var(--err); }
+
 @keyframes pulse {
   0% { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
   70% { box-shadow: 0 0 0 6px transparent; opacity: 0.85; }
   100% { box-shadow: 0 0 0 0 transparent; opacity: 1; }
+}
+
+@keyframes status-spin {
+  to { transform: rotate(360deg); }
 }
 
 .kbd {

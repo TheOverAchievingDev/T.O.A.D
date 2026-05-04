@@ -2,6 +2,11 @@ import type { Runtime } from '@/types';
 import type { ProjectEntry } from '@/hooks/useProjects';
 import { Icon } from './Icon';
 
+// Note: plan/quota usage previously rendered as a chip up here, but it
+// was redundant once we surfaced the same info in Settings → Providers
+// and the team-creation modal (where the operator actually chooses
+// which provider to assign). Lives in PlanUsagePanel now.
+
 interface TitlebarProps {
   theme: 'dark' | 'light';
   runtimes: Runtime[];
@@ -52,7 +57,7 @@ export function Titlebar({
                   }}
                 />
                 {p.name}
-                {projects.length > 1 && onCloseProject && (
+                {onCloseProject && (
                   <span
                     role="button"
                     aria-label={`Remove ${p.name}`}
@@ -99,7 +104,7 @@ export function Titlebar({
       >
         <Icon name="search" size={11} />
         <span>
-          TOAD{activeProject ? ` · ${activeProject.name}` : ''}
+          Symphony AI{activeProject ? ` · ${activeProject.name}` : ''}
         </span>
         <span style={{
           marginLeft: 8,
@@ -184,3 +189,4 @@ export function Titlebar({
     </div>
   );
 }
+

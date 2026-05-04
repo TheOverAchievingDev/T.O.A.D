@@ -143,3 +143,315 @@
 /* Gemini glyph — design CSS only ships colors for anthropic / openai /
  * opencode. Adding gemini here keeps the design files untouched. */
 .provider-glyph.gemini { background: oklch(0.74 0.13 80); }
+
+/* Foundry */
+.foundry-screen {
+  display: grid;
+  grid-template-columns: 280px minmax(360px, 1fr) minmax(340px, 520px);
+  min-height: 0;
+  background: var(--bg-canvas);
+}
+
+.foundry-sidebar,
+.foundry-chat,
+.foundry-artifacts {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border-soft);
+}
+
+.foundry-artifacts {
+  border-right: 0;
+}
+
+.foundry-panel-head {
+  flex: 0 0 auto;
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.foundry-panel-head h2 {
+  margin: 2px 0 0;
+  font-size: 16px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.eyebrow {
+  font-size: 10px;
+  line-height: 1;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.foundry-create {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  padding: 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.foundry-create input,
+.foundry-compose textarea,
+.foundry-editor textarea {
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--fg);
+  border-radius: 8px;
+  outline: none;
+}
+
+.foundry-create input {
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+}
+
+.foundry-session-list,
+.foundry-thread,
+.foundry-artifact-tabs {
+  min-height: 0;
+  overflow: auto;
+}
+
+.foundry-session-list {
+  padding: 10px;
+}
+
+.foundry-session {
+  width: 100%;
+  min-height: 58px;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-muted);
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.foundry-session:hover,
+.foundry-session.active {
+  background: var(--bg-hover);
+  border-color: var(--border-soft);
+  color: var(--fg);
+}
+
+.foundry-session-title {
+  font-weight: 650;
+  color: inherit;
+}
+
+.empty-mini,
+.foundry-empty {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  color: var(--fg-dim);
+  text-align: center;
+}
+
+.empty-mini {
+  min-height: 120px;
+}
+
+.foundry-empty {
+  min-height: 240px;
+}
+
+.foundry-empty h3 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--fg);
+}
+
+.foundry-error {
+  margin: 12px 20px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.foundry-thread {
+  flex: 1 1 auto;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.foundry-message {
+  max-width: 780px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  color: var(--fg);
+}
+
+.foundry-message.user {
+  border-color: var(--clay-border);
+  background: var(--clay-soft);
+}
+
+.foundry-message-meta {
+  margin-bottom: 4px;
+  font-size: 10px;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.foundry-message-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  line-height: 1.5;
+  white-space: normal;
+}
+
+.foundry-message-body h4 {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.25;
+  letter-spacing: 0;
+  color: var(--fg);
+}
+
+.foundry-message-body h4:first-child {
+  margin-top: 0;
+}
+
+.foundry-message-body p,
+.foundry-message-body ul,
+.foundry-message-body ol,
+.foundry-message-body pre {
+  margin: 0;
+}
+
+.foundry-message-body ul,
+.foundry-message-body ol {
+  padding-left: 20px;
+}
+
+.foundry-message-body li + li {
+  margin-top: 4px;
+}
+
+.foundry-message-body pre {
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-input);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.foundry-compose {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  padding: 14px 20px 18px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.foundry-compose textarea {
+  min-height: 76px;
+  resize: vertical;
+  padding: 10px 12px;
+}
+
+.foundry-artifact-tabs {
+  flex: 0 0 auto;
+  max-height: 188px;
+  padding: 10px;
+  border-bottom: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.foundry-artifact-tabs button {
+  padding: 9px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-muted);
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.foundry-artifact-tabs button.active,
+.foundry-artifact-tabs button:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+
+.foundry-editor {
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.foundry-editor-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.foundry-editor-bar .btn {
+  margin-left: auto;
+}
+
+.foundry-editor textarea {
+  flex: 1 1 auto;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  resize: none;
+  padding: 14px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.foundry-exported {
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+
+@media (max-width: 1180px) {
+  .foundry-screen {
+    grid-template-columns: 240px minmax(360px, 1fr);
+  }
+  .foundry-artifacts {
+    display: none;
+  }
+}

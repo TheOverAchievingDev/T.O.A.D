@@ -85,7 +85,17 @@ test('RuntimeSupervisor launches a process and registers its adapter destination
   assert.equal(result.runtimeId, 'runtime-lead-1');
   assert.equal(result.status, 'running');
   assert.equal(result.pid, 2468);
-  assert.equal(spawnCalls[0].command, 'claude');
+  // On Windows the supervisor resolves bare command names against PATH +
+  // PATHEXT so it can spawn `.cmd` shims directly without shell:true (a
+  // requirement for keeping stdin/stdout pipes open for long-running
+  // stream-json agents). Accept either the bare name (POSIX / unresolvable
+  // on this CI host) or any path that ends in the bare name.
+  const launchedCommand = spawnCalls[0].command;
+  assert.ok(
+    launchedCommand === 'claude'
+      || /[\\/]claude(\.[a-z]+)?$/i.test(launchedCommand),
+    `expected command to resolve to 'claude' (got ${launchedCommand})`,
+  );
   assert.deepEqual(spawnCalls[0].args, ['--output-format', 'stream-json']);
   assert.equal(spawnCalls[0].options.cwd, 'C:\\Project-TOAD');
   assert.equal(spawnCalls[0].options.env.TOAD_TEAM_ID, 'team-a');

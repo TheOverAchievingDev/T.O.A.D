@@ -134,7 +134,7 @@ export function OnboardingScreen({ onDone }: OnboardingScreenProps) {
               <div className="onb-eyebrow">Welcome</div>
               <h1>Run a real dev team, in software.</h1>
               <p className="onb-lede">
-                TOAD spawns and coordinates CLI coding agents across providers into a structured
+                Symphony AI spawns and coordinates CLI coding agents across providers into a structured
                 team. A lead delegates, specialists execute, and you stay in the loop without
                 drowning in terminals.
               </p>
@@ -250,7 +250,7 @@ export function OnboardingScreen({ onDone }: OnboardingScreenProps) {
               <div className="onb-eyebrow">Step 3 of 4 - Workspace</div>
               <h1>Pick where the team works.</h1>
               <p className="onb-lede">
-                TOAD points your agents at a project directory on your machine. They read, write,
+                Symphony AI points your agents at a project directory on your machine. They read, write,
                 and run code there with optional auto-approval for tools.
               </p>
               <div className="field" style={{ maxWidth: 480 }}>

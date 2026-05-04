@@ -45,17 +45,30 @@ const PROVIDER_COMMANDS = Object.freeze({
   anthropic: {
     label: 'Anthropic',
     cli: 'claude',
-    loginArgs: ['auth', 'login'],
+    // The Claude Code CLI manages its own subscription auth via its
+    // interactive /login slash command. The `claude auth login` subcommand
+    // exists but opens an OAuth flow asking for chat-history access on
+    // claude.ai — that's NOT the Claude Code subscription auth, it's the
+    // Anthropic Console OAuth. Don't auto-spawn it. Tell the user to use
+    // the CLI's own /login instead.
+    manualLogin: true,
+    loginInstructions: 'Run `claude` in a terminal, then type `/login` at the prompt. TOAD will pick up the auth state automatically once you\'re signed in.',
     logoutArgs: ['auth', 'logout'],
     supported: true,
-    statusMode: 'cli',
-    statusArgs: ['auth', 'status', '--json'],
-    parseStatus: parseAnthropicStatus,
+    // File-based detection — Claude Code stores OAuth creds at
+    // `~/.claude/.credentials.json`. More reliable than running a CLI
+    // status command, and matches the pattern we use for Codex + Gemini.
+    statusMode: 'file',
+    statusFile: path.join('~', '.claude', '.credentials.json'),
+    parseFileStatus: parseAnthropicFileStatus,
   },
   openai: {
     label: 'OpenAI Codex',
     cli: 'codex',
-    loginArgs: ['login'],
+    // Same shape as Anthropic — `codex login` opens a browser flow that's
+    // not what TOAD users want from this button. Manual instructions only.
+    manualLogin: true,
+    loginInstructions: 'Run `codex login` in a terminal. TOAD will pick up the auth state automatically once you\'re signed in.',
     logoutArgs: ['logout'],
     supported: true,
     statusMode: 'file',
@@ -228,6 +241,19 @@ export function triggerAuthLogin({ providerId, spawnImpl } = {}) {
   if (!cfg.supported) {
     return { providerId, started: false, reason: cfg.unsupportedReason };
   }
+  // Some providers (Anthropic, Codex) own their own login flow via their
+  // CLI's interactive prompt or slash command. Auto-spawning their auth
+  // login subcommand triggers the wrong OAuth scope (e.g. claude.ai chat
+  // access) — let the user invoke their preferred command themselves.
+  if (cfg.manualLogin) {
+    return {
+      providerId,
+      started: false,
+      manualLogin: true,
+      cli: cfg.cli,
+      reason: cfg.loginInstructions || `Sign in via the ${cfg.cli} CLI directly.`,
+    };
+  }
   const spawnFn = spawnImpl || spawn;
   let child;
   try {
@@ -290,6 +316,48 @@ export function triggerAuthLogout({ providerId, spawnSyncImpl } = {}) {
 }
 
 // ---- Parsers --------------------------------------------------------------
+
+/**
+ * Claude Code stores OAuth creds at `~/.claude/.credentials.json` with the
+ * shape `{ claudeAiOauth: { accessToken, refreshToken, expiresAt, scopes,
+ * subscriptionType, rateLimitTier } }`. The file has no email/login —
+ * username comes from a separate API call we don't make here.
+ *
+ * An expired access token + a refresh token still counts as signed in
+ * because the CLI silently refreshes on next use.
+ */
+function parseAnthropicFileStatus(authJson, _infoJson, providerId) {
+  if (!authJson || typeof authJson !== 'object' || Array.isArray(authJson)) {
+    return { providerId, supported: true, signedIn: false, reason: 'credentials file did not parse as a JSON object' };
+  }
+  const oauth = authJson.claudeAiOauth;
+  if (!oauth || typeof oauth !== 'object' || typeof oauth.accessToken !== 'string' || oauth.accessToken.length === 0) {
+    return { providerId, supported: true, signedIn: false, reason: 'no claudeAiOauth.accessToken in credentials file' };
+  }
+  const now = Date.now();
+  const expiresAt = typeof oauth.expiresAt === 'number' ? oauth.expiresAt : null;
+  const accessExpired = expiresAt !== null && expiresAt < now;
+  const hasRefresh = typeof oauth.refreshToken === 'string' && oauth.refreshToken.length > 0;
+  if (accessExpired && !hasRefresh) {
+    return { providerId, supported: true, signedIn: false, reason: 'OAuth tokens expired and no refresh token to renew them' };
+  }
+  const subscriptionType = typeof oauth.subscriptionType === 'string' ? oauth.subscriptionType : null;
+  return {
+    providerId,
+    supported: true,
+    signedIn: true,
+    user: null, // file has no email/login; CLI fetches them on demand from the API
+    plan: subscriptionType ? `Claude ${subscriptionType.charAt(0).toUpperCase()}${subscriptionType.slice(1)}` : null,
+    subscriptionType,
+    authMethod: 'claude.ai oauth',
+    raw: {
+      accessExpired,
+      hasRefreshToken: hasRefresh,
+      scopes: Array.isArray(oauth.scopes) ? oauth.scopes : [],
+      rateLimitTier: typeof oauth.rateLimitTier === 'string' ? oauth.rateLimitTier : null,
+    },
+  };
+}
 
 function parseAnthropicStatus(result, providerId) {
   let parsed = null;

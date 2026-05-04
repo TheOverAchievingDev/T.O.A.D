@@ -181,3 +181,72 @@ test('SqliteBroker delivery attempt idempotency rejects payload conflicts', () =
     );
   });
 });
+
+test('SqliteBroker.listMessagesNeedingDelivery surfaces messages stuck in offline_queue without a real delivery', () => {
+  // Each agent's MCP child runs its own LocalToadRuntime with empty
+  // adapters/directory, so message_send from agent A → agent B falls
+  // through to offline_queue inside the MCP child. The main sidecar's
+  // delivery retry sweep (LocalToadRuntime.start()) needs a query that
+  // surfaces only those still-undelivered messages — not user/system
+  // messages, not messages already delivered via runtime_stdin.
+  withBroker((broker) => {
+    // 1. Lead → architect, queued offline by some other process
+    const queued = broker.appendMessage({
+      teamId: 't',
+      idempotencyKey: 'msg-queued',
+      from: { kind: 'agent', id: 'lead' },
+      to: { kind: 'agent', teamId: 't', agentId: 'architect' },
+      kind: 'task_notification',
+      text: 'You own task-1.',
+    });
+    {
+      const a = broker.beginDeliveryAttempt({
+        messageId: queued.message.messageId,
+        runtimeId: 'offline:t:architect',
+        destination: { kind: 'offline_queue', agentId: 'architect' },
+        idempotencyKey: 'q1',
+        payloadHash: 'sha256:queued',
+        deliveryKind: 'offline_queue',
+        responseState: 'queued_offline',
+      });
+      broker.commitDeliveryAttempt({ attemptId: a.attempt.attemptId, responseState: 'queued_offline' });
+    }
+
+    // 2. Lead → developer, already delivered for real via runtime_stdin
+    const delivered = broker.appendMessage({
+      teamId: 't',
+      idempotencyKey: 'msg-delivered',
+      from: { kind: 'agent', id: 'lead' },
+      to: { kind: 'agent', teamId: 't', agentId: 'developer' },
+      kind: 'task_notification',
+      text: 'You own task-2.',
+    });
+    {
+      const a = broker.beginDeliveryAttempt({
+        messageId: delivered.message.messageId,
+        runtimeId: 'runtime-t-developer',
+        destination: { kind: 'runtime_stdin', agentId: 'developer' },
+        idempotencyKey: 'd1',
+        payloadHash: 'sha256:delivered',
+        deliveryKind: 'runtime_stdin',
+        responseState: 'accepted_by_runtime',
+      });
+      broker.commitDeliveryAttempt({ attemptId: a.attempt.attemptId, responseState: 'accepted_by_runtime' });
+    }
+
+    // 3. Lead → user (not an agent target — must NOT show up)
+    broker.appendMessage({
+      teamId: 't',
+      idempotencyKey: 'msg-to-user',
+      from: { kind: 'agent', id: 'lead' },
+      to: { kind: 'user' },
+      kind: 'reply',
+      text: 'Status update.',
+    });
+
+    const pending = broker.listMessagesNeedingDelivery();
+    assert.equal(pending.length, 1, 'only the offline-queued agent message is pending');
+    assert.equal(pending[0].messageId, queued.message.messageId);
+    assert.equal(pending[0].to.agentId, 'architect');
+  });
+});

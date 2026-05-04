@@ -9,6 +9,8 @@ import {
 import { applyPermissionSuggestions } from '../runtime/claudeSettingsWriter.js';
 import { formatCrossTeamText, CROSS_TEAM_SOURCE, CROSS_TEAM_SENT_SOURCE } from '../protocol/crossTeam.js';
 import { TeamConfig } from '../team/teamConfig.js';
+import { buildAgentSystemPrompt } from '../team/teamSystemPrompts.js';
+import { probeClaudeUsage } from '../providers/claudeUsageProbe.js';
 import { validateTaskStatusTransition } from '../task/taskLifecycle.js';
 import { assertRoleCanCallTool } from '../security/roleAuthority.js';
 import { runDiagnostics } from '../diagnostics/runDiagnostics.js';
@@ -20,6 +22,15 @@ import {
   verifyPersonalAccessToken as githubVerifyPat,
   getCurrentUser as githubGetCurrentUser,
 } from '../github/githubAuth.js';
+import { BUILT_IN_GITHUB_CLIENT_ID } from '../github/githubAppDefaults.js';
+import {
+  getRepository as githubGetRepository,
+  getBranchProtection as githubGetBranchProtection,
+  createPullRequest as githubCreatePullRequest,
+  createRepository as githubCreateRepository,
+} from '../github/githubApi.js';
+import { parseGithubRemote } from '../task/remoteMergePolicy.js';
+import { runGit as defaultRunGit } from '../git/runGit.js';
 import {
   getAuthStatus as providerGetAuthStatus,
   triggerAuthLogin as providerTriggerAuthLogin,
@@ -32,12 +43,27 @@ export const REVIEW_FEEDBACK_SEVERITIES = Object.freeze(['nit', 'minor', 'major'
 import { computeDiff as defaultComputeDiff } from '../task/diffComputer.js';
 
 export class LocalToolFacade {
-  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null, mergeIntegrator = null, riskPolicy = null, settingsStore = null, riskPolicyStore = null, githubFetch = null, githubClientId = null, providerAuthSpawn = null, providerAuthSpawnSync = null }) {
+  // 90s TTL cache for the claude /usage pty probe. We don't store this
+  // in SQLite because plan-quota changes faster than session boundaries
+  // and a missed update is harmless (next poll catches it).
+  #claudeQuotaCache = null;
+  #claudeQuotaInflight = null;
+
+  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, foundryStore = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null, mergeIntegrator = null, remoteMergePolicy = null, riskPolicy = null, settingsStore = null, riskPolicyStore = null, githubFetch = null, githubClientId = null, providerAuthSpawn = null, providerAuthSpawnSync = null, providerAuthReadFile = null, providerAuthStat = null, claudeUsageProbe = null, runGit = null, openaiFetch = null, deliveryWorker = null }) {
     if (!broker) throw new TypeError('broker is required');
     if (!taskBoard) throw new TypeError('taskBoard is required');
     this.broker = broker;
     this.taskBoard = taskBoard;
     this.runtimeRegistry = runtimeRegistry;
+    // DeliveryWorker: optional. When configured, message_send fires the
+    // worker after appending to the broker so the recipient runtime
+    // actually receives the payload via stdin (sendTurn). Without this
+    // wiring, lead → teammate messages get persisted but never delivered,
+    // so teammates sit idle even though the lead is "talking" to them.
+    this.deliveryWorker =
+      deliveryWorker && typeof deliveryWorker.deliverMessage === 'function'
+        ? deliveryWorker
+        : null;
     this.approvalBroker = approvalBroker;
     this.adapters = adapters;
     this.projectCwd = projectCwd;
@@ -45,6 +71,7 @@ export class LocalToolFacade {
     this.launchAgent = typeof launchAgent === 'function' ? launchAgent : null;
     this.stopAgent = typeof stopAgent === 'function' ? stopAgent : null;
     this.teamConfigRegistry = teamConfigRegistry;
+    this.foundryStore = foundryStore && typeof foundryStore.createSession === 'function' ? foundryStore : null;
     this.spawnValidation = typeof spawnValidation === 'function' ? spawnValidation : defaultSpawnValidation;
     this.dbPath = typeof dbPath === 'string' && dbPath.length > 0 ? dbPath : null;
     this.eventLog = eventLog && typeof eventLog.appendEvent === 'function' ? eventLog : null;
@@ -55,6 +82,12 @@ export class LocalToolFacade {
     this.mergeChecker = mergeChecker && typeof mergeChecker.checkForConflicts === 'function' ? mergeChecker : null;
     // §19 slice 2: integration step. Null = no actual merge (back-compat).
     this.mergeIntegrator = mergeIntegrator && typeof mergeIntegrator.integrate === 'function' ? mergeIntegrator : null;
+    // §19 follow-up: remote merge policy (branch protection check). Null =
+    // no remote check (back-compat). When set, the merge_ready → done
+    // transition awaits `evaluate({ baseBranch, taskBranch })` and refuses
+    // when the verdict's `allow` is false.
+    this.remoteMergePolicy =
+      remoteMergePolicy && typeof remoteMergePolicy.evaluate === 'function' ? remoteMergePolicy : null;
     // §14: project-local risk policy. Null = no auto-classification (back-compat).
     // Accepts policies with either `rules` (file matching), `commandRules`
     // (Bash command matching, §14 follow-up), or both.
@@ -65,6 +98,7 @@ export class LocalToolFacade {
     // §3c GitHub auth. `githubFetch` injectable so tests don't hit the network;
     // production callers leave it null and we fall back to globalThis.fetch.
     this.githubFetch = typeof githubFetch === 'function' ? githubFetch : null;
+    this.openaiFetch = typeof openaiFetch === 'function' ? openaiFetch : null;
     this.githubClientId =
       typeof githubClientId === 'string' && githubClientId.length > 0
         ? githubClientId
@@ -72,6 +106,17 @@ export class LocalToolFacade {
     // §3c.2 Provider plan-auth. Injectable so tests don't actually fork.
     this.providerAuthSpawn = typeof providerAuthSpawn === 'function' ? providerAuthSpawn : null;
     this.providerAuthSpawnSync = typeof providerAuthSpawnSync === 'function' ? providerAuthSpawnSync : null;
+    // File-based auth detection for codex/gemini (and now anthropic too)
+    // — injectable so tests can simulate signed-in / signed-out without
+    // touching the operator's real ~/.codex / ~/.gemini directories.
+    this.providerAuthReadFile = typeof providerAuthReadFile === 'function' ? providerAuthReadFile : null;
+    this.providerAuthStat = typeof providerAuthStat === 'function' ? providerAuthStat : null;
+    // Override the live claude /usage pty probe in tests. Production
+    // leaves this null and we fall back to the imported probeClaudeUsage.
+    this.claudeUsageProbe = typeof claudeUsageProbe === 'function' ? claudeUsageProbe : null;
+    // git invoker for tools that need to read the project's git state
+    // (e.g. github_origin_remote). Injectable so tests don't shell out.
+    this.runGit = typeof runGit === 'function' ? runGit : defaultRunGit;
     this.riskPolicy =
       riskPolicy && (Array.isArray(riskPolicy.rules) || Array.isArray(riskPolicy.commandRules))
         ? riskPolicy
@@ -95,11 +140,21 @@ export class LocalToolFacade {
     switch (commandName) {
       case COMMANDS.MESSAGE_SEND:
         return this.#messageSend(actor, command.idempotencyKey, args);
+      case COMMANDS.MESSAGE_LIST:
+        return this.#messageList(actor, args);
       case COMMANDS.TASK_CREATE:
         return this.#taskCreate(actor, command.idempotencyKey, args);
       case COMMANDS.TASK_COMMENT:
         return this.#taskComment(actor, command.idempotencyKey, args);
       case COMMANDS.TASK_UPDATE:
+        // When a remote-merge-policy gate is configured, route through the
+        // async wrapper that pre-resolves the GitHub branch-protection
+        // verdict before delegating to the synchronous #taskUpdate. When no
+        // policy is configured, dispatch sync — preserves the historic
+        // sync behavior every existing test depends on.
+        if (this.remoteMergePolicy) {
+          return this.#taskUpdateWithPolicyGate(actor, command.idempotencyKey, args);
+        }
         return this.#taskUpdate(actor, command.idempotencyKey, args);
       case COMMANDS.REVIEW_REQUEST:
         return this.#reviewRequest(actor, command.idempotencyKey, args);
@@ -108,7 +163,11 @@ export class LocalToolFacade {
       case COMMANDS.REVIEW_LIST:
         return this.#reviewList(actor);
       case COMMANDS.TASK_LIST:
-        return this.taskBoard.listTasks({ teamId: actor.teamId });
+        // Wrap the raw array in `{ tasks: [...] }` so MCP clients that
+        // require structuredContent to be an object (Claude Code's MCP
+        // client treats top-level arrays as schema mismatches) don't
+        // reject the response. UI's useToadData accepts both shapes.
+        return { tasks: this.taskBoard.listTasks({ teamId: actor.teamId }) };
       case COMMANDS.AGENT_STATUS:
         return this.#agentStatus(actor, args);
       case COMMANDS.APPROVAL_LIST:
@@ -119,6 +178,10 @@ export class LocalToolFacade {
         return this.#toolActivity(actor, args);
       case COMMANDS.HEALTH_STATUS:
         return this.#healthStatus(actor, args);
+      case COMMANDS.RUNTIME_LIST:
+        return this.#runtimeList(actor, args);
+      case COMMANDS.USAGE_SUMMARY:
+        return this.#usageSummary(actor, args);
       case COMMANDS.RUNTIME_EVENTS:
         return this.#runtimeEvents(actor, args);
       case COMMANDS.CROSS_TEAM_MESSAGES:
@@ -171,6 +234,14 @@ export class LocalToolFacade {
         return this.#githubDisconnect();
       case COMMANDS.GITHUB_STATUS:
         return this.#githubStatus();
+      case COMMANDS.GITHUB_GET_REPOSITORY:
+        return this.#githubGetRepository(args);
+      case COMMANDS.GITHUB_GET_BRANCH_PROTECTION:
+        return this.#githubGetBranchProtection(args);
+      case COMMANDS.GITHUB_CREATE_PULL_REQUEST:
+        return this.#githubCreatePullRequest(args);
+      case COMMANDS.GITHUB_ORIGIN_REMOTE:
+        return this.#githubOriginRemote();
       case COMMANDS.RISK_POLICY_GET:
         return this.#riskPolicyGet();
       case COMMANDS.RISK_POLICY_SET:
@@ -185,13 +256,39 @@ export class LocalToolFacade {
         return this.#providerAuthLogout(args);
       case COMMANDS.AUDIT_LOG_QUERY:
         return this.#auditLogQuery(actor, args);
+      case COMMANDS.FOUNDRY_SESSION_CREATE:
+        return this.#foundrySessionCreate(args);
+      case COMMANDS.FOUNDRY_SESSION_LIST:
+        return this.#foundrySessionList();
+      case COMMANDS.FOUNDRY_SESSION_GET:
+        return this.#foundrySessionGet(args);
+      case COMMANDS.FOUNDRY_MESSAGE_ADD:
+        return this.#foundryMessageAdd(args);
+      case COMMANDS.FOUNDRY_CHAT_TURN:
+        return this.#foundryChatTurn(args);
+      case COMMANDS.FOUNDRY_ARTIFACT_UPSERT:
+        return this.#foundryArtifactUpsert(args);
+      case COMMANDS.FOUNDRY_ARTIFACT_GENERATE:
+        return this.#foundryArtifactGenerate(args);
+      case COMMANDS.FOUNDRY_ARTIFACT_EXPORT:
+        return this.#foundryArtifactExport(args);
+      case COMMANDS.FOUNDRY_PROJECT_MATERIALIZE:
+        return this.#foundryProjectMaterialize(actor, command.idempotencyKey, args);
+      case COMMANDS.FOUNDRY_PROJECT_SEED_TASKS:
+        return this.#foundryProjectSeedTasks(actor, command.idempotencyKey, args);
+      case COMMANDS.GIT_INIT_LOCAL:
+        return this.#gitInitLocal(args);
+      case COMMANDS.GIT_SET_REMOTE:
+        return this.#gitSetRemote(args);
+      case COMMANDS.GITHUB_CREATE_REPOSITORY:
+        return this.#githubCreateRepository(args);
       default:
         throw new Error(`unsupported command: ${commandName}`);
     }
   }
 
-  #messageSend(actor, idempotencyKey, args) {
-    return this.broker.appendMessage({
+  async #messageSend(actor, idempotencyKey, args) {
+    const result = this.broker.appendMessage({
       teamId: actor.teamId,
       idempotencyKey,
       from: { kind: 'agent', id: actor.agentId },
@@ -203,6 +300,55 @@ export class LocalToolFacade {
       replyToMessageId: args.replyToMessageId || null,
       conversationId: args.conversationId,
     });
+    // Trigger delivery to the recipient runtime's stdin via the
+    // DeliveryWorker. Skipped when no worker is configured (tests, smoke
+    // runs) or when the message was a duplicate (broker dedup hit). Errors
+    // are surfaced on the response but do NOT throw — the message is
+    // already persisted, and the operator will see the delivery failure
+    // status without losing the broker write.
+    let delivery = null;
+    if (this.deliveryWorker && result.inserted && result.message?.messageId) {
+      try {
+        delivery = await this.deliveryWorker.deliverMessage(result.message.messageId);
+      } catch (err) {
+        delivery = {
+          status: 'failed',
+          responseState: 'delivery_failed',
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    }
+    return { ...result, delivery };
+  }
+
+  /**
+   * message_list — return messages for the current team. The UI's
+   * AgentInbox uses this to populate the Messages tab. Optionally filter
+   * by `agentId` (returns only messages where the agent is sender or
+   * recipient).
+   *
+   * Args: { teamId?: string, agentId?: string, limit?: number }.
+   * Returns: { messages: Message[] } — wrapped to match runtime_list /
+   *   task_list shape so MCP clients accept structuredContent as object.
+   */
+  #messageList(actor, args) {
+    if (!this.broker || typeof this.broker.listMessages !== 'function') {
+      return { messages: [] };
+    }
+    const teamId = (typeof args?.teamId === 'string' && args.teamId.length > 0)
+      ? args.teamId
+      : actor.teamId;
+    const limit = Number.isInteger(args?.limit) && args.limit > 0 ? args.limit : 200;
+    const all = this.broker.listMessages({ teamId, limit });
+    const filterAgent = typeof args?.agentId === 'string' && args.agentId.length > 0 ? args.agentId : null;
+    const messages = filterAgent
+      ? all.filter((m) => {
+          const fromMatches = m.from?.kind === 'agent' && m.from?.id === filterAgent;
+          const toMatches = m.to?.kind === 'agent' && m.to?.agentId === filterAgent;
+          return fromMatches || toMatches;
+        })
+      : all;
+    return { messages };
   }
 
   #taskCreate(actor, idempotencyKey, args) {
@@ -241,6 +387,55 @@ export class LocalToolFacade {
       },
     });
     return this.taskBoard.getTask({ teamId: actor.teamId, taskId });
+  }
+
+  /**
+   * Async pre-flight for task_update when a remote-merge-policy gate is
+   * configured. Peeks at the current task to decide whether the upcoming
+   * transition needs a branch-protection check; if not, falls through to
+   * the sync handler immediately. If yes, awaits the verdict, throws when
+   * it refuses, and otherwise threads the verdict into the sync handler
+   * via an internal args field so the integration event can record *why*
+   * we proceeded.
+   */
+  async #taskUpdateWithPolicyGate(actor, idempotencyKey, args) {
+    const taskId = typeof args?.taskId === 'string' ? args.taskId : null;
+    const current = taskId ? this.taskBoard.getTask({ teamId: actor.teamId, taskId }) : null;
+    const wt = current?.worktree;
+    const isFinishingMerge =
+      current?.status === 'merge_ready' &&
+      args?.status === 'done' &&
+      typeof current?.baseBranch === 'string' &&
+      current.baseBranch.length > 0 &&
+      wt &&
+      wt.status === 'created' &&
+      typeof wt.branch === 'string' &&
+      wt.branch.length > 0;
+    if (!isFinishingMerge) {
+      return this.#taskUpdate(actor, idempotencyKey, args);
+    }
+    let verdict;
+    try {
+      verdict = await this.remoteMergePolicy.evaluate({
+        baseBranch: current.baseBranch,
+        taskBranch: wt.branch,
+      });
+    } catch (err) {
+      // Defensive — the contract is "always returns a verdict", but if the
+      // collaborator throws we treat as advisory failure: allow the merge
+      // and record the reason in the event payload.
+      verdict = {
+        allow: true,
+        reason: `policy_evaluate_threw:${err && err.message ? err.message : 'unknown'}`,
+      };
+    }
+    if (verdict && verdict.allow === false) {
+      throw new Error(
+        `task_update: merge_ready → done blocked by branch protection: ${verdict.reason}. ` +
+        `Open a pull request via github_create_pull_request from "${wt.branch}" into "${current.baseBranch}".`,
+      );
+    }
+    return this.#taskUpdate(actor, idempotencyKey, { ...args, __remotePolicyVerdict: verdict });
   }
 
   #taskUpdate(actor, idempotencyKey, args) {
@@ -333,6 +528,12 @@ export class LocalToolFacade {
         const wt = current?.worktree;
         if (wt && wt.status === 'created' && typeof wt.branch === 'string' && wt.branch.length > 0) {
           let result;
+          // §19 follow-up: when remoteMergePolicy is configured, the verdict
+          // is pre-resolved by #taskUpdateWithPolicyGate (async dispatcher
+          // wrapper) and passed in via this internal args field. Keeping
+          // #taskUpdate synchronous avoids touching ~200 existing test sites
+          // that don't await the call.
+          const remotePolicyVerdict = args.__remotePolicyVerdict || null;
           if (typeof current?.baseBranch !== 'string' || current.baseBranch.length === 0) {
             result = { status: 'skipped', reason: 'no_base_branch' };
           } else {
@@ -351,6 +552,12 @@ export class LocalToolFacade {
             throw new Error(
               `task_update: merge_ready → done blocked by integration: ${result.reason}${result.stderr ? ' — ' + result.stderr : ''}`,
             );
+          }
+          // Enrich the integration record with the policy verdict so the
+          // event + projection capture *why* we proceeded (unprotected,
+          // protected-but-pr-not-required, protection_check_failed, etc.).
+          if (remotePolicyVerdict && (result.status === 'merged' || result.status === 'skipped')) {
+            result = { ...result, remotePolicy: { reason: remotePolicyVerdict.reason } };
           }
           // Append INTEGRATION_MERGED event (success OR best-effort skip)
           try {
@@ -811,6 +1018,7 @@ export class LocalToolFacade {
     if (typeof args.providerId === 'string' && args.providerId.length > 0) input.providerId = args.providerId;
     if (typeof args.role === 'string' && args.role.length > 0) input.role = args.role;
     if (typeof args.skipPermissions === 'boolean') input.skipPermissions = args.skipPermissions;
+    if (typeof args.prompt === 'string' && args.prompt.length > 0) input.prompt = args.prompt;
 
     // §8 slice 2: enforce worktree cwd when args.taskId points to a task with
     // a created worktree. Caller can either omit cwd (we auto-set) or pass the
@@ -889,12 +1097,21 @@ export class LocalToolFacade {
     }
     const members = [config.lead, ...config.teammates];
     const results = [];
+    // Pull the project root so the system prompt can tell agents where the
+    // code they're working on actually lives. Falls back to '.' if no cwd
+    // was set on the lead — agents will still boot, just without a path.
+    const teamCwd = (typeof config.lead?.cwd === 'string' && config.lead.cwd.length > 0)
+      ? config.lead.cwd
+      : '.';
     for (const member of members) {
       const runtimeId = `runtime-${teamId}-${member.agentId}`;
       const existing = this.runtimeRegistry?.getRuntime?.(runtimeId);
       if (existing && existing.status === 'running') {
-        results.push({ runtimeId, agentId: member.agentId, status: 'already_running' });
-        continue;
+        const hasLiveAdapter = this.adapters && typeof this.adapters.has === 'function' && this.adapters.has(runtimeId);
+        if (hasLiveAdapter) {
+          results.push({ runtimeId, agentId: member.agentId, status: 'already_running' });
+          continue;
+        }
       }
       try {
         const launchInput = {
@@ -909,6 +1126,47 @@ export class LocalToolFacade {
         if (typeof member.providerId === 'string' && member.providerId.length > 0) launchInput.providerId = member.providerId;
         if (typeof member.role === 'string' && member.role.length > 0) launchInput.role = member.role;
         if (typeof member.skipPermissions === 'boolean') launchInput.skipPermissions = member.skipPermissions;
+        // Pass the launch prompt through (foundry materialize sets this on
+        // the lead so the team starts knowing about the project docs).
+        // LocalToadRuntime.launchAgent forwards it to the adapter as the
+        // first turn after spawn — see launchAgent.
+        // If both prompt and promptPath are empty (user left the
+        // leadPrompt textarea blank and didn't point to a file), the
+        // agent boots and stays idle until the human sends the first
+        // message — this matches upstream's behavior with
+        // `--team-bootstrap-user-prompt-file` being optional.
+        if (typeof member.prompt === 'string' && member.prompt.length > 0) launchInput.prompt = member.prompt;
+        if (typeof member.promptPath === 'string' && member.promptPath.length > 0) launchInput.promptPath = member.promptPath;
+        // Each member boots with a role-aware system prompt: lead gets the
+        // orchestrator manifest (teammates + tools), teammates get their
+        // role guidance + the lead's name. This is our equivalent of
+        // upstream's --team-bootstrap-spec — same idea, public CLI flag.
+        // Skipped when the team config supplied a literal --append-system-prompt
+        // in member.args (handled inside LocalToadRuntime so we don't
+        // double-check here).
+        launchInput.systemPrompt = buildAgentSystemPrompt({
+          teamId: config.teamId,
+          lead: config.lead,
+          teammates: config.teammates,
+          member,
+          cwd: teamCwd,
+        });
+        // The lead needs a stdin kickoff to actually start generating —
+        // claude's stream-json mode only produces output in response to
+        // stdin user messages, so even with a full system prompt it sits
+        // silent until something arrives. Teammates intentionally stay
+        // quiet: they only act on lead-issued message_send turns, not on
+        // boot. If the user/foundry already supplied a real prompt, that
+        // wins (the kickoff would be redundant).
+        const isLead = member.agentId === config.lead.agentId;
+        const hasUserPrompt = (typeof member.prompt === 'string' && member.prompt.length > 0)
+          || (typeof member.promptPath === 'string' && member.promptPath.length > 0);
+        if (isLead && !hasUserPrompt) {
+          launchInput.prompt = [
+            'Boot complete. Your team manifest is loaded in the system prompt above — including who you are, your teammates, and the project root.',
+            'Briefly tell the operator you are online, then start orchestrating: inspect the project (Read/Bash as needed), identify the most useful work, create concrete tasks via task_create, and assign each to the right teammate via message_send. Do not wait for the operator to spell out the work — drive it forward yourself. The operator can interrupt or redirect you any time.',
+          ].join('\n\n');
+        }
         const runtime = await this.launchAgent(launchInput);
         results.push({ runtimeId, agentId: member.agentId, status: runtime?.status || 'starting' });
       } catch (err) {
@@ -1148,6 +1406,240 @@ export class LocalToolFacade {
    * Returns: [{ runtimeId, taskId, teamId, agentId, lastEventAt, silentMs, thresholdMs }]
    * Read-only; available to every role via COMMON_READ_TOOLS.
    */
+  /**
+   * runtime_list — return active and recently-stopped runtimes for a team.
+   * The UI's useToadData hook calls this on every load to populate the
+   * agent panel. Without it, the side panel renders every agent as idle
+   * even when claude.exe processes are alive and orchestrating.
+   *
+   * Args: { teamId?: string }. Falls back to actor.teamId.
+   * Returns: { runtimes: Runtime[] } where each Runtime has runtimeId, agentId,
+   *   status, pid, startedAt, etc. — same shape returned by
+   *   SqliteRuntimeRegistry.listRuntimes().
+   */
+  #runtimeList(actor, args) {
+    if (!this.runtimeRegistry || typeof this.runtimeRegistry.listRuntimes !== 'function') {
+      return { runtimes: [] };
+    }
+    const teamId = (typeof args?.teamId === 'string' && args.teamId.length > 0)
+      ? args.teamId
+      : actor.teamId;
+    const runtimes = this.runtimeRegistry.listRuntimes({ teamId });
+    if (!Array.isArray(runtimes) || runtimes.length === 0) return { runtimes: [] };
+
+    // Enrich each runtime with derivable stats. Real CPU/memory sampling
+    // would need a per-pid lib (pidusage) — left as 0 for now and the UI
+    // hides those columns when 0. Uptime + req count are cheap to compute
+    // from data we already have.
+    const now = Date.now();
+    const events = this.eventLog && typeof this.eventLog.listEvents === 'function'
+      ? this.eventLog.listEvents({ teamId })
+      : [];
+    const reqsByRuntime = new Map();
+    let lastEventByRuntime = new Map();
+    for (const e of events) {
+      if (e.eventType === 'tool_use') {
+        reqsByRuntime.set(e.runtimeId, (reqsByRuntime.get(e.runtimeId) || 0) + 1);
+      }
+      if (e.createdAt) {
+        const prev = lastEventByRuntime.get(e.runtimeId);
+        if (!prev || prev < e.createdAt) lastEventByRuntime.set(e.runtimeId, e.createdAt);
+      }
+    }
+
+    const enriched = runtimes.map((r) => {
+      const startedMs = r.startedAt ? Date.parse(r.startedAt) : NaN;
+      const stoppedMs = r.stoppedAt ? Date.parse(r.stoppedAt) : NaN;
+      const endMs = Number.isFinite(stoppedMs) ? stoppedMs : now;
+      const uptimeSec = Number.isFinite(startedMs) ? Math.max(0, Math.floor((endMs - startedMs) / 1000)) : 0;
+      const hh = String(Math.floor(uptimeSec / 3600)).padStart(2, '0');
+      const mm = String(Math.floor((uptimeSec % 3600) / 60)).padStart(2, '0');
+      const ss = String(uptimeSec % 60).padStart(2, '0');
+      return {
+        ...r,
+        uptime: `${hh}:${mm}:${ss}`,
+        reqs: reqsByRuntime.get(r.runtimeId) || 0,
+        lastEventAt: lastEventByRuntime.get(r.runtimeId) || null,
+      };
+    });
+    return { runtimes: enriched };
+  }
+
+  /**
+   * usage_summary — surface the operator's spend + plan tier in one call.
+   * The UI's top-bar chip uses this to show "Max plan · $1.50 · 5/5 runtimes"
+   * without polling 3 separate endpoints.
+   *
+   * Plan tier comes from `claude auth status --json` via the existing
+   * providerAuth helper. Token and cost totals are aggregated from
+   * runtime_events.turn_completed payloads (the stream-json `result` event
+   * carries `total_cost_usd` and `usage`).
+   *
+   * Returns:
+   *   {
+   *     plan: { tier, loggedIn, provider },
+   *     totals: { tokensIn, tokensOut, costUsd },
+   *     runtimes: { live, total },
+   *   }
+   *
+   * Note: this is best-effort + non-authoritative. Real plan-quota %s
+   * (5h / weekly with reset countdowns) live behind claude's interactive
+   * /usage slash command — would require node-pty to scrape, queued as a
+   * follow-up.
+   */
+  async #usageSummary(_actor, _args) {
+    // Plan tier — graceful fallback when claude isn't installed/signed in.
+    const plan = { tier: 'unknown', loggedIn: false, provider: 'claude' };
+    // Use the injected spawn (test override) or the real spawnSync. The
+    // facade constructor used to default this to null which silently
+    // skipped the auth probe in production — confirmed regression.
+    const spawnSyncImpl = this.providerAuthSpawnSync || spawnSync;
+    if (spawnSyncImpl) {
+      try {
+        const result = spawnSyncImpl('claude', ['auth', 'status', '--json'], {
+          encoding: 'utf8',
+          timeout: 5000,
+          windowsHide: true,
+        });
+        if (result && result.status === 0 && typeof result.stdout === 'string') {
+          const parsed = JSON.parse(result.stdout);
+          if (parsed && typeof parsed === 'object') {
+            if (typeof parsed.subscriptionType === 'string') plan.tier = parsed.subscriptionType;
+            if (parsed.loggedIn === true) plan.loggedIn = true;
+          }
+        }
+      } catch {
+        // Leave defaults — UI renders "unknown plan".
+      }
+    }
+
+    // Plan-quota %s — only available via claude's interactive /usage
+    // slash command, which requires a pty session. We cache for 90s
+    // because spawning claude takes ~2s and quotas don't change quickly.
+    // Probe runs in parallel with the rest of the aggregation below.
+    const quotaPromise = this.#getCachedClaudeQuota();
+
+    // Aggregate token + cost totals from turn_completed events. We sum
+    // ALL events the event log has (not filtered by team) so the chip
+    // shows the operator their cumulative spend across every team they've
+    // ever launched in this project.
+    let tokensIn = 0;
+    let tokensOut = 0;
+    let costUsd = 0;
+    if (this.eventLog && typeof this.eventLog.listEvents === 'function') {
+      try {
+        const events = this.eventLog.listEvents({});
+        for (const e of events) {
+          if (e.eventType !== 'turn_completed') continue;
+          const raw = e.payload?.raw;
+          if (!raw || raw.type !== 'result') continue;
+          if (typeof raw.total_cost_usd === 'number') costUsd += raw.total_cost_usd;
+          const u = raw.usage;
+          if (u && typeof u === 'object') {
+            if (typeof u.input_tokens === 'number') tokensIn += u.input_tokens;
+            if (typeof u.output_tokens === 'number') tokensOut += u.output_tokens;
+          }
+        }
+      } catch {
+        // Aggregation failed — return zeros instead of throwing.
+      }
+    }
+
+    // Runtime tally — live vs total across all teams.
+    let live = 0;
+    let total = 0;
+    if (this.runtimeRegistry && typeof this.runtimeRegistry.listRuntimes === 'function') {
+      try {
+        const runtimes = this.runtimeRegistry.listRuntimes();
+        total = runtimes.length;
+        live = runtimes.filter((r) => r.status === 'running' || r.status === 'live' || r.status === 'starting').length;
+      } catch {
+        // Leave at 0.
+      }
+    }
+
+    // Await the quota probe (fired earlier in parallel). Null when the
+    // probe couldn't get a usable response — UI renders quota chips as
+    // "—" in that case rather than fabricating numbers.
+    const quota = await quotaPromise;
+
+    // Per-provider auth + quota breakdown. Operators want to see plan
+    // status across every CLI runtime they might use — not just whichever
+    // happens to be the "active" one. anthropic gets the live quota
+    // probe; codex + gemini have no equivalent /usage panel so quota is
+    // null (UI renders "no quota probe available").
+    const providerEntries = [
+      { providerId: 'anthropic', label: 'Anthropic Claude' },
+      { providerId: 'openai', label: 'OpenAI Codex' },
+      { providerId: 'gemini', label: 'Google Gemini' },
+    ];
+    const providers = providerEntries.map((entry) => {
+      let authStatus = null;
+      try {
+        authStatus = providerGetAuthStatus({
+          providerId: entry.providerId,
+          spawnSyncImpl: this.providerAuthSpawnSync,
+          readFileImpl: this.providerAuthReadFile,
+          statImpl: this.providerAuthStat,
+        });
+      } catch {
+        // Leave authStatus null — the entry below will show "unknown".
+      }
+      const signedIn = authStatus && authStatus.signedIn === true;
+      // Only anthropic has a quota probe today. Wire it via the same
+      // 90s-cached value we already computed for the top-level `plan`.
+      const providerQuota = entry.providerId === 'anthropic' ? quota : null;
+      return {
+        providerId: entry.providerId,
+        label: entry.label,
+        signedIn: signedIn || false,
+        plan: authStatus?.plan ?? authStatus?.subscriptionType ?? null,
+        user: authStatus?.user ?? null,
+        reason: !signedIn ? (authStatus?.reason ?? null) : null,
+        quota: providerQuota,
+      };
+    });
+
+    return {
+      plan,
+      quota, // { session: {pctUsed, resetIn, label}, weekly: {...}, opusWeekly: {...} } | null
+      providers,
+      totals: { tokensIn, tokensOut, costUsd },
+      runtimes: { live, total },
+    };
+  }
+
+  /**
+   * 90-second cache around probeClaudeUsage. The pty probe takes ~5s
+   * (spawn + settle + capture + quit), so we don't want to run it on
+   * every UI poll. 90s gives the chip near-real-time feel without
+   * hammering claude.
+   */
+  async #getCachedClaudeQuota() {
+    const now = Date.now();
+    if (this.#claudeQuotaCache && (now - this.#claudeQuotaCache.at) < 90_000) {
+      return this.#claudeQuotaCache.value;
+    }
+    if (this.#claudeQuotaInflight) {
+      // Another caller is already probing — share their result.
+      return this.#claudeQuotaInflight;
+    }
+    const probeImpl = this.claudeUsageProbe || probeClaudeUsage;
+    this.#claudeQuotaInflight = (async () => {
+      try {
+        const result = await probeImpl({});
+        this.#claudeQuotaCache = { at: Date.now(), value: result };
+        return result;
+      } catch {
+        this.#claudeQuotaCache = { at: Date.now(), value: null };
+        return null;
+      } finally {
+        this.#claudeQuotaInflight = null;
+      }
+    })();
+    return this.#claudeQuotaInflight;
+  }
+
   #stuckRuntimeList(actor, args) {
     if (!this.runtimeRegistry || typeof this.runtimeRegistry.listRuntimes !== 'function') {
       return [];
@@ -1219,14 +1711,24 @@ export class LocalToolFacade {
 
   // ---- §3c GitHub auth ----------------------------------------------------
 
-  /** Resolve the OAuth client_id, falling back to settings.github.clientId
-   *  when no env var or constructor override was provided. */
+  /** Resolve the OAuth client_id with this precedence (first non-empty wins):
+   *    1. constructor arg / TOAD_GITHUB_CLIENT_ID env var (this.githubClientId)
+   *    2. settings.github.clientId (user-pasted via UI)
+   *    3. BUILT_IN_GITHUB_CLIENT_ID (project-shipped default — empty by
+   *       default; the project maintainer fills it in to ship a one-click
+   *       experience, the same way gh CLI ships a public client_id).
+   */
   async #resolveGithubClientId() {
     if (this.githubClientId) return this.githubClientId;
-    if (!this.settingsStore) return null;
-    const merged = await this.settingsStore.readEffective();
-    const fromSettings = merged?.github?.clientId;
-    return typeof fromSettings === 'string' && fromSettings.length > 0 ? fromSettings : null;
+    if (this.settingsStore) {
+      const merged = await this.settingsStore.readEffective();
+      const fromSettings = merged?.github?.clientId;
+      if (typeof fromSettings === 'string' && fromSettings.length > 0) return fromSettings;
+    }
+    if (typeof BUILT_IN_GITHUB_CLIENT_ID === 'string' && BUILT_IN_GITHUB_CLIENT_ID.length > 0) {
+      return BUILT_IN_GITHUB_CLIENT_ID;
+    }
+    return null;
   }
 
   async #githubDeviceStart(args) {
@@ -1307,8 +1809,14 @@ export class LocalToolFacade {
     }
     const merged = await this.settingsStore.readEffective();
     const gh = merged?.github;
+    const hasBuiltIn =
+      typeof BUILT_IN_GITHUB_CLIENT_ID === 'string' && BUILT_IN_GITHUB_CLIENT_ID.length > 0;
     if (!gh || typeof gh !== 'object' || !gh.accessToken) {
-      return { status: 'disconnected', clientIdConfigured: !!(this.githubClientId || gh?.clientId) };
+      return {
+        status: 'disconnected',
+        clientIdConfigured: !!(this.githubClientId || gh?.clientId || hasBuiltIn),
+        clientIdSource: this.githubClientId ? 'env' : (gh?.clientId ? 'settings' : (hasBuiltIn ? 'built-in' : null)),
+      };
     }
     return {
       status: 'connected',
@@ -1316,7 +1824,172 @@ export class LocalToolFacade {
       user: gh.user ?? null,
       scopes: Array.isArray(gh.scopes) ? gh.scopes : [],
       connectedAt: gh.connectedAt ?? null,
-      clientIdConfigured: !!(this.githubClientId || gh.clientId),
+      clientIdConfigured: !!(this.githubClientId || gh.clientId || hasBuiltIn),
+    };
+  }
+
+  /**
+   * Resolve the stored GitHub access token (from device flow or PAT verify).
+   * Returns null when nothing is connected, so handlers can surface a
+   * caller-friendly "not connected" error.
+   */
+  async #resolveGithubToken() {
+    if (!this.settingsStore) return null;
+    const merged = await this.settingsStore.readEffective();
+    const gh = merged?.github;
+    if (!gh || typeof gh !== 'object') return null;
+    return typeof gh.accessToken === 'string' && gh.accessToken.length > 0
+      ? gh.accessToken
+      : null;
+  }
+
+  async #githubGetRepository(args) {
+    const owner = requireString(args?.owner, 'args.owner');
+    const repo = requireString(args?.repo, 'args.repo');
+    const token = await this.#resolveGithubToken();
+    if (!token) {
+      throw new Error('github_get_repository: GitHub is not connected — sign in via Settings → GitHub first');
+    }
+    return githubGetRepository({ token, owner, repo, fetchImpl: this.githubFetch });
+  }
+
+  async #githubGetBranchProtection(args) {
+    const owner = requireString(args?.owner, 'args.owner');
+    const repo = requireString(args?.repo, 'args.repo');
+    const branch = requireString(args?.branch, 'args.branch');
+    const token = await this.#resolveGithubToken();
+    if (!token) {
+      throw new Error('github_get_branch_protection: GitHub is not connected — sign in via Settings → GitHub first');
+    }
+    return githubGetBranchProtection({ token, owner, repo, branch, fetchImpl: this.githubFetch });
+  }
+
+  /**
+   * Read `git remote get-url origin` and return the parsed `{ owner, repo }`
+   * so the UI can wire an "Open PR" button without asking the user to type
+   * the repo coordinates. Returns soft `{ ok: false, reason }` for
+   * "no_origin_remote", "origin_not_github", or "no_project_cwd" — these
+   * are normal states (e.g. fresh checkout, GitLab project) and shouldn't
+   * surface as exceptions in the UI.
+   */
+  #githubOriginRemote() {
+    if (typeof this.projectCwd !== 'string' || this.projectCwd.length === 0) {
+      return { ok: false, reason: 'no_project_cwd' };
+    }
+    let result;
+    try {
+      result = this.runGit(['remote', 'get-url', 'origin'], { cwd: this.projectCwd });
+    } catch {
+      return { ok: false, reason: 'no_origin_remote' };
+    }
+    if (!result || result.exitCode !== 0) {
+      return { ok: false, reason: 'no_origin_remote' };
+    }
+    const parsed = parseGithubRemote((result.stdout || '').trim());
+    if (!parsed) {
+      return { ok: false, reason: 'origin_not_github' };
+    }
+    return { ok: true, owner: parsed.owner, repo: parsed.repo };
+  }
+
+  async #githubCreatePullRequest(args) {
+    const owner = requireString(args?.owner, 'args.owner');
+    const repo = requireString(args?.repo, 'args.repo');
+    const head = requireString(args?.head, 'args.head');
+    const base = requireString(args?.base, 'args.base');
+    const title = requireString(args?.title, 'args.title');
+    const token = await this.#resolveGithubToken();
+    if (!token) {
+      throw new Error('github_create_pull_request: GitHub is not connected — sign in via Settings → GitHub first');
+    }
+    const body = typeof args?.body === 'string' ? args.body : null;
+    const draft = args?.draft === true;
+    return githubCreatePullRequest({
+      token, owner, repo, head, base, title, body, draft,
+      fetchImpl: this.githubFetch,
+    });
+  }
+
+  /**
+   * Create a new repository on GitHub under the authenticated user. Used
+   * by the new-project flow when the user wants to push their fresh
+   * Foundry-materialized project to a GitHub remote.
+   */
+  async #githubCreateRepository(args) {
+    const name = requireString(args?.name, 'args.name');
+    const token = await this.#resolveGithubToken();
+    if (!token) {
+      throw new Error('github_create_repository: GitHub is not connected — sign in via Settings → GitHub first');
+    }
+    const description = typeof args?.description === 'string' ? args.description : null;
+    const isPrivate = args?.private === undefined ? true : args.private === true;
+    const autoInit = args?.autoInit === true;
+    return githubCreateRepository({
+      token, name, description, private: isPrivate, autoInit,
+      fetchImpl: this.githubFetch,
+    });
+  }
+
+  /**
+   * Run `git init` in projectCwd. Idempotent — if `.git` already exists
+   * (the directory is already a git repo), returns `{ ok: true,
+   * alreadyInitialized: true }` without re-initializing.
+   */
+  #gitInitLocal(args) {
+    const cwd = (typeof args?.cwd === 'string' && args.cwd.trim().length > 0)
+      ? args.cwd.trim()
+      : this.projectCwd;
+    if (typeof cwd !== 'string' || cwd.length === 0) {
+      throw new Error('git_init_local: no project root configured (cwd or projectCwd required)');
+    }
+    // Check if `.git` already exists by running `rev-parse --is-inside-work-tree`.
+    const probe = this.runGit(['rev-parse', '--is-inside-work-tree'], { cwd });
+    if (probe && probe.exitCode === 0 && /true/i.test(String(probe.stdout || '').trim())) {
+      return { ok: true, alreadyInitialized: true, cwd };
+    }
+    const initialBranch = (typeof args?.initialBranch === 'string' && args.initialBranch.trim().length > 0)
+      ? args.initialBranch.trim()
+      : 'main';
+    const result = this.runGit(['init', '--initial-branch', initialBranch], { cwd });
+    if (!result || result.exitCode !== 0) {
+      return {
+        ok: false,
+        cwd,
+        reason: result?.stderr ? String(result.stderr).slice(0, 400) : 'git init failed',
+      };
+    }
+    return { ok: true, alreadyInitialized: false, cwd, initialBranch };
+  }
+
+  /**
+   * Set / replace a git remote URL. Defaults to `origin`. Used after
+   * `github_create_repository` to wire the freshly-created GitHub repo as
+   * the local repo's origin.
+   */
+  #gitSetRemote(args) {
+    const cwd = (typeof args?.cwd === 'string' && args.cwd.trim().length > 0)
+      ? args.cwd.trim()
+      : this.projectCwd;
+    if (typeof cwd !== 'string' || cwd.length === 0) {
+      throw new Error('git_set_remote: no project root configured');
+    }
+    const name = (typeof args?.name === 'string' && args.name.trim().length > 0) ? args.name.trim() : 'origin';
+    const url = requireString(args?.url, 'args.url');
+    // Try `remote add` first; if it errors with "remote already exists",
+    // fall back to `remote set-url`.
+    const addResult = this.runGit(['remote', 'add', name, url], { cwd });
+    if (addResult && addResult.exitCode === 0) {
+      return { ok: true, name, url, mode: 'added' };
+    }
+    const setResult = this.runGit(['remote', 'set-url', name, url], { cwd });
+    if (setResult && setResult.exitCode === 0) {
+      return { ok: true, name, url, mode: 'updated' };
+    }
+    return {
+      ok: false,
+      name,
+      url,
+      reason: setResult?.stderr ? String(setResult.stderr).slice(0, 400) : 'git remote set-url failed',
     };
   }
 
@@ -1386,6 +2059,288 @@ export class LocalToolFacade {
       providerId,
       spawnSyncImpl: this.providerAuthSpawnSync,
     });
+  }
+
+  // ---- Foundry -------------------------------------------------------------
+
+  #foundrySessionCreate(args) {
+    const store = this.#requireFoundryStore();
+    return store.createSession({
+      sessionId: typeof args?.sessionId === 'string' ? args.sessionId : undefined,
+      title: requireString(args?.title, 'args.title'),
+      projectPath: typeof args?.projectPath === 'string' ? args.projectPath : this.projectCwd,
+      metadata: args?.metadata && typeof args.metadata === 'object' ? args.metadata : {},
+    });
+  }
+
+  #foundrySessionList() {
+    return this.#requireFoundryStore().listSessions();
+  }
+
+  #foundrySessionGet(args) {
+    const session = this.#requireFoundryStore().getSession(requireString(args?.sessionId, 'args.sessionId'));
+    if (!session) throw new Error(`foundry session not found: ${args.sessionId}`);
+    return session;
+  }
+
+  #foundryMessageAdd(args) {
+    const store = this.#requireFoundryStore();
+    return store.addMessage({
+      messageId: typeof args?.messageId === 'string' ? args.messageId : undefined,
+      sessionId: requireString(args?.sessionId, 'args.sessionId'),
+      role: typeof args?.role === 'string' ? args.role : 'user',
+      text: requireString(args?.text, 'args.text'),
+      metadata: args?.metadata && typeof args.metadata === 'object' ? args.metadata : {},
+    });
+  }
+
+  async #foundryChatTurn(args) {
+    const store = this.#requireFoundryStore();
+    const sessionId = requireString(args?.sessionId, 'args.sessionId');
+    const text = requireString(args?.text, 'args.text');
+    const snapshot = store.getSession(sessionId);
+    if (!snapshot) throw new Error(`foundry session not found: ${sessionId}`);
+    const user = store.addMessage({
+      sessionId,
+      role: 'user',
+      text,
+      metadata: { source: 'foundry_chat_turn' },
+    });
+    const config = await this.#resolveOpenAiFoundryConfig(args);
+    const response = await callOpenAiFoundry({
+      fetchImpl: this.openaiFetch || globalThis.fetch,
+      apiKey: config.apiKey,
+      model: config.model,
+      session: store.getSession(sessionId),
+    });
+    const assistant = store.addMessage({
+      sessionId,
+      role: 'assistant',
+      text: response.text,
+      metadata: {
+        source: 'openai_responses_api',
+        responseId: response.responseId,
+        model: config.model,
+        usage: response.usage,
+      },
+    });
+    return {
+      sessionId,
+      user,
+      assistant,
+      responseId: response.responseId,
+      usage: response.usage,
+    };
+  }
+
+  #foundryArtifactUpsert(args) {
+    const store = this.#requireFoundryStore();
+    return store.upsertArtifact({
+      artifactId: typeof args?.artifactId === 'string' ? args.artifactId : undefined,
+      sessionId: requireString(args?.sessionId, 'args.sessionId'),
+      kind: requireString(args?.kind, 'args.kind'),
+      title: requireString(args?.title, 'args.title'),
+      content: typeof args?.content === 'string' ? args.content : requireString(args?.content, 'args.content'),
+      targetPath: typeof args?.targetPath === 'string' ? args.targetPath : null,
+      status: typeof args?.status === 'string' ? args.status : 'draft',
+      metadata: args?.metadata && typeof args.metadata === 'object' ? args.metadata : {},
+    });
+  }
+
+  #foundryArtifactGenerate(args) {
+    const store = this.#requireFoundryStore();
+    const sessionId = requireString(args?.sessionId, 'args.sessionId');
+    const snapshot = store.getSession(sessionId);
+    if (!snapshot) throw new Error(`foundry session not found: ${sessionId}`);
+    const artifacts = buildFoundryArtifacts(snapshot).map((artifact) =>
+      store.upsertArtifact({
+        artifactId: `${sessionId}-${artifact.kind}`,
+        sessionId,
+        ...artifact,
+      })
+    );
+    return {
+      sessionId,
+      artifacts,
+    };
+  }
+
+  #foundryArtifactExport(args) {
+    const rootDir = typeof args?.rootDir === 'string' && args.rootDir.trim().length > 0
+      ? args.rootDir
+      : this.projectCwd;
+    if (typeof rootDir !== 'string' || rootDir.trim().length === 0) {
+      throw new Error('foundry_artifact_export: no project root configured');
+    }
+    return this.#requireFoundryStore().exportArtifacts({
+      sessionId: requireString(args?.sessionId, 'args.sessionId'),
+      rootDir,
+      artifactIds: Array.isArray(args?.artifactIds) ? args.artifactIds : null,
+    });
+  }
+
+  #foundryProjectMaterialize(actor, idempotencyKey, args) {
+    const store = this.#requireFoundryStore();
+    const mode = args?.mode === 'plan' ? 'plan' : 'apply';
+    if (mode === 'apply' && !this.teamConfigRegistry) {
+      throw new Error('foundry_project_materialize: teamConfigRegistry is not configured');
+    }
+    const sessionId = requireString(args?.sessionId, 'args.sessionId');
+    const rootDir = typeof args?.rootDir === 'string' && args.rootDir.trim().length > 0
+      ? args.rootDir.trim()
+      : this.projectCwd;
+    if (typeof rootDir !== 'string' || rootDir.trim().length === 0) {
+      throw new Error('foundry_project_materialize: no project root configured');
+    }
+
+    let snapshot = store.getSession(sessionId);
+    if (!snapshot) throw new Error(`foundry session not found: ${sessionId}`);
+    if (snapshot.artifacts.length === 0) {
+      this.#foundryArtifactGenerate({ sessionId });
+      snapshot = store.getSession(sessionId);
+    }
+
+    const teamId = typeof args?.teamId === 'string' && args.teamId.trim().length > 0
+      ? args.teamId.trim()
+      : slugifyTeamId(snapshot.session.title);
+    const cwd = typeof args?.cwd === 'string' && args.cwd.trim().length > 0 ? args.cwd.trim() : rootDir;
+    const exported = this.#foundryArtifactExport({ sessionId, rootDir });
+    snapshot = store.getSession(sessionId);
+    const taskSpecs = buildFoundryTaskSpecs(snapshot);
+    const leadPrompt = buildFoundryLeadPrompt(snapshot);
+
+    // Plan mode: export docs + return suggested team/tasks WITHOUT creating
+    // the team or tasks. The UI uses this to seed the CreateTeamModal so
+    // the user can craft the team before launch. Apply mode (default,
+    // back-compat) creates everything end-to-end.
+    if (mode === 'plan') {
+      return {
+        sessionId,
+        mode: 'plan',
+        teamId,
+        files: exported.files,
+        suggestedTeam: {
+          teamId,
+          cwd,
+          leadPrompt,
+          lead: { agentId: 'lead', role: 'lead', providerId: 'anthropic', skipPermissions: true },
+          teammates: [
+            { agentId: 'architect', role: 'architect', providerId: 'anthropic', skipPermissions: true },
+            { agentId: 'developer', role: 'developer', providerId: 'anthropic', skipPermissions: true },
+            { agentId: 'reviewer', role: 'reviewer', providerId: 'anthropic', skipPermissions: true },
+            { agentId: 'tester', role: 'tester', providerId: 'anthropic', skipPermissions: true },
+          ],
+        },
+        suggestedTasks: taskSpecs,
+      };
+    }
+
+    const team = this.#teamCreate(actor, {
+      teamId,
+      lead: {
+        agentId: 'lead',
+        role: 'lead',
+        providerId: 'anthropic',
+        cwd,
+        skipPermissions: true,
+        prompt: leadPrompt,
+      },
+      teammates: [
+        { agentId: 'architect', role: 'architect', providerId: 'anthropic', cwd, skipPermissions: true },
+        { agentId: 'developer', role: 'developer', providerId: 'anthropic', cwd, skipPermissions: true },
+        { agentId: 'reviewer', role: 'reviewer', providerId: 'anthropic', cwd, skipPermissions: true },
+        { agentId: 'tester', role: 'tester', providerId: 'anthropic', cwd, skipPermissions: true },
+      ],
+      validation: args?.validation && typeof args.validation === 'object' ? args.validation : null,
+    });
+
+    const tasks = taskSpecs.map((spec, index) => this.#taskCreate(
+      { ...actor, teamId },
+      `${idempotencyKey}:task:${spec.taskId}`,
+      {
+        taskId: spec.taskId,
+        subject: spec.subject,
+        description: spec.description,
+        assignedRole: spec.assignedRole,
+        priority: index === 0 ? 'high' : 'medium',
+        expectedDeliverables: spec.expectedDeliverables,
+        acceptanceCriteria: spec.acceptanceCriteria,
+      },
+    ));
+
+    return {
+      sessionId,
+      mode: 'apply',
+      teamId,
+      team,
+      files: exported.files,
+      tasks,
+    };
+  }
+
+  /**
+   * Seed starter tasks from a Foundry session into a real team that was
+   * created via CreateTeamModal (rather than via materialize's auto-create
+   * path). Used by the UI flow:
+   *   Foundry → materialize(mode='plan') → CreateTeamModal → team_create →
+   *   foundry_project_seed_tasks → workspace.
+   */
+  #foundryProjectSeedTasks(actor, idempotencyKey, args) {
+    const store = this.#requireFoundryStore();
+    const sessionId = requireString(args?.sessionId, 'args.sessionId');
+    const teamId = requireString(args?.teamId, 'args.teamId');
+    const snapshot = store.getSession(sessionId);
+    if (!snapshot) throw new Error(`foundry session not found: ${sessionId}`);
+    if (snapshot.artifacts.length === 0) {
+      throw new Error('foundry_project_seed_tasks: session has no artifacts — generate them first');
+    }
+    const taskSpecs = buildFoundryTaskSpecs(snapshot);
+    const tasks = taskSpecs.map((spec, index) => this.#taskCreate(
+      { ...actor, teamId },
+      `${idempotencyKey}:task:${spec.taskId}`,
+      {
+        taskId: spec.taskId,
+        subject: spec.subject,
+        description: spec.description,
+        assignedRole: spec.assignedRole,
+        priority: index === 0 ? 'high' : 'medium',
+        expectedDeliverables: spec.expectedDeliverables,
+        acceptanceCriteria: spec.acceptanceCriteria,
+      },
+    ));
+    return { sessionId, teamId, tasks };
+  }
+
+  #requireFoundryStore() {
+    if (!this.foundryStore) {
+      throw new Error('foundry store is not configured');
+    }
+    return this.foundryStore;
+  }
+
+  async #resolveOpenAiFoundryConfig(args) {
+    if (!this.settingsStore || typeof this.settingsStore.readEffective !== 'function') {
+      throw new Error('foundry_chat_turn: settings store is not configured');
+    }
+    const settings = await this.settingsStore.readEffective();
+    const providersSection = settings?.providers && typeof settings.providers === 'object'
+      ? settings.providers
+      : {};
+    const providers = Array.isArray(providersSection.providers) ? providersSection.providers : [];
+    const openai = providers.find((provider) => provider && provider.id === 'openai') || null;
+    const apiKey = typeof openai?.apiKey === 'string' && openai.apiKey.trim().length > 0
+      ? openai.apiKey.trim()
+      : null;
+    if (!apiKey) {
+      throw new Error('foundry_chat_turn: OpenAI API key is not configured in Settings > Providers');
+    }
+    const requestedModel = typeof args?.model === 'string' && args.model.trim().length > 0
+      ? args.model.trim()
+      : (typeof openai?.defaultModel === 'string' ? openai.defaultModel.trim() : '');
+    return {
+      apiKey,
+      model: normalizeOpenAiModel(requestedModel),
+    };
   }
 
   /**
@@ -1484,6 +2439,603 @@ export class LocalToolFacade {
       // swallow — the role-authority error is what the caller needs to see
     }
   }
+}
+
+/**
+ * Extract `===DOC: kind===` blocks from the most recent assistant message
+ * that contained a particular kind. The chat prompt instructs the model
+ * to emit all four blocks every time it drafts/revises, so we only need
+ * to find the LATEST occurrence per kind.
+ *
+ * Returns a map of kind → content. Missing kinds aren't in the map; the
+ * caller falls back to the template skeleton for those.
+ */
+function parseDocBlocksFromTranscript(snapshot) {
+  const messages = Array.isArray(snapshot?.messages) ? snapshot.messages : [];
+  const result = new Map();
+  // Walk newest → oldest so the first hit per kind wins.
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (!message || message.role !== 'assistant') continue;
+    const text = typeof message.text === 'string' ? message.text : '';
+    if (!text.includes('===DOC:')) continue;
+    // Match ===DOC: <kind>=== ... ===END DOC===  (kind is one or more
+    // alphanumeric/underscore chars; content is everything up to the next
+    // ===END DOC===, non-greedy, dotall semantics via [\s\S]).
+    const re = /===DOC:\s*([a-zA-Z0-9_]+)\s*===\s*([\s\S]*?)\s*===END\s+DOC===/g;
+    let match;
+    while ((match = re.exec(text)) !== null) {
+      const kind = match[1].trim().toLowerCase();
+      const content = match[2].trim();
+      if (!result.has(kind) && content.length > 0) {
+        result.set(kind, content);
+      }
+    }
+  }
+  return result;
+}
+
+function buildFoundryArtifacts(snapshot) {
+  const title = snapshot.session.title;
+  // Prefer ===DOC=== blocks the chat actually drafted. Falls back to the
+  // skeleton templates below for any kind the chat hasn't emitted yet.
+  const parsed = parseDocBlocksFromTranscript(snapshot);
+  const sourceNotes = snapshot.messages
+    .filter((message) => message.role === 'user')
+    .map((message) => `- ${message.text.replace(/\s+/g, ' ').trim()}`)
+    .join('\n') || '- No operator notes captured yet.';
+  const brief = [
+    `# ${title} Product Brief`,
+    '',
+    '## Problem',
+    'Capture the operator goals from the Foundry conversation and turn them into buildable software requirements.',
+    '',
+    '## Source Notes',
+    sourceNotes,
+    '',
+    '## Users',
+    '- Primary operators who need the finished workflow.',
+    '- Team members who will build, review, and validate the system in TOAD.',
+    '',
+    '## Success Criteria',
+    '- The core user workflow is clear enough to turn into TOAD tasks.',
+    '- Data entities and integrations are named before implementation starts.',
+    '- Acceptance criteria are testable by a reviewer.',
+  ].join('\n');
+  const techSpec = [
+    `# ${title} Technical Spec`,
+    '',
+    '## Architecture',
+    '- Use the existing app stack unless the team explicitly approves a change.',
+    '- Keep backend state changes behind typed service/tool boundaries.',
+    '- Keep frontend screens data-driven and free of mock production state.',
+    '',
+    '## Data Model',
+    '- Convert the source notes into concrete entities, relationships, and lifecycle states.',
+    '- Keep audit fields on records that affect orchestration, billing, or approvals.',
+    '',
+    '## API Surface',
+    '- Define read commands for listing/detail views.',
+    '- Define mutating commands with idempotency keys.',
+    '- Route agent and UI access through the same enforcement layer.',
+    '',
+    '## Validation',
+    '- Add unit tests for state changes.',
+    '- Add integration coverage for repo-file or external side effects.',
+    '- Run typecheck and build before review.',
+  ].join('\n');
+  const roadmap = [
+    `# ${title} Roadmap`,
+    '',
+    '## Phase 1 - Clarify',
+    '- Finalize entities, user roles, and acceptance criteria.',
+    '- Identify high-risk files, integrations, and permissions.',
+    '',
+    '## Phase 2 - Foundation',
+    '- Add persistence and command/tool coverage.',
+    '- Build the first usable UI path against live data.',
+    '',
+    '## Phase 3 - Execution',
+    '- Break the work into TOAD tasks with owners and validation commands.',
+    '- Drive implementation through plan, review, testing, and merge gates.',
+    '',
+    '## Phase 4 - Hardening',
+    '- Add edge-case tests, risk policy checks, and operational documentation.',
+  ].join('\n');
+  const prisma = [
+    '// Draft Prisma schema generated by TOAD Foundry.',
+    '// Replace placeholder fields after the data model is finalized.',
+    '',
+    'model ProjectPlan {',
+    '  id        String   @id @default(cuid())',
+    '  title     String',
+    '  status    String   @default("draft")',
+    '  createdAt DateTime @default(now())',
+    '  updatedAt DateTime @updatedAt',
+    '  items     ProjectPlanItem[]',
+    '}',
+    '',
+    'model ProjectPlanItem {',
+    '  id            String      @id @default(cuid())',
+    '  projectPlanId String',
+    '  projectPlan   ProjectPlan @relation(fields: [projectPlanId], references: [id])',
+    '  kind          String',
+    '  title         String',
+    '  status        String      @default("pending")',
+    '  notes         String?',
+    '  createdAt     DateTime    @default(now())',
+    '  updatedAt     DateTime    @updatedAt',
+    '}',
+  ].join('\n');
+  const tasks = [
+    `# ${title} TOAD Task Breakdown`,
+    '',
+    '## Task 1 - Requirements contract',
+    '- Deliverable: product brief and acceptance criteria.',
+    '- Acceptance: reviewers can map each requirement to a user workflow.',
+    '',
+    '## Task 2 - Data model',
+    '- Deliverable: finalized schema and migration plan.',
+    '- Acceptance: relationships, lifecycle states, and audit fields are explicit.',
+    '',
+    '## Task 3 - Backend tools',
+    '- Deliverable: read/mutating commands behind the enforcement layer.',
+    '- Acceptance: idempotent mutations and tests cover expected failures.',
+    '',
+    '## Task 4 - Frontend workflow',
+    '- Deliverable: UI against live API data.',
+    '- Acceptance: empty, loading, success, and error states are usable.',
+    '',
+    '## Task 5 - Validation and handoff',
+    '- Deliverable: test results, build output, and handoff notes.',
+    '- Acceptance: team can continue without relying on chat history.',
+  ].join('\n');
+
+  // The chat prompt emits four DOC kinds: brief, tech_spec, roadmap, tasks.
+  // Map each to our internal artifact kind/title/path. Use the parsed
+  // content when available, otherwise fall back to the skeleton template
+  // (which prevents an empty/unusable export when the model hasn't
+  // drafted yet).
+  const briefContent = parsed.get('brief') ?? brief;
+  const techSpecContent = parsed.get('tech_spec') ?? parsed.get('techspec') ?? techSpec;
+  const roadmapContent = parsed.get('roadmap') ?? roadmap;
+  const tasksContent = parsed.get('tasks') ?? parsed.get('task_breakdown') ?? tasks;
+
+  const out = [
+    {
+      kind: 'product_brief',
+      title: 'Product Brief',
+      content: briefContent,
+      targetPath: 'docs/foundry/product-brief.md',
+    },
+    {
+      kind: 'tech_spec',
+      title: 'Technical Spec',
+      content: techSpecContent,
+      targetPath: 'docs/foundry/tech-spec.md',
+    },
+    {
+      kind: 'roadmap',
+      title: 'Roadmap',
+      content: roadmapContent,
+      targetPath: 'docs/foundry/roadmap.md',
+    },
+    {
+      kind: 'task_breakdown',
+      title: 'Task Breakdown',
+      content: tasksContent,
+      targetPath: 'docs/foundry/task-breakdown.md',
+    },
+  ];
+
+  // Round-2 (kiro-style) artifacts — only emit when the chat actually
+  // produced them. Steering / DoD / ADRs are optional in the sense that
+  // we don't synthesize a skeleton if the chat hasn't drafted yet (the
+  // skeleton would be project-agnostic boilerplate that misleads the
+  // team lead). When the chat catches up, the materialize re-runs and
+  // these blocks land.
+  const steeringContent = parsed.get('steering');
+  if (steeringContent) {
+    out.push({
+      kind: 'steering',
+      title: 'Team Steering',
+      content: steeringContent,
+      targetPath: 'docs/foundry/steering.md',
+    });
+  }
+  const designDecisionsContent = parsed.get('design_decisions') ?? parsed.get('decisions') ?? parsed.get('adr');
+  if (designDecisionsContent) {
+    out.push({
+      kind: 'design_decisions',
+      title: 'Design Decisions',
+      content: designDecisionsContent,
+      targetPath: 'docs/foundry/design-decisions.md',
+    });
+  }
+  const dodContent = parsed.get('definition_of_done') ?? parsed.get('done') ?? parsed.get('dod');
+  if (dodContent) {
+    out.push({
+      kind: 'definition_of_done',
+      title: 'Definition of Done',
+      content: dodContent,
+      targetPath: 'docs/foundry/definition-of-done.md',
+    });
+  }
+
+  // Only include the Prisma schema draft when the operator explicitly
+  // emitted a `===DOC: prisma_schema===` block in chat. The skeleton
+  // template was speculative noise for projects that don't even use a
+  // DB — drop it from the default set.
+  const prismaContent = parsed.get('prisma_schema') ?? parsed.get('prisma');
+  if (prismaContent) {
+    out.push({
+      kind: 'prisma_schema',
+      title: 'Prisma Schema Draft',
+      content: prismaContent,
+      targetPath: 'docs/foundry/prisma-schema.prisma',
+    });
+  }
+
+  return out;
+}
+
+function buildFoundryLeadPrompt(snapshot) {
+  const title = snapshot?.session?.title || 'Symphony AI project';
+  const artifacts = Array.isArray(snapshot?.artifacts) ? snapshot.artifacts : [];
+  const docs = artifacts
+    .filter((artifact) => typeof artifact.targetPath === 'string' && artifact.targetPath.length > 0)
+    .map((artifact) => `- ${artifact.title} → ${artifact.targetPath}`)
+    .join('\n');
+
+  return [
+    `You are the team lead for the Symphony AI project "${title}".`,
+
+    'Onboarding sequence (do this BEFORE assigning any task):',
+    '1. Read every Foundry doc listed below — these are the source of truth for goals, scope, architecture, and acceptance criteria.',
+    '2. Cross-check the auto-seeded task list against the docs. Use task_update / task_create to fix anything that\'s missing, miss-scoped, or out of order.',
+    '3. For each task, follow the lifecycle: ready → planned (via task_plan_propose + task_plan_approve) → in_progress → testing → merge_ready → done. Do NOT let a teammate skip the plan stage.',
+
+    docs
+      ? `Foundry docs (relative to the project root — read each one before planning):\n${docs}`
+      : 'No Foundry docs were exported yet — surface this to the human before starting work.',
+
+    'Delegation rules:',
+    '- Only assign tasks to teammates whose role matches the work (architect for design, developer for implementation, reviewer for code review, tester for validation).',
+    '- Each task you assign must have an approved plan and explicit acceptance criteria the assignee can verify against.',
+    '- If acceptance criteria are vague or missing in the Foundry docs, ask the human via cross_team_send before assigning.',
+
+    'Quality gates:',
+    '- testing → merge_ready requires a passing validation_run.',
+    '- merge_ready → done requires (a) a passing review_decide AND (b) any task tagged requiresHumanApproval must have task_human_approve before merging.',
+    '- If branch protection is configured on the remote (github_get_branch_protection), open a PR via github_create_pull_request instead of local-merging.',
+
+    'Stay focused on the Foundry-defined scope. If a teammate proposes work outside the docs, ask the human first.',
+  ].join('\n\n');
+}
+
+function buildFoundryTaskSpecs(snapshot) {
+  const artifacts = Array.isArray(snapshot?.artifacts) ? snapshot.artifacts : [];
+  const taskArtifact = artifacts.find((artifact) => artifact.kind === 'task_breakdown')
+    || artifacts.find((artifact) => /task/i.test(artifact.title || ''));
+  const parsed = taskArtifact ? parseTaskBreakdownArtifact(taskArtifact) : [];
+  const specs = parsed.length > 0 ? parsed : buildFallbackTaskSpecs(artifacts);
+  return specs.map((spec, index) => ({
+    taskId: `T-${String(index + 1).padStart(3, '0')}`,
+    subject: spec.subject,
+    description: spec.description,
+    assignedRole: inferAssignedRole(spec.subject, spec.description),
+    expectedDeliverables: spec.expectedDeliverables,
+    acceptanceCriteria: spec.acceptanceCriteria,
+  }));
+}
+
+function parseTaskBreakdownArtifact(artifact) {
+  const lines = String(artifact.content || '').replace(/\r\n/g, '\n').split('\n');
+  const tasks = [];
+  let current = null;
+  for (const line of lines) {
+    // Match: "## Task 3 — subject" / "## Task 3 - subject" / "## Task 3: subject"
+    // or any other H2 heading. Handles hyphen, en-dash, em-dash, colon.
+    const heading = /^##\s+Task\s+\d+\s*[-–—:]\s*(.+)$/i.exec(line.trim())
+      || /^##\s+(.+)$/i.exec(line.trim());
+    if (heading) {
+      if (current) tasks.push(current);
+      current = { subject: heading[1].trim(), lines: [] };
+      continue;
+    }
+    if (current) current.lines.push(line);
+  }
+  if (current) tasks.push(current);
+  return tasks
+    .map((task) => taskFromLines(task.subject, task.lines, artifact.targetPath))
+    .filter((task) => task.subject.length > 0);
+}
+
+function taskFromLines(subject, lines, targetPath) {
+  const bodyLines = lines.map((line) => line.trim()).filter(Boolean);
+  const expectedDeliverables = [];
+  const acceptanceCriteria = [];
+  for (const line of bodyLines) {
+    const cleaned = line.replace(/^[-*]\s*/, '');
+    const deliverable = /^Deliverable:\s*(.+)$/i.exec(cleaned);
+    const acceptance = /^Acceptance:\s*(.+)$/i.exec(cleaned);
+    if (deliverable) expectedDeliverables.push(deliverable[1].trim());
+    if (acceptance) acceptanceCriteria.push(acceptance[1].trim());
+  }
+  const sourceLine = targetPath ? `Source: ${targetPath}` : null;
+  return {
+    subject: cleanTaskSubject(subject),
+    description: [sourceLine, ...bodyLines].filter(Boolean).join('\n'),
+    expectedDeliverables,
+    acceptanceCriteria,
+  };
+}
+
+function buildFallbackTaskSpecs(artifacts) {
+  const docs = artifacts
+    .filter((artifact) => typeof artifact.targetPath === 'string' && artifact.targetPath.length > 0)
+    .map((artifact) => `- ${artifact.title}: ${artifact.targetPath}`)
+    .join('\n');
+  return [
+    {
+      subject: 'Review Foundry docs and finalize implementation plan',
+      description: [
+        'Source: Foundry generated artifacts',
+        docs,
+        'Turn the exported docs into an approved TOAD task plan before implementation starts.',
+      ].filter(Boolean).join('\n'),
+      expectedDeliverables: ['Approved implementation plan'],
+      acceptanceCriteria: ['Team can map each planned task to a Foundry artifact'],
+    },
+  ];
+}
+
+function cleanTaskSubject(subject) {
+  return String(subject || '')
+    .replace(/^Task\s+\d+\s*[-:]\s*/i, '')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function inferAssignedRole(subject, description) {
+  const text = `${subject} ${description}`.toLowerCase();
+  if (/test|validation|qa|acceptance|handoff/.test(text)) return 'tester';
+  if (/review|security|risk/.test(text)) return 'reviewer';
+  if (/requirement|brief|roadmap|spec|architecture|contract/.test(text)) return 'architect';
+  return 'developer';
+}
+
+function slugifyTeamId(title) {
+  const slug = String(title || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+  return slug || 'foundry-project';
+}
+
+async function callOpenAiFoundry({ fetchImpl, apiKey, model, session }) {
+  if (typeof fetchImpl !== 'function') {
+    throw new Error('foundry_chat_turn: fetch is not available');
+  }
+  const response = await fetchImpl('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      store: false,
+      max_output_tokens: 6000,
+      instructions: FOUNDRY_CHAT_INSTRUCTIONS,
+      input: formatFoundryTranscript(session),
+    }),
+  });
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+  if (!response.ok) {
+    const message = payload?.error?.message || payload?.message || `OpenAI request failed with status ${response.status}`;
+    throw new Error(`foundry_chat_turn: ${message}`);
+  }
+  const text = extractOpenAiText(payload);
+  if (!text) {
+    throw new Error('foundry_chat_turn: OpenAI response did not include output text');
+  }
+  return {
+    text,
+    responseId: typeof payload?.id === 'string' ? payload.id : null,
+    usage: payload?.usage && typeof payload.usage === 'object' ? payload.usage : null,
+  };
+}
+
+const FOUNDRY_CHAT_INSTRUCTIONS = [
+  'You are Symphony AI Foundry — a senior product and systems architect helping the operator scope a software project for an AI-agent team to build.',
+  '',
+  'YOUR DELIVERABLE is seven documents the team lead and every teammate will use:',
+  '  1. brief.md             — Product brief with EARS-notation requirements',
+  '  2. tech_spec.md         — Architecture, component design, sequences, error handling, testing strategy',
+  '  3. roadmap.md           — Phased milestones from MVP through hardening',
+  '  4. tasks.md             — Discrete trackable tasks with explicit dependencies',
+  '  5. steering.md          — Project-wide rules the team must follow (coding standards, tooling, never-dos)',
+  '  6. design_decisions.md  — ADR-style log of architectural choices and their tradeoffs',
+  '  7. definition_of_done.md — Global completion gates every task must satisfy before merge',
+  '',
+  'WORKFLOW — be efficient with the operator\'s time:',
+  '  • FIRST TURN: read what the operator already said. If critical context is missing, ask ONE round of 3–7 grouped clarifying questions, numbered, grouped by topic. Stop there — don\'t draft yet.',
+  '  • SECOND TURN: if essential details still missing, ask AT MOST 3 follow-ups. Otherwise begin drafting.',
+  '  • THIRD TURN ONWARD: produce/refine the docs. Stop asking new questions unless the operator introduces a brand-new requirement. Revise based on operator edits.',
+  '',
+  'REQUIREMENTS — EARS NOTATION:',
+  '  Write requirements in EARS (Easy Approach to Requirements Syntax) form. Each requirement is one sentence the team can verify against. Use one of these five templates:',
+  '    • Ubiquitous:   "THE SYSTEM SHALL <response>."',
+  '    • Event-driven: "WHEN <trigger> THE SYSTEM SHALL <response>."',
+  '    • State-driven: "WHILE <state> THE SYSTEM SHALL <response>."',
+  '    • Unwanted:     "IF <unwanted condition> THEN THE SYSTEM SHALL <response>."',
+  '    • Optional:     "WHERE <feature is included> THE SYSTEM SHALL <response>."',
+  '  Bad: "Users can log in." Good: "WHEN a user submits valid credentials THE SYSTEM SHALL issue a session token and redirect to /home." EARS makes acceptance criteria self-evident — the team lead can ship a test directly from the requirement.',
+  '',
+  'When you draft (or revise) docs, output ALL FOUR in this EXACT machine-readable format. The system parses these blocks out of your message:',
+  '',
+  '===DOC: brief===',
+  '# <Project Name> — Product Brief',
+  '## Problem',
+  '<one paragraph: who is hurting, what hurts, why now>',
+  '## Users',
+  '<numbered list of distinct user roles with their primary jobs-to-be-done>',
+  '## Scope',
+  '<bulleted: what this project DOES include for the first ship>',
+  '## Requirements (EARS)',
+  '<numbered list. Every line is a complete EARS sentence. Group by feature area with `### <area>` subheadings if there are >8 requirements.>',
+  '<example: "1. WHEN a parent creates a chore template THE SYSTEM SHALL persist it scoped to their family and make it available to that family\'s kids on next login.">',
+  '## Success Criteria',
+  '<3–6 measurable outcomes — concrete signals you can read off a dashboard or test run>',
+  '## Non-Goals',
+  '<bulleted: what is explicitly out of scope for this project>',
+  '===END DOC===',
+  '',
+  '===DOC: tech_spec===',
+  '# <Project Name> — Technical Spec',
+  '## Architecture',
+  '<one paragraph + a small ASCII or mermaid diagram showing top-level components and how requests flow. Identify the runtime (e.g. Node + Express + SQLite, Android + Room) and the deployment shape.>',
+  '## Component Design',
+  '<for each major component: name, responsibility, public interface, key data it owns. Be explicit about boundaries — what each component DOESN\'T know about the others.>',
+  '## Data Model',
+  '<entities + key fields + relationships. Note tenant/scoping fields (familyId etc.). One paragraph per entity is fine.>',
+  '## Sequence / Data Flow',
+  '<for the 2–4 most important interactions, write a numbered sequence: actor → component → component → store. Include the unhappy path (validation fails, network out, concurrent write).>',
+  '## API / Tool Surface',
+  '<concrete endpoint or RPC list with method, path, auth role, request/response shape. Reference the EARS requirement number each endpoint satisfies.>',
+  '## Error Handling',
+  '<how each class of failure surfaces: validation errors, auth failures, downstream timeouts, conflicts. Include retry/idempotency strategy where relevant.>',
+  '## Testing Strategy',
+  '<what proves correctness: unit, integration, e2e. Which EARS requirements are covered by which test type. Validation commands the team will run (lint/typecheck/test/build).>',
+  '## External Dependencies',
+  '<services, libraries, APIs the project relies on, with versions or "any" called out>',
+  '===END DOC===',
+  '',
+  '===DOC: roadmap===',
+  '# <Project Name> — Roadmap',
+  '## Phase 1 — <name> (MVP)',
+  '<bulleted milestones — what proves the core value prop works>',
+  '## Phase 2 — <name>',
+  '<expanded scope, hardening, second-tier features>',
+  '## Phase 3 — <name>',
+  '<longer-horizon work; explicit acknowledgement of what is deferred>',
+  '===END DOC===',
+  '',
+  '===DOC: tasks===',
+  '# <Project Name> — Task Breakdown',
+  '## Task 1 — <subject>',
+  '- ID: T-001',
+  '- Deliverable: <what gets shipped — files/endpoints/UI>',
+  '- Covers requirements: <EARS requirement numbers from brief.md>',
+  '- Acceptance: <how a reviewer verifies it — concrete check, not "looks right">',
+  '- Suggested role: developer | architect | reviewer | tester',
+  '- Depends on: <comma-separated task IDs, or "none">',
+  '## Task 2 — <subject>',
+  '- ID: T-002',
+  '- ...',
+  '(continue with as many tasks as the project actually needs — typically 6–14. Order them so Depends-on links form a DAG; the team lead will dispatch in dependency order.)',
+  '===END DOC===',
+  '',
+  '===DOC: steering===',
+  '# <Project Name> — Team Steering',
+  '<Steering rules every agent on the team reads at boot. These are the project-wide guardrails that override role-specific instinct. Use the must-do / never-do framing for clarity.>',
+  '## Coding Standards',
+  '<Language/runtime versions, formatter, style preferences. Be concrete: "TypeScript strict mode on", "no `any` without inline justification", "2-space indent", etc.>',
+  '## Tooling Required',
+  '<Commands the team MUST run before claiming work done — e.g. `npm run typecheck`, `npm test`, `npm run lint`. Reference the validation_run kinds the lead has configured.>',
+  '## Architecture Constraints',
+  '<Patterns that are non-negotiable for this project. e.g. "all DB writes go through the repository layer, never directly from a route handler"; "no shared state between request handlers".>',
+  '## Never Do',
+  '<Forbidden actions, listed explicitly. e.g. "never commit `.env` files", "never disable a failing test instead of fixing it", "never silently catch and swallow exceptions".>',
+  '## Communication',
+  '<How agents report back to the lead. e.g. "always include the EARS requirement number when reporting task completion"; "if blocked >5 minutes, send a status message before continuing".>',
+  '===END DOC===',
+  '',
+  '===DOC: design_decisions===',
+  '# <Project Name> — Design Decisions',
+  '<ADR-style log of architectural choices made during this brainstorming session. Each entry captures WHAT was chosen, WHY, and what alternatives were considered. Future agents reading this should be able to understand a decision without re-running the conversation.>',
+  '## ADR-001 — <decision title>',
+  '- **Decision**: <one sentence: what was chosen>',
+  '- **Rationale**: <why this option won>',
+  '- **Alternatives considered**: <what else was on the table, and why each was rejected>',
+  '- **Consequences**: <follow-on commitments this decision creates>',
+  '## ADR-002 — <decision title>',
+  '- ...',
+  '(Add one ADR per non-trivial architectural choice — runtime/framework selection, data model shape, auth strategy, deployment target, etc. Skip trivia like "use lowercase filenames".)',
+  '===END DOC===',
+  '',
+  '===DOC: definition_of_done===',
+  '# <Project Name> — Definition of Done',
+  '<Global gates every task must satisfy before being marked done. The reviewer / lead checks against this list at merge_ready. Concrete and measurable — no "looks good".>',
+  '## Code',
+  '- [ ] <e.g. typecheck passes (`npm run typecheck`)>',
+  '- [ ] <lint passes (`npm run lint`)>',
+  '- [ ] <unit tests for new behavior; existing tests still green (`npm test`)>',
+  '## Documentation',
+  '- [ ] <e.g. README updated when public API changes>',
+  '- [ ] <ADR added when an architectural choice was made>',
+  '## Verification',
+  '- [ ] <e.g. EARS requirements covered by the task have observable assertions>',
+  '- [ ] <manual smoke check noted in the task comments>',
+  '## Hygiene',
+  '- [ ] <e.g. no commented-out blocks of dead code; no console.log left in shipping paths>',
+  '(Customize for the actual project — drop sections that don\'t apply, add ones that do. Aim for 6–12 checkboxes total. The team lead enforces these.)',
+  '===END DOC===',
+  '',
+  'RULES:',
+  '  • Always emit ALL SEVEN docs in one message once you start drafting. The system extracts the latest version of each block from your most recent message that contained it.',
+  '  • Each doc must be substantive — actual content scoped to this project, not boilerplate.',
+  '  • Every requirement in brief.md MUST be EARS-formed. If you catch yourself writing "users can…" or "the app supports…" — rewrite as WHEN/WHILE/IF/WHERE + SHALL.',
+  '  • Every task in tasks.md MUST list which EARS requirement it covers, and an explicit Depends-on (or "none"). Tasks without these get rejected by the team lead.',
+  '  • steering.md must contain at least one explicit "Never Do" entry — it\'s the most-violated category and forcing it makes drift cheaper to detect.',
+  '  • design_decisions.md should have at least 3 ADRs covering runtime, data model, and auth (or equivalent fundamentals for the project shape).',
+  '  • definition_of_done.md must be concrete enough that a reviewer can mechanically check each box.',
+  '  • If the operator asks for changes, output the FULL revised doc(s), not just diffs.',
+  '  • You may include short conversational text (≤6 lines) outside the ===DOC=== blocks (e.g. "Here\'s a draft. Tell me what to refine."). The operator sees both.',
+  '  • Don\'t write implementation code in the docs — that\'s the team\'s job. The tasks doc names what to build, not how.',
+  '  • Stay concise inside each section. Specs that are right-sized get read; specs that ramble get skimmed.',
+].join('\n');
+
+function formatFoundryTranscript(session) {
+  const title = session?.session?.title || 'Untitled Foundry session';
+  const messages = Array.isArray(session?.messages) ? session.messages : [];
+  const lines = [`Foundry session: ${title}`, 'Transcript:'];
+  for (const message of messages.slice(-24)) {
+    const role = typeof message.role === 'string' ? message.role : 'user';
+    const text = typeof message.text === 'string' ? message.text : '';
+    lines.push(`${role}: ${text}`);
+  }
+  return lines.join('\n\n');
+}
+
+function extractOpenAiText(payload) {
+  if (typeof payload?.output_text === 'string' && payload.output_text.trim().length > 0) {
+    return payload.output_text.trim();
+  }
+  const chunks = [];
+  if (Array.isArray(payload?.output)) {
+    for (const item of payload.output) {
+      if (!Array.isArray(item?.content)) continue;
+      for (const part of item.content) {
+        if (typeof part?.text === 'string') chunks.push(part.text);
+        if (typeof part?.content === 'string') chunks.push(part.content);
+      }
+    }
+  }
+  const text = chunks.join('\n').trim();
+  return text.length > 0 ? text : null;
+}
+
+function normalizeOpenAiModel(value) {
+  if (/^(gpt|o)\w*[-.\w]*$/i.test(value)) return value;
+  return 'gpt-5.2';
 }
 
 function truncate(value, max) {

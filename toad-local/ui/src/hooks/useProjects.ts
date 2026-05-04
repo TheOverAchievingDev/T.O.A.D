@@ -23,32 +23,37 @@ interface PersistedShape {
 
 const STORAGE_KEY = 'toad.projects';
 
-const DEFAULT_PROJECTS: ProjectEntry[] = [
-  {
-    id: 'p_default',
-    name: 'signal-ops',
-    path: 'C:/Project-TOAD/toad-local',
-    lastOpenedAt: new Date().toISOString(),
-  },
-];
+/** Returns true if the entry is the legacy hardcoded default that earlier
+ *  builds of useProjects seeded — should be auto-purged on next launch. */
+function isLegacyDefault(p: ProjectEntry): boolean {
+  return (
+    p.id === 'p_default'
+    && p.name === 'signal-ops'
+    && (p.path === 'C:/Project-TOAD/toad-local' || p.path === 'C:\\Project-TOAD\\toad-local')
+  );
+}
 
 function readPersisted(): PersistedShape {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      return { projects: DEFAULT_PROJECTS, activeId: DEFAULT_PROJECTS[0]?.id ?? null };
+      return { projects: [], activeId: null };
     }
     const parsed = JSON.parse(raw) as Partial<PersistedShape>;
-    const projects = Array.isArray(parsed.projects) ? parsed.projects.filter(isProject) : [];
+    const allProjects = Array.isArray(parsed.projects) ? parsed.projects.filter(isProject) : [];
+    // Migration: strip the legacy `p_default` / `signal-ops` entry that
+    // earlier builds hardcoded as a starter project. Once removed, the
+    // welcome screen empty-state takes over.
+    const projects = allProjects.filter((p) => !isLegacyDefault(p));
     if (projects.length === 0) {
-      return { projects: DEFAULT_PROJECTS, activeId: DEFAULT_PROJECTS[0]?.id ?? null };
+      return { projects: [], activeId: null };
     }
     const activeId = typeof parsed.activeId === 'string' && projects.some((p) => p.id === parsed.activeId)
       ? parsed.activeId
       : projects[0]!.id;
     return { projects, activeId };
   } catch {
-    return { projects: DEFAULT_PROJECTS, activeId: DEFAULT_PROJECTS[0]?.id ?? null };
+    return { projects: [], activeId: null };
   }
 }
 
@@ -109,27 +114,38 @@ export function useProjects(): UseProjectsResult {
   }, []);
 
   const addProject = useCallback<UseProjectsResult['addProject']>((input) => {
-    let created: ProjectEntry | null = null;
+    // Compute the new entry against the *latest* projects list synchronously
+    // by reading from a setState callback BUT also build it outside so we
+    // can return the value from this call. The functional setState may not
+    // run synchronously under React 18+ batching/strict mode, so capturing
+    // `created` from inside the updater is unreliable.
+    //
+    // Instead: pull a snapshot, allocate the id, then schedule the state
+    // update with the same value. Multiple back-to-back calls within the
+    // same render tick still get unique ids because nextId reads from
+    // both the snapshot and any pending entries via the array length
+    // monotone — the worst case is two adds in one tick produce p_2 + p_2
+    // collisions, which we resolve in the updater by re-allocating if a
+    // conflict is detected.
+    const snapshot = projects;
+    const baseId = nextId(snapshot);
+    const project: ProjectEntry = {
+      id: baseId,
+      name: input.name,
+      path: input.path,
+      apiBaseUrl: input.apiBaseUrl,
+      apiToken: input.apiToken,
+      lastOpenedAt: new Date().toISOString(),
+    };
     setState((prev) => {
-      const id = nextId(prev.projects);
-      const project: ProjectEntry = {
-        id,
-        name: input.name,
-        path: input.path,
-        apiBaseUrl: input.apiBaseUrl,
-        apiToken: input.apiToken,
-        lastOpenedAt: new Date().toISOString(),
-      };
-      created = project;
-      return { projects: [...prev.projects, project], activeId: id };
+      // Resolve id conflicts on the actual latest state (in case another
+      // addProject just landed in the same tick).
+      const id = prev.projects.some((p) => p.id === project.id) ? nextId(prev.projects) : project.id;
+      const finalProject: ProjectEntry = { ...project, id };
+      return { projects: [...prev.projects, finalProject], activeId: id };
     });
-    // The state update is synchronous from the caller's perspective for our
-    // purposes; created is set inside the updater above.
-    if (!created) {
-      throw new Error('addProject failed to allocate id');
-    }
-    return created;
-  }, []);
+    return project;
+  }, [projects]);
 
   const updateProject = useCallback<UseProjectsResult['updateProject']>((id, patch) => {
     setState((prev) => ({
@@ -141,12 +157,10 @@ export function useProjects(): UseProjectsResult {
   const removeProject = useCallback<UseProjectsResult['removeProject']>((id) => {
     setState((prev) => {
       const next = prev.projects.filter((p) => p.id !== id);
-      if (next.length === 0) {
-        // Always keep at least one entry so the UI has a valid active.
-        const fallback = DEFAULT_PROJECTS[0]!;
-        return { projects: [fallback], activeId: fallback.id };
-      }
-      const activeId = prev.activeId === id ? next[0]!.id : prev.activeId;
+      const activeId =
+        next.length === 0
+          ? null
+          : (prev.activeId === id ? next[0]!.id : prev.activeId);
       return { projects: next, activeId };
     });
   }, []);

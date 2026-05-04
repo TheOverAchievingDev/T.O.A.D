@@ -25,21 +25,6 @@ interface DecidedApproval extends ApprovalItem {
   decisionReason?: string;
 }
 
-const SEED_APPROVALS: ApprovalItem[] = [
-  { id: 'ap_1', agentId: 'tom', tool: 'bash', input: 'rm -rf node_modules && pnpm install',
-    requestedAgo: 'just now', taskId: 'T-481', risk: 'high',
-    reason: 'Destructive: removes node_modules. May take 2+ minutes to reinstall.', scope: 'tool' },
-  { id: 'ap_2', agentId: 'rex', tool: 'fetch', input: 'https://deepgram.com/docs/streaming',
-    requestedAgo: '1m ago', taskId: 'T-481', risk: 'low',
-    reason: 'Network read. Domain not in allowlist.', scope: 'tool' },
-  { id: 'ap_3', agentId: 'tom', tool: 'edit', input: 'src/billing/proration.ts',
-    requestedAgo: '2m ago', taskId: 'T-481', risk: 'med',
-    reason: 'Outside expected files (scope drift on T-481 plan).', scope: 'tool' },
-  { id: 'ap_4', agentId: 'alice', tool: 'bash', input: 'git push origin feature/transcribe-v2 --force-with-lease',
-    requestedAgo: '5m ago', taskId: 'T-481', risk: 'med',
-    reason: 'Force push to feature branch (with-lease).', scope: 'tool' },
-];
-
 const RISK_META: Record<ApprovalRisk, { color: string; label: string }> = {
   low: { color: 'var(--fg-muted)', label: 'low' },
   med: { color: 'var(--warn)', label: 'medium' },
@@ -159,14 +144,17 @@ interface ApprovalsDrawerProps {
   onClose: () => void;
   approvals?: ApprovalItem[];
   actor?: Actor;
+  /** Called after a decision lands so the parent can refresh its task data
+   *  and the drawer's `approvals` prop reflects the new humanApproved state. */
+  onDecided?: () => void;
 }
 
 const DEFAULT_ACTOR: Actor = { teamId: 'default', agentId: 'ui-client', agentName: 'ui', role: 'human' };
 type Tab = 'pending' | 'history';
 
-export function ApprovalsDrawer({ team, onClose, approvals, actor = DEFAULT_ACTOR }: ApprovalsDrawerProps) {
+export function ApprovalsDrawer({ team, onClose, approvals, actor = DEFAULT_ACTOR, onDecided }: ApprovalsDrawerProps) {
   const [tab, setTab] = useState<Tab>('pending');
-  const [items, setItems] = useState<ApprovalItem[]>(approvals ?? SEED_APPROVALS);
+  const [items, setItems] = useState<ApprovalItem[]>(approvals ?? []);
   const [history, setHistory] = useState<DecidedApproval[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -211,6 +199,11 @@ export function ApprovalsDrawer({ team, onClose, approvals, actor = DEFAULT_ACTO
       }
       setItems((prev) => prev.filter((x) => x.id !== id));
       setHistory((prev) => [{ ...target, decision, decisionReason: reason }, ...prev]);
+      // Tell the parent to refetch tasks so its `approvals` prop reflects
+      // the recorded decision. Without this the drawer's reset-on-prop-change
+      // useEffect re-introduces the row from the still-stale `approvals`
+      // array, making the approve button look like a no-op.
+      onDecided?.();
     } catch (err) {
       const message = err instanceof ToadApiError ? err.message
         : err instanceof Error ? err.message

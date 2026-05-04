@@ -69,8 +69,11 @@ test('local MCP handler calls tools through LocalToadRuntime', async () => {
     },
   });
 
-  assert.equal(listResponse.result.structuredContent.length, 1);
-  assert.equal(listResponse.result.structuredContent[0].taskId, 'task-1');
+  // task_list now returns { tasks: [...] } so MCP clients accept the
+  // structuredContent as an object (Claude Code's MCP client treats raw
+  // arrays as schema mismatches).
+  assert.equal(listResponse.result.structuredContent.tasks.length, 1);
+  assert.equal(listResponse.result.structuredContent.tasks[0].taskId, 'task-1');
 });
 
 test('local MCP handler returns JSON-RPC errors for unknown methods', async () => {

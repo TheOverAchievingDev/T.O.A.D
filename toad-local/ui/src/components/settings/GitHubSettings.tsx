@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../Icon';
 import { callTool, ToadApiError, type Actor } from '@/api/client';
 import { SettingsSectionHeader, SettingsCard } from './SettingsLayout';
+import { openUrlInBrowser } from '@/integrations/tauri';
 
 interface GithubUser {
   login: string;
@@ -18,6 +19,7 @@ interface GithubStatus {
   scopes?: string[];
   connectedAt?: string | null;
   clientIdConfigured?: boolean;
+  clientIdSource?: 'env' | 'settings' | 'built-in' | null;
 }
 
 interface DeviceStartResult {
@@ -36,10 +38,12 @@ export function GitHubSettings() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [mode, setMode] = useState<'idle' | 'device' | 'pat'>('idle');
+  const [mode, setMode] = useState<'idle' | 'device'>('idle');
   const [device, setDevice] = useState<DeviceStartResult | null>(null);
   const [pollState, setPollState] = useState<'idle' | 'polling' | 'pending' | 'denied' | 'expired'>('idle');
   const [pat, setPat] = useState('');
+  const [clientIdDraft, setClientIdDraft] = useState('');
+  const [savingClientId, setSavingClientId] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const expiresAtRef = useRef<number | null>(null);
@@ -82,6 +86,14 @@ export function GitHubSettings() {
       expiresAtRef.current = Date.now() + result.expiresIn * 1000;
       setPollState('polling');
       schedulePoll(result.deviceCode, result.interval * 1000);
+      // Auto-open the browser straight to GitHub's authorize page with the
+      // user code pre-filled. The user just clicks "Authorize" — no manual
+      // code typing. This is as close to the VS Code one-click experience
+      // as Device Flow allows.
+      const target = result.verificationUriComplete || result.verificationUri;
+      if (target) {
+        try { await openUrlInBrowser(target); } catch { /* ignore — user can click the fallback link */ }
+      }
     } catch (err) {
       const message = err instanceof ToadApiError ? err.message : (err instanceof Error ? err.message : 'Failed to start device flow');
       setError(message);
@@ -189,6 +201,36 @@ export function GitHubSettings() {
     setMode('idle');
   }
 
+  /** Save a pasted OAuth client_id to global settings (merges with the
+   *  existing `github` section so we don't wipe out a stored token). */
+  async function saveClientId() {
+    const value = clientIdDraft.trim();
+    if (!value) return;
+    setSavingClientId(true);
+    setError(null);
+    try {
+      // Read-modify-write: settings_set replaces the whole section.
+      const existing = await callTool<{ value: Record<string, unknown> }>({
+        actor: DEFAULT_ACTOR,
+        method: 'settings_get',
+        args: { scope: 'global', section: 'github' },
+      });
+      const merged = { ...(existing?.value || {}), clientId: value };
+      await callTool({
+        actor: DEFAULT_ACTOR,
+        method: 'settings_set',
+        args: { scope: 'global', section: 'github', value: merged },
+        idempotencyKey: `gh-cid-${Date.now()}`,
+      });
+      setClientIdDraft('');
+      await loadStatus();
+    } catch (err) {
+      setError(err instanceof ToadApiError ? err.message : (err instanceof Error ? err.message : 'Failed to save client_id'));
+    } finally {
+      setSavingClientId(false);
+    }
+  }
+
   return (
     <div>
       <SettingsSectionHeader
@@ -268,126 +310,177 @@ export function GitHubSettings() {
       )}
 
       {!loading && status?.status !== 'connected' && mode === 'idle' && (
-        <SettingsCard
-          title="Connect a GitHub account"
-          description="Pick a flow. Device Flow opens GitHub in a browser tab and asks you to enter a short user code — no client secret distribution required. PAT lets you paste a Personal Access Token directly (good for fully-offline setups)."
-        >
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={startDevice}
-              disabled={submitting || !status?.clientIdConfigured}
-              title={!status?.clientIdConfigured ? 'Set TOAD_GITHUB_CLIENT_ID env var or settings.github.clientId first' : undefined}
-            >
-              <Icon name="github" size={12} /> Sign in with GitHub
-            </button>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => setMode('pat')}
-              disabled={submitting}
-            >
-              Use a Personal Access Token instead
-            </button>
-          </div>
-          {!status?.clientIdConfigured && (
-            <div className="field-hint" style={{ marginTop: 8 }}>
-              <Icon name="info" size={11} /> Device Flow needs an OAuth client_id. Register a TOAD GitHub App and either set <span className="mono">TOAD_GITHUB_CLIENT_ID</span> or save it under <span className="mono">settings.github.clientId</span>. PAT works without a client_id.
+        <>
+          <SettingsCard
+            title="Connect with a Personal Access Token"
+            description="Easiest path: paste a fine-grained token from GitHub. No app registration, no env vars."
+          >
+            <div className="field" style={{ margin: 0 }}>
+              <label>Token</label>
+              <input
+                type="password"
+                className="field-input mono"
+                value={pat}
+                onChange={(e) => setPat(e.target.value)}
+                placeholder="github_pat_… or ghp_…"
+                style={{ fontSize: 12 }}
+                disabled={submitting}
+              />
+              <div className="field-hint" style={{ marginTop: 6 }}>
+                <Icon name="info" size={11} /> Create one at{' '}
+                <a
+                  href="https://github.com/settings/tokens?type=beta"
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: 'var(--accent)' }}
+                >
+                  github.com/settings/tokens
+                </a>
+                {' '}with <span className="mono">repo</span> + <span className="mono">read:user</span> scopes. The token stays
+                on this machine in <span className="mono">settings.json</span>.
+              </div>
             </div>
-          )}
-        </SettingsCard>
+            <div style={{ marginTop: 10 }}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={submitPat}
+                disabled={submitting || !pat.trim()}
+              >
+                <Icon name="github" size={12} /> {submitting ? 'Verifying…' : 'Connect GitHub'}
+              </button>
+            </div>
+          </SettingsCard>
+
+          <SettingsCard
+            title="Or sign in with GitHub OAuth"
+            description={
+              status?.clientIdSource === 'built-in'
+                ? 'One-click sign-in via this build\'s registered TOAD OAuth App. Browser opens, you click Authorize, you\'re in.'
+                : 'Opens GitHub in your browser with the auth code pre-filled. Requires a one-time OAuth App registration (~60 seconds on github.com — no secret needed).'
+            }
+          >
+            {!status?.clientIdConfigured && (
+              <div className="field" style={{ margin: 0 }}>
+                <label>OAuth client_id</label>
+                <input
+                  type="text"
+                  className="field-input mono"
+                  value={clientIdDraft}
+                  onChange={(e) => setClientIdDraft(e.target.value)}
+                  placeholder="Iv1.1234567890abcdef"
+                  style={{ fontSize: 12 }}
+                  disabled={savingClientId}
+                />
+                <div className="field-hint" style={{ marginTop: 6 }}>
+                  <Icon name="info" size={11} /> Register a new app at{' '}
+                  <a
+                    href="https://github.com/settings/applications/new"
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ color: 'var(--accent)' }}
+                  >
+                    github.com/settings/applications/new
+                  </a>
+                  : Application name "TOAD", Homepage URL <span className="mono">http://localhost</span>, leave callback URL
+                  blank. Tick "Enable Device Flow" then save the Client ID here.
+                </div>
+                <div style={{ marginTop: 8 }}>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={saveClientId}
+                    disabled={savingClientId || !clientIdDraft.trim()}
+                  >
+                    {savingClientId ? 'Saving…' : 'Save client_id'}
+                  </button>
+                </div>
+              </div>
+            )}
+            {status?.clientIdConfigured && (
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={startDevice}
+                disabled={submitting}
+              >
+                <Icon name="github" size={12} /> Sign in with GitHub
+              </button>
+            )}
+          </SettingsCard>
+        </>
       )}
 
       {!loading && mode === 'device' && device && (
         <SettingsCard
-          title="Sign in with GitHub"
-          description="Open GitHub in your browser and enter the user code below. We'll keep checking until you authorize."
+          title="Authorizing in your browser…"
+          description="GitHub should have opened in your default browser with the code pre-filled. Click Authorize there — TOAD will pick it up automatically."
         >
           <div
             style={{
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 16,
-              padding: '14px 16px',
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid var(--border-soft, rgba(255,255,255,0.08))',
+              gap: 12,
+              padding: '12px 14px',
+              background: 'oklch(0.30 0.08 240 / 0.20)',
+              border: '1px solid oklch(0.55 0.15 240 / 0.30)',
               borderRadius: 8,
               marginBottom: 12,
             }}
           >
-            <div>
-              <div className="section-label" style={{ fontSize: 10 }}>User code</div>
-              <div className="mono" style={{ fontSize: 22, letterSpacing: '0.12em', fontWeight: 600 }}>
-                {device.userCode}
-              </div>
+            <div
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: '50%',
+                background:
+                  pollState === 'denied' || pollState === 'expired'
+                    ? 'oklch(0.65 0.20 25)'
+                    : 'oklch(0.72 0.15 145)',
+                flexShrink: 0,
+              }}
+            />
+            <div style={{ flex: 1, fontSize: 12.5 }}>
+              {pollState === 'polling' && 'Waiting for you to authorize on GitHub…'}
+              {pollState === 'pending' && 'Still waiting on GitHub…'}
+              {pollState === 'denied' && 'Authorization denied. You can try again or use a PAT instead.'}
+              {pollState === 'expired' && 'Code expired before you authorized. Restart the flow.'}
             </div>
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() => navigator.clipboard?.writeText(device.userCode)}
-            >
-              Copy
-            </button>
           </div>
 
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+          <div className="field-hint" style={{ fontSize: 11, marginBottom: 10 }}>
+            <Icon name="info" size={11} /> Browser didn't open? Click below — the code <span className="mono">{device.userCode}</span> is the same one in the URL.
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <a
-              className="btn btn-primary btn-sm"
+              className="btn btn-sm"
               href={device.verificationUriComplete || device.verificationUri}
               target="_blank"
               rel="noreferrer noopener"
+              onClick={(e) => {
+                // Use Tauri's shell.open in desktop, browser fallback otherwise.
+                e.preventDefault();
+                void openUrlInBrowser(device.verificationUriComplete || device.verificationUri);
+              }}
             >
-              <Icon name="github" size={11} /> Open GitHub
+              <Icon name="github" size={11} /> Open GitHub manually
             </a>
-            <button type="button" className="btn btn-sm btn-ghost" onClick={cancelDevice}>
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost"
+              onClick={() => navigator.clipboard?.writeText(device.userCode)}
+              title="Copy the user code to clipboard"
+            >
+              Copy code
+            </button>
+            <button type="button" className="btn btn-sm btn-ghost" onClick={cancelDevice} style={{ marginLeft: 'auto' }}>
               Cancel
             </button>
-            <span className="dim" style={{ fontSize: 11.5, marginLeft: 'auto' }}>
-              {pollState === 'polling' && 'Waiting for you to authorize…'}
-              {pollState === 'pending' && 'Still waiting…'}
-              {pollState === 'denied' && 'Access denied. Try again or use a PAT.'}
-              {pollState === 'expired' && 'Code expired. Restart the flow.'}
-            </span>
           </div>
         </SettingsCard>
       )}
 
-      {!loading && mode === 'pat' && (
-        <SettingsCard
-          title="Personal Access Token"
-          description="Paste a fine-grained or classic PAT with at least the repo + read:user scopes. We verify it by calling /user before saving."
-        >
-          <div className="field">
-            <label>Token</label>
-            <input
-              type="password"
-              className="field-input mono"
-              value={pat}
-              onChange={(e) => setPat(e.target.value)}
-              placeholder="ghp_…"
-              autoFocus
-            />
-            <div className="field-hint">
-              The token is stored in <span className="mono">{'<settings.json>'}</span> on this machine. Disconnect anytime to clear it.
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button type="button" className="btn btn-ghost" onClick={() => { setMode('idle'); setPat(''); }}>
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={submitPat}
-              disabled={submitting || !pat.trim()}
-            >
-              {submitting ? 'Verifying…' : 'Verify & save'}
-            </button>
-          </div>
-        </SettingsCard>
-      )}
     </div>
   );
 }

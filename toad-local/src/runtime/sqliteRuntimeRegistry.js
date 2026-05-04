@@ -169,6 +169,59 @@ export class SqliteRuntimeRegistry {
     return directory;
   }
 
+  /**
+   * Boot-time sweep: mark every runtime row whose status is still in a
+   * "live" state (running / starting / live) as stopped. This is the
+   * recovery path for ungraceful sidecar shutdowns where child claude
+   * processes died but the SQL row never got the markRuntimeStopped()
+   * write, leaving zombie rows that the UI surfaces as "running" on the
+   * next boot. Already-terminal statuses (stopped, error, exited) are
+   * preserved — overwriting them with 'stopped' would lose information.
+   *
+   * Returns the PIDs of any reconciled rows so the caller can kill the
+   * orphaned child processes on Windows (where children don't die with
+   * the parent sidecar by default). Without that kill, those claude.exe
+   * processes outlive the sidecar that spawned them but we can't talk
+   * to them — their stdin pipe handles died with the old sidecar.
+   *
+   * Idempotent: returning reconciled=0 means nothing to do.
+   * Returns: { reconciled: number, orphanedPids: number[] }
+   */
+  reconcileOrphans() {
+    const stoppedAt = new Date().toISOString();
+    const updatedAt = stoppedAt;
+    // Collect PIDs of soon-to-be-reconciled rows BEFORE updating, since
+    // the PID column doesn't get cleared (so we could read it after, but
+    // doing it before is cleaner and avoids a re-query).
+    const aboutToReconcile = this.db
+      .prepare("SELECT pid FROM runtime_instances WHERE status IN ('running', 'starting', 'live') AND pid IS NOT NULL")
+      .all();
+    const orphanedPids = aboutToReconcile
+      .map((row) => row.pid)
+      .filter((pid) => typeof pid === 'number' && Number.isFinite(pid) && pid > 0);
+
+    const result = this.db.prepare(
+      `
+        UPDATE runtime_instances
+        SET status = 'stopped', stopped_at = ?, updated_at = ?
+        WHERE status IN ('running', 'starting', 'live')
+      `
+    ).run(stoppedAt, updatedAt);
+    // Wipe delivery modes for any rows we just marked stopped — adapter is
+    // dead, so the cached binding is bogus and would mislead callers.
+    if (result.changes > 0) {
+      this.db.prepare(
+        `
+          DELETE FROM agent_delivery_modes
+          WHERE runtime_id IN (
+            SELECT runtime_id FROM runtime_instances WHERE status = 'stopped' AND stopped_at = ?
+          )
+        `
+      ).run(stoppedAt);
+    }
+    return { reconciled: result.changes, orphanedPids };
+  }
+
   markRuntimeStopped({
     runtimeId,
     status = 'stopped',

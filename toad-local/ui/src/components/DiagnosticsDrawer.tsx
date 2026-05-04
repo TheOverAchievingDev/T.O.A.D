@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Icon } from '@/components/Icon';
+import { callTool, ToadApiError, type Actor } from '@/api/client';
 
 type DiagnosticStatus = 'pass' | 'warn' | 'fail';
-type DiagnosticGroup = 'Providers' | 'Runtime' | 'Storage' | 'Network' | 'Filesystem';
+type DiagnosticGroup = 'Providers' | 'Runtime' | 'Storage' | 'Other';
 
 interface DiagnosticCheck {
   id: string;
@@ -13,18 +14,28 @@ interface DiagnosticCheck {
   fix?: string;
 }
 
-interface DiagnosticRun {
-  ranAt: string;
-  duration: string;
+interface DiagnosticSummary {
   pass: number;
   warn: number;
   fail: number;
-  db: {
-    path: string;
-    size: string;
-    tables: Record<string, number>;
-  };
-  checks: DiagnosticCheck[];
+}
+
+interface BackendCheck {
+  id: string;
+  label?: string;
+  status?: 'pass' | 'warn' | 'warning' | 'fail';
+  hint?: string;
+  suggestedFix?: string;
+  error?: string;
+  // Plus arbitrary details — we serialize whatever's left as evidence text.
+  [key: string]: unknown;
+}
+
+interface BackendSummary {
+  pass?: number;
+  warn?: number;
+  warning?: number;
+  fail?: number;
 }
 
 interface DiagRowProps {
@@ -37,131 +48,55 @@ export interface DiagnosticsDrawerProps {
   onClose: () => void;
 }
 
-const DIAG_RUN: DiagnosticRun = {
-  ranAt: '14s ago',
-  duration: '2.4s',
-  pass: 14,
-  warn: 2,
-  fail: 1,
-  db: {
-    path: '~/.toad/db.sqlite',
-    size: '14.2 MB',
-    tables: {
-      teams: 3,
-      agents: 8,
-      tasks: 412,
-      validations: 184,
-      runtime_events: 24_820,
-      comments: 96,
-    },
-  },
-  checks: [
-    {
-      id: 'claude_cli',
-      group: 'Providers',
-      label: 'Claude CLI installed and authenticated',
-      status: 'pass',
-      evidence: '/usr/local/bin/claude - v0.42.0 - auth: anthropic.com',
-    },
-    {
-      id: 'codex_cli',
-      group: 'Providers',
-      label: 'OpenAI Codex CLI installed',
-      status: 'pass',
-      evidence: '~/.local/bin/codex - v5.4.2',
-    },
-    {
-      id: 'opencode',
-      group: 'Providers',
-      label: 'OpenCode auth',
-      status: 'warn',
-      evidence: 'Token expired 2 days ago',
-      fix: 'opencode auth login',
-    },
-    {
-      id: 'gemini_cli',
-      group: 'Providers',
-      label: 'Gemini CLI',
-      status: 'warn',
-      evidence: 'Not installed',
-      fix: 'npm i -g @google/gemini-cli',
-    },
-    {
-      id: 'tmux',
-      group: 'Runtime',
-      label: 'tmux installed (>=3.4)',
-      status: 'fail',
-      evidence: 'tmux: command not found',
-      fix: 'apt install tmux',
-    },
-    { id: 'git', group: 'Runtime', label: 'Git supports worktrees', status: 'pass', evidence: 'git version 2.45.0' },
-    { id: 'node', group: 'Runtime', label: 'Node.js (>=20)', status: 'pass', evidence: 'v22.4.0' },
-    { id: 'pnpm', group: 'Runtime', label: 'pnpm installed', status: 'pass', evidence: 'v9.6.1' },
-    {
-      id: 'db',
-      group: 'Storage',
-      label: 'TOAD database reachable',
-      status: 'pass',
-      evidence: '~/.toad/db.sqlite - 14.2 MB - 6 tables',
-    },
-    {
-      id: 'db_writable',
-      group: 'Storage',
-      label: 'Database writable',
-      status: 'pass',
-      evidence: 'fsync OK - last write 4s ago',
-    },
-    {
-      id: 'retention',
-      group: 'Storage',
-      label: 'Retention policy active',
-      status: 'pass',
-      evidence: 'Pruning events older than 14 days',
-    },
-    {
-      id: 'sse',
-      group: 'Network',
-      label: 'Event stream healthy',
-      status: 'pass',
-      evidence: '9 listeners - 0 backpressure / 5m',
-    },
-    {
-      id: 'api_token',
-      group: 'Network',
-      label: 'API token configured',
-      status: 'pass',
-      evidence: 'tok_...a14f - created 3d ago',
-    },
-    {
-      id: 'approvals',
-      group: 'Network',
-      label: 'Approval handler responsive',
-      status: 'pass',
-      evidence: 'median 1.4s - p95 4.8s',
-    },
-    {
-      id: 'perms',
-      group: 'Filesystem',
-      label: 'Project root writable',
-      status: 'pass',
-      evidence: '~/code/ide-test - 0755',
-    },
-    {
-      id: 'git_clean',
-      group: 'Filesystem',
-      label: 'Working tree clean',
-      status: 'pass',
-      evidence: 'no uncommitted changes outside worktrees',
-    },
-    {
-      id: 'disk',
-      group: 'Filesystem',
-      label: 'Disk space available',
-      status: 'pass',
-      evidence: '184 GB free of 512 GB',
-    },
-  ],
-};
+const ACTOR: Actor = { teamId: 'default', agentId: 'ui-client', agentName: 'ui', role: 'human' };
+
+/** Map a backend check-id prefix to a UI group bucket. The backend doesn't
+ *  emit a group field, so we infer from the id. */
+function groupForCheck(id: string): DiagnosticGroup {
+  if (id.startsWith('provider_')) return 'Providers';
+  if (id.startsWith('db_') || id.includes('database')) return 'Storage';
+  if (
+    id.startsWith('state_machine_')
+    || id.startsWith('role_authority_')
+    || id.includes('runtime')
+    || id.includes('validation_configured')
+    || id.includes('unknown_role')
+  ) return 'Runtime';
+  return 'Other';
+}
+
+/** Backend uses `'warning'` (singular). Normalize to the UI's `'warn'`. */
+function normalizeStatus(s: BackendCheck['status']): DiagnosticStatus {
+  if (s === 'pass') return 'pass';
+  if (s === 'fail') return 'fail';
+  return 'warn';
+}
+
+/** Pull human-readable evidence from any non-meta fields the backend
+ *  attached to the check (e.g. `from`, `to`, `path`, `runtimesChecked`,
+ *  `stuck`, `version`). Hint is broken out separately as the suggested
+ *  fix when present. */
+function evidenceFromBackend(check: BackendCheck): string {
+  const skipKeys = new Set(['id', 'label', 'status', 'hint', 'suggestedFix', 'error']);
+  const detail: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(check)) {
+    if (skipKeys.has(key)) continue;
+    detail[key] = value;
+  }
+  if (check.error) {
+    return String(check.error);
+  }
+  if (Object.keys(detail).length === 0) {
+    return check.hint ?? '';
+  }
+  return JSON.stringify(detail, null, 2);
+}
+
+function fixFromBackend(check: BackendCheck): string | undefined {
+  if (typeof check.suggestedFix === 'string' && check.suggestedFix.length > 0) return check.suggestedFix;
+  if (typeof check.hint === 'string' && check.hint.length > 0) return check.hint;
+  return undefined;
+}
 
 function DiagRow({ check, expanded, onToggle }: DiagRowProps) {
   return (
@@ -177,7 +112,7 @@ function DiagRow({ check, expanded, onToggle }: DiagRowProps) {
       </button>
       {expanded && (
         <div className="diag-detail">
-          <div className="diag-evidence mono">{check.evidence}</div>
+          {check.evidence && <div className="diag-evidence mono" style={{ whiteSpace: 'pre-wrap' }}>{check.evidence}</div>}
           {check.fix && (
             <div className="diag-fix">
               <span className="dim">Suggested fix:</span> <span className="mono">{check.fix}</span>
@@ -190,9 +125,55 @@ function DiagRow({ check, expanded, onToggle }: DiagRowProps) {
 }
 
 export function DiagnosticsDrawer({ onClose }: DiagnosticsDrawerProps) {
-  const [openIds, setOpenIds] = useState<Set<string>>(
-    () => new Set(DIAG_RUN.checks.filter((check) => check.status !== 'pass').map((check) => check.id)),
-  );
+  const [checks, setChecks] = useState<DiagnosticCheck[]>([]);
+  const [summary, setSummary] = useState<DiagnosticSummary>({ pass: 0, warn: 0, fail: 0 });
+  const [running, setRunning] = useState(false);
+  const [ranAt, setRanAt] = useState<string>('');
+  const [error, setError] = useState<string | null>(null);
+  const [openIds, setOpenIds] = useState<Set<string>>(new Set());
+
+  const runChecks = useCallback(async () => {
+    setRunning(true);
+    setError(null);
+    try {
+      const result = await callTool<{ checks: BackendCheck[]; summary?: BackendSummary }>({
+        actor: ACTOR,
+        method: 'diagnostics_run',
+        args: {},
+      });
+      const mapped: DiagnosticCheck[] = (result?.checks ?? []).map((c) => ({
+        id: c.id,
+        group: groupForCheck(c.id),
+        label: typeof c.label === 'string' ? c.label : c.id,
+        status: normalizeStatus(c.status),
+        evidence: evidenceFromBackend(c),
+        fix: fixFromBackend(c),
+      }));
+      setChecks(mapped);
+      const s = result?.summary ?? {};
+      setSummary({
+        pass: typeof s.pass === 'number' ? s.pass : mapped.filter((c) => c.status === 'pass').length,
+        warn: typeof s.warning === 'number' ? s.warning : (typeof s.warn === 'number' ? s.warn : mapped.filter((c) => c.status === 'warn').length),
+        fail: typeof s.fail === 'number' ? s.fail : mapped.filter((c) => c.status === 'fail').length,
+      });
+      setRanAt(new Date().toLocaleTimeString());
+      // Auto-expand non-passing checks so issues are visible without an extra click.
+      setOpenIds(new Set(mapped.filter((c) => c.status !== 'pass').map((c) => c.id)));
+    } catch (err) {
+      const message = err instanceof ToadApiError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : 'Diagnostics failed';
+      setError(message);
+    } finally {
+      setRunning(false);
+    }
+  }, []);
+
+  // Run automatically on first open so the drawer never displays stale or
+  // empty state on a fresh mount.
+  useEffect(() => { void runChecks(); }, [runChecks]);
 
   const toggle = (id: string) => {
     setOpenIds((current) => {
@@ -204,11 +185,11 @@ export function DiagnosticsDrawer({ onClose }: DiagnosticsDrawerProps) {
   };
 
   const groups = useMemo(() => (
-    DIAG_RUN.checks.reduce<Partial<Record<DiagnosticGroup, DiagnosticCheck[]>>>((acc, check) => {
+    checks.reduce<Partial<Record<DiagnosticGroup, DiagnosticCheck[]>>>((acc, check) => {
       acc[check.group] = [...(acc[check.group] ?? []), check];
       return acc;
     }, {})
-  ), []);
+  ), [checks]);
 
   return (
     <div className="drawer-backdrop" onClick={onClose}>
@@ -218,62 +199,74 @@ export function DiagnosticsDrawer({ onClose }: DiagnosticsDrawerProps) {
             <Icon name="cpu" size={15} />
             <h2 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>Diagnostics</h2>
             <span className="dim mono" style={{ fontSize: 11 }}>
-              {DIAG_RUN.duration} - {DIAG_RUN.ranAt}
+              {running ? 'Running…' : ranAt ? `Last run ${ranAt}` : ''}
             </span>
           </div>
           <div style={{ display: 'flex', gap: 4 }}>
-            <button className="btn btn-sm"><Icon name="play" size={11} /> Run again</button>
-            <button className="icon-btn" onClick={onClose}><Icon name="x" size={14} /></button>
+            <button
+              className="btn btn-sm"
+              type="button"
+              onClick={() => void runChecks()}
+              disabled={running}
+            >
+              <Icon name="play" size={11} /> {running ? 'Running…' : 'Run again'}
+            </button>
+            <button className="icon-btn" onClick={onClose} type="button">
+              <Icon name="x" size={14} />
+            </button>
           </div>
         </div>
 
+        {error && (
+          <div
+            style={{
+              margin: '12px 16px 0',
+              padding: '8px 12px',
+              borderRadius: 6,
+              background: 'oklch(0.30 0.08 25 / 0.20)',
+              border: '1px solid oklch(0.55 0.15 25 / 0.30)',
+              fontSize: 11.5,
+              color: 'oklch(0.85 0.10 25)',
+            }}
+          >
+            <Icon name="info" size={11} /> {error}
+          </div>
+        )}
+
         <div className="diag-summary">
           <div className="diag-summary-tile diag-pass-tile">
-            <div className="mono diag-summary-num" style={{ color: 'var(--ok)' }}>{DIAG_RUN.pass}</div>
+            <div className="mono diag-summary-num" style={{ color: 'var(--ok)' }}>{summary.pass}</div>
             <div className="diag-summary-label">passing</div>
           </div>
           <div className="diag-summary-tile diag-warn-tile">
-            <div className="mono diag-summary-num" style={{ color: 'var(--warn)' }}>{DIAG_RUN.warn}</div>
+            <div className="mono diag-summary-num" style={{ color: 'var(--warn)' }}>{summary.warn}</div>
             <div className="diag-summary-label">warnings</div>
           </div>
           <div className="diag-summary-tile diag-fail-tile">
-            <div className="mono diag-summary-num" style={{ color: 'var(--err)' }}>{DIAG_RUN.fail}</div>
+            <div className="mono diag-summary-num" style={{ color: 'var(--err)' }}>{summary.fail}</div>
             <div className="diag-summary-label">failing</div>
           </div>
         </div>
 
         <div className="notif-body-scroll" style={{ padding: '0 0 12px' }}>
-          {Object.entries(groups).map(([group, checks]) => (
+          {!running && checks.length === 0 && !error && (
+            <div className="dim" style={{ padding: '24px 16px', fontSize: 12, textAlign: 'center' }}>
+              No checks ran yet — click "Run again" to refresh.
+            </div>
+          )}
+          {Object.entries(groups).map(([group, groupChecks]) => (
             <div key={group}>
               <div className="sticky-section-head">
                 <span className="section-label">{group}</span>
-                <span className="count-pill">{checks.length}</span>
+                <span className="count-pill">{groupChecks!.length}</span>
               </div>
               <div style={{ padding: '4px 12px 8px', display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {checks.map((check) => (
+                {groupChecks!.map((check) => (
                   <DiagRow key={check.id} check={check} expanded={openIds.has(check.id)} onToggle={toggle} />
                 ))}
               </div>
             </div>
           ))}
-
-          <div className="diag-db-card">
-            <div className="diag-db-h">Database</div>
-            <div className="diag-db-row mono"><span className="dim">Path</span><span>{DIAG_RUN.db.path}</span></div>
-            <div className="diag-db-row mono"><span className="dim">Size</span><span>{DIAG_RUN.db.size}</span></div>
-            <div className="diag-db-h" style={{ marginTop: 12 }}>Table row counts</div>
-            {Object.entries(DIAG_RUN.db.tables).map(([name, count]) => (
-              <div key={name} className="diag-db-row mono">
-                <span className="dim">{name}</span>
-                <span>{count.toLocaleString()}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="drawer-foot">
-          <button className="btn btn-sm btn-ghost"><Icon name="file" size={11} /> Export report</button>
-          <button className="btn btn-sm btn-ghost">Vacuum DB</button>
         </div>
       </div>
     </div>

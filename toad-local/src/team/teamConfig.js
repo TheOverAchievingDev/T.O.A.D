@@ -11,6 +11,11 @@ function normalizeMember(member, fallbackAgentId) {
     role: typeof m.role === 'string' && m.role.trim() ? m.role.trim() : null,
     skipPermissions: typeof m.skipPermissions === 'boolean' ? m.skipPermissions : true,
     prompt: typeof m.prompt === 'string' ? m.prompt : '',
+    // Optional: path to a file whose contents are used as the launch prompt.
+    // When both `prompt` and `promptPath` are set, `promptPath` wins because
+    // the file is more likely to be the most-recently-edited source of truth
+    // (mirrors upstream's --team-bootstrap-user-prompt-file behavior).
+    promptPath: typeof m.promptPath === 'string' && m.promptPath.trim() ? m.promptPath.trim() : '',
   };
 }
 

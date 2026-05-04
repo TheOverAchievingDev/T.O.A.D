@@ -20,9 +20,26 @@ test('listLocalMcpTools exposes MCP-shaped local command tools', () => {
     'cross_team_messages',
     'cross_team_send',
     'diagnostics_run',
+    'foundry_artifact_export',
+    'foundry_artifact_generate',
+    'foundry_artifact_upsert',
+    'foundry_chat_turn',
+    'foundry_message_add',
+    'foundry_project_materialize',
+    'foundry_project_seed_tasks',
+    'foundry_session_create',
+    'foundry_session_get',
+    'foundry_session_list',
+    'git_init_local',
+    'git_set_remote',
+    'github_create_pull_request',
+    'github_create_repository',
     'github_device_poll',
     'github_device_start',
     'github_disconnect',
+    'github_get_branch_protection',
+    'github_get_repository',
+    'github_origin_remote',
     'github_pat_verify',
     'github_status',
     'health_status',
@@ -105,9 +122,19 @@ test('mutating MCP tools require idempotencyKey in their schemas', () => {
   }
   assert.ok(getLocalMcpTool('task_human_approve').inputSchema.required.includes('idempotencyKey'));
   assert.equal(getLocalMcpTool('task_human_approve').annotations.destructiveHint, false);
+  assert.ok(getLocalMcpTool('github_create_pull_request').inputSchema.required.includes('idempotencyKey'));
+  assert.equal(getLocalMcpTool('github_create_pull_request').annotations.destructiveHint, false);
+  for (const t of ['github_create_repository', 'git_init_local', 'git_set_remote']) {
+    assert.ok(getLocalMcpTool(t).inputSchema.required.includes('idempotencyKey'), t);
+    assert.equal(getLocalMcpTool(t).annotations.destructiveHint, false, t);
+  }
+  for (const t of ['foundry_session_create', 'foundry_message_add', 'foundry_chat_turn', 'foundry_artifact_upsert', 'foundry_artifact_generate', 'foundry_artifact_export', 'foundry_project_materialize', 'foundry_project_seed_tasks']) {
+    assert.ok(getLocalMcpTool(t).inputSchema.required.includes('idempotencyKey'), t);
+    assert.equal(getLocalMcpTool(t).annotations.destructiveHint, false, t);
+  }
 
   // Read-only tools
-  for (const name of ['task_list', 'agent_status', 'approval_list', 'runtime_events', 'cross_team_messages', 'tool_activity', 'health_status', 'team_list', 'review_list', 'stuck_runtime_list']) {
+  for (const name of ['task_list', 'agent_status', 'approval_list', 'runtime_events', 'cross_team_messages', 'tool_activity', 'health_status', 'team_list', 'review_list', 'stuck_runtime_list', 'foundry_session_list', 'foundry_session_get']) {
     assert.ok(!getLocalMcpTool(name).inputSchema.required.includes('idempotencyKey'), name);
     assert.equal(getLocalMcpTool(name).annotations.readOnlyHint, true, `${name} should be readOnly`);
   }

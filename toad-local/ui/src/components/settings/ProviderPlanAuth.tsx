@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../Icon';
 import { callTool, ToadApiError, type Actor } from '@/api/client';
+import {
+  getCachedStatus,
+  loadStatus,
+  subscribeStatus,
+} from './providerAuthCache';
 
 export type ProviderId = 'anthropic' | 'openai' | 'gemini' | 'opencode';
 
@@ -23,17 +28,10 @@ export interface AuthStatus {
 
 /** Quick read of just whether plan auth is available for a provider — used
  *  by ProvidersSettings to hide the auth-mode toggle entry for API-only
- *  providers like OpenCode. */
+ *  providers like OpenCode. Reads through the shared cache so we don't
+ *  double-fetch when ProviderPlanAuth is also mounted. */
 export async function readProviderAuthStatus(providerId: ProviderId): Promise<AuthStatus | null> {
-  try {
-    return await callTool<AuthStatus>({
-      actor: DEFAULT_ACTOR,
-      method: 'provider_auth_status',
-      args: { providerId },
-    });
-  } catch {
-    return null;
-  }
+  return loadStatus(providerId);
 }
 
 const DEFAULT_ACTOR: Actor = { teamId: 'default', agentId: 'ui-client', agentName: 'ui', role: 'human' };
@@ -44,11 +42,13 @@ interface ProviderPlanAuthProps {
 }
 
 export function ProviderPlanAuth({ providerId, providerLabel }: ProviderPlanAuthProps) {
-  const [status, setStatus] = useState<AuthStatus | null>(null);
-  const [loading, setLoading] = useState(true);
+  const cached = getCachedStatus(providerId);
+  const [status, setStatus] = useState<AuthStatus | null>(cached);
+  const [loading, setLoading] = useState(cached === null);
   const [busy, setBusy] = useState<'login' | 'logout' | null>(null);
   const [polling, setPolling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [manualLoginHint, setManualLoginHint] = useState<{ cli: string; reason: string } | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollAttemptsRef = useRef(0);
 
@@ -56,12 +56,12 @@ export function ProviderPlanAuth({ providerId, providerLabel }: ProviderPlanAuth
     if (!opts.silent) setLoading(true);
     setError(null);
     try {
-      const result = await callTool<AuthStatus>({
-        actor: DEFAULT_ACTOR,
-        method: 'provider_auth_status',
-        args: { providerId },
-      });
-      setStatus(result);
+      const result = await loadStatus(providerId, { force: true });
+      // loadStatus swallows errors and returns null — surface that as a
+      // soft error so the user can hit Refresh again.
+      if (result === null) {
+        setError('Failed to read auth status');
+      }
       return result;
     } catch (err) {
       const message = err instanceof ToadApiError ? err.message
@@ -75,11 +75,19 @@ export function ProviderPlanAuth({ providerId, providerLabel }: ProviderPlanAuth
   }
 
   useEffect(() => {
-    void fetchStatus();
+    const initial = getCachedStatus(providerId);
+    if (initial !== null) {
+      setStatus(initial);
+      setLoading(false);
+    } else {
+      // Trigger a fetch (will dedupe with anything in flight).
+      void loadStatus(providerId).finally(() => setLoading(false));
+    }
+    const unsubscribe = subscribeStatus(providerId, (next) => setStatus(next));
     return () => {
+      unsubscribe();
       if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providerId]);
 
   function startPolling() {
@@ -114,13 +122,30 @@ export function ProviderPlanAuth({ providerId, providerLabel }: ProviderPlanAuth
   async function login() {
     setBusy('login');
     setError(null);
+    setManualLoginHint(null);
     try {
-      const result = await callTool<{ started: boolean; pid?: number; reason?: string }>({
+      const result = await callTool<{
+        started: boolean;
+        pid?: number;
+        reason?: string;
+        manualLogin?: boolean;
+        cli?: string;
+      }>({
         actor: DEFAULT_ACTOR,
         method: 'provider_auth_login',
         args: { providerId },
         idempotencyKey: `pa-login-${providerId}-${Date.now()}`,
       });
+      if (result.manualLogin) {
+        // Some providers (Claude Code, Codex) own their own login flow via
+        // their CLI's interactive prompt. Surface the instructions instead
+        // of treating it as an error.
+        setManualLoginHint({
+          cli: result.cli || providerId,
+          reason: result.reason || 'Sign in via the CLI directly.',
+        });
+        return;
+      }
       if (!result.started) {
         setError(result.reason ?? 'CLI did not start');
         return;
@@ -246,6 +271,29 @@ export function ProviderPlanAuth({ providerId, providerLabel }: ProviderPlanAuth
         </div>
       )}
 
+      {manualLoginHint && (
+        <div
+          style={{
+            padding: '8px 10px',
+            borderRadius: 6,
+            background: 'oklch(0.30 0.08 240 / 0.20)',
+            border: '1px solid oklch(0.55 0.15 240 / 0.30)',
+            fontSize: 11.5,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+          }}
+        >
+          <div style={{ fontWeight: 600 }}>
+            <Icon name="terminal" size={11} /> Sign in via the {manualLoginHint.cli} CLI
+          </div>
+          <div style={{ color: 'var(--fg-muted)' }}>{manualLoginHint.reason}</div>
+          <div className="dim" style={{ fontSize: 10.5 }}>
+            Once you're signed in there, click Refresh below.
+          </div>
+        </div>
+      )}
+
       {error && (
         <div style={{ fontSize: 11, color: 'oklch(0.85 0.10 25)' }}>{error}</div>
       )}
@@ -259,7 +307,13 @@ export function ProviderPlanAuth({ providerId, providerLabel }: ProviderPlanAuth
             disabled={busy === 'login' || polling}
           >
             <Icon name="user" size={11} />
-            {busy === 'login' ? 'Starting…' : (polling ? 'Waiting for browser…' : `Sign in with ${providerLabel}`)}
+            {busy === 'login'
+              ? 'Starting…'
+              : polling
+                ? 'Waiting for browser…'
+                : manualLoginHint
+                  ? `How to sign in to ${providerLabel}`
+                  : `Sign in with ${providerLabel}`}
           </button>
         )}
         {signedIn && (

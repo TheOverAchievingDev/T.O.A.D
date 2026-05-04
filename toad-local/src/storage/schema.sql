@@ -182,3 +182,47 @@ CREATE TABLE IF NOT EXISTS team_configs (
   created_at  TEXT NOT NULL,
   updated_at  TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS foundry_sessions (
+  session_id    TEXT PRIMARY KEY,
+  title         TEXT NOT NULL,
+  status        TEXT NOT NULL,
+  project_path  TEXT,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_foundry_sessions_updated
+  ON foundry_sessions(updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS foundry_messages (
+  message_id    TEXT PRIMARY KEY,
+  session_id    TEXT NOT NULL,
+  role          TEXT NOT NULL,
+  text          TEXT NOT NULL,
+  created_at    TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  FOREIGN KEY (session_id) REFERENCES foundry_sessions(session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_foundry_messages_session
+  ON foundry_messages(session_id, created_at);
+
+CREATE TABLE IF NOT EXISTS foundry_artifacts (
+  artifact_id   TEXT PRIMARY KEY,
+  session_id    TEXT NOT NULL,
+  kind          TEXT NOT NULL,
+  title         TEXT NOT NULL,
+  content       TEXT NOT NULL,
+  target_path   TEXT,
+  version       INTEGER NOT NULL,
+  status        TEXT NOT NULL,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  FOREIGN KEY (session_id) REFERENCES foundry_sessions(session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_foundry_artifacts_session
+  ON foundry_artifacts(session_id, kind, updated_at);

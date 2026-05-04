@@ -302,6 +302,10 @@ export function projectTask(events) {
         parents: Array.isArray(p.parents) ? [...p.parents] : null,
         mergedAt: typeof p.mergedAt === 'string' ? p.mergedAt : event.createdAt,
         reason: typeof p.reason === 'string' ? p.reason : null,
+        remotePolicy:
+          p.remotePolicy && typeof p.remotePolicy === 'object'
+            ? { reason: typeof p.remotePolicy.reason === 'string' ? p.remotePolicy.reason : null }
+            : null,
       };
     }
     if (event.eventType === TASK_EVENT_TYPES.VALIDATION_RUN) {

@@ -5,6 +5,7 @@ import { Workspace } from '@/components/Workspace';
 import { TasksScreen } from '@/components/TasksScreen';
 import { CreateTeamModal } from '@/components/CreateTeamModal';
 import { TaskDetailModal } from '@/components/TaskDetailModal';
+import { TeamSettingsDrawer } from '@/components/TeamSettingsDrawer';
 import { TaskCreationModal } from '@/components/TaskCreationModal';
 import { TeamLaunchingScreen } from '@/components/TeamLaunchingScreen';
 import { AddProjectModal } from '@/components/AddProjectModal';
@@ -13,6 +14,7 @@ import { ApprovalsDrawer } from '@/components/ApprovalsDrawer';
 import { EmptyWorkspace } from '@/components/EmptyWorkspace';
 import { OnboardingScreen } from '@/components/OnboardingScreen';
 import { ProjectPicker } from '@/components/ProjectPicker';
+import { SetupProjectDialog } from '@/components/SetupProjectDialog';
 import { ProvidersModal } from '@/components/ProvidersModal';
 import { NotificationsDrawer } from '@/components/NotificationsDrawer';
 import { RuntimeDrawer } from '@/components/RuntimeDrawer';
@@ -23,6 +25,7 @@ import { ToastProvider } from '@/components/ToastSystem';
 import { LogViewerDrawer } from '@/components/LogViewerDrawer';
 import { CostsScreen } from '@/components/CostsScreen';
 import { AuditLogScreen } from '@/components/AuditLogScreen';
+import { FoundryScreen } from '@/components/FoundryScreen';
 import { ShortcutsModal } from '@/components/ShortcutsModal';
 import { useShortcutsHotkey } from '@/hooks/useShortcutsHotkey';
 import {
@@ -38,6 +41,8 @@ import { useSettings } from '@/hooks/useSettings';
 import { useCommandActions } from '@/hooks/useCommandActions';
 import { useCommandPaletteHotkey } from '@/hooks/useCommandPaletteHotkey';
 import { useEventToasts, type NotificationsConfig } from '@/hooks/useEventToasts';
+import { pickAndSwitchProjectFolder, getSavedProjectPath, clearSavedProjectPath } from '@/integrations/tauri';
+import { callTool as callToadApi } from '@/api/client';
 
 export default function App() {
   return (
@@ -49,17 +54,147 @@ export default function App() {
 
 function AppInner() {
   const [tweaks, setTweak] = useTweaks();
-  const { team, tasks, runtimes, messages, loading, error, liveSource, refresh } = useToadData();
+  const [activeTeamId, setActiveTeamId] = useState<string | null>(null);
+  const { team, tasks, runtimes, messages, loading, error, liveSource, refresh, agentStreams } = useToadData(activeTeamId);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [taskCreateOpen, setTaskCreateOpen] = useState(false);
+  const [showTeamSettings, setShowTeamSettings] = useState(false);
+  // Plan/quota usage no longer lives at the App level — PlanUsagePanel
+  // polls usage_summary itself, and is rendered inside ProvidersSettings
+  // and CreateTeamModal where the operator actually needs it.
+  // When the user clicks "Create team" in Foundry, we run materialize in
+  // plan mode (which exports docs and returns a suggestion without
+  // creating the team) and stash the plan here so CreateTeamModal can
+  // pre-fill from it. After team_create succeeds, foundry_project_seed_tasks
+  // attaches the suggested starter tasks to the new team.
+  const [foundryPlan, setFoundryPlan] = useState<import('@/components/FoundryScreen').FoundryPlanResult | null>(null);
+  // Holds the picked-folder context + a resolver that the SetupProjectDialog
+  // calls when the user finishes (or skips). Used by the Foundry "Create
+  // team" flow to insert a "git init? GitHub repo?" step between the
+  // folder-pick (sidecar respawn) and the CreateTeamModal hand-off.
+  const [setupDialog, setSetupDialog] = useState<
+    | null
+    | { projectName: string; projectPath: string; resolve: (ok: boolean) => void }
+  >(null);
   const [launchingTeamId, setLaunchingTeamId] = useState<string | null>(null);
   const [addProjectOpen, setAddProjectOpen] = useState(false);
   const [logRuntimeId, setLogRuntimeId] = useState<string | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const projectRegistry = useProjects();
 
+  const pickProjectFolder = useCallback(async () => {
+    const picked = await pickAndSwitchProjectFolder();
+    if (!picked) return;
+    // Reuse an existing entry that points at the same path (case-insensitive
+    // on Windows would be nicer, but this is fine for the desktop case).
+    const existing = projectRegistry.projects.find((p) => p.path === picked.path);
+    if (existing) {
+      projectRegistry.setActive(existing.id);
+    } else {
+      const created = projectRegistry.addProject({ name: picked.name, path: picked.path });
+      projectRegistry.setActive(created.id);
+    }
+    setTweak('screen', 'workspace');
+    refresh();
+  }, [projectRegistry, refresh, setTweak]);
+
+  // Team-control handlers wired into the Workspace's Pause/End buttons.
+  // Both end with refresh() so the UI immediately reflects the new state
+  // (runtimes flip to stopped, kanban stays, team disappears on End).
+  const handlePauseTeam = useCallback(async () => {
+    const teamId = team.name || activeTeamId;
+    if (!teamId) return;
+    try {
+      await callToadApi({
+        actor: { teamId, agentId: 'ui-client', role: 'human' },
+        method: 'team_stop',
+        args: { teamId },
+        idempotencyKey: `team-pause-${teamId}-${Date.now()}`,
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('team_stop failed:', err);
+    } finally {
+      refresh();
+    }
+  }, [team.name, activeTeamId, refresh]);
+
+  const handleEndTeam = useCallback(async () => {
+    const teamId = team.name || activeTeamId;
+    if (!teamId) return;
+    try {
+      // Stop runtimes first so we don't leak orphan claude processes.
+      await callToadApi({
+        actor: { teamId, agentId: 'ui-client', role: 'human' },
+        method: 'team_stop',
+        args: { teamId },
+        idempotencyKey: `team-end-stop-${teamId}-${Date.now()}`,
+      }).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.warn('team_stop during End failed (proceeding to delete):', err);
+      });
+      await callToadApi({
+        actor: { teamId, agentId: 'ui-client', role: 'human' },
+        method: 'team_delete',
+        args: { teamId },
+        idempotencyKey: `team-end-delete-${teamId}-${Date.now()}`,
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('team_delete failed:', err);
+    } finally {
+      refresh();
+    }
+  }, [team.name, activeTeamId, refresh]);
+
   useShortcutsHotkey(() => setShortcutsOpen(true));
+
+  // Sync the registry with the Tauri shell's persisted active-project on
+  // mount. If the desktop app has a saved path, make sure that path is
+  // present in the registry and marked active. This keeps the localStorage
+  // registry and the Rust-side `active-project.txt` in agreement after a
+  // restart or first install.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const saved = await getSavedProjectPath();
+      if (cancelled || !saved) return;
+      // Migration: if the Rust shell has the legacy hardcoded path saved
+      // (from an earlier build that auto-pointed at toad-local itself),
+      // clear it so the user lands on the welcome screen instead of being
+      // teleported back to a directory they didn't choose.
+      const legacyPaths = new Set([
+        'C:/Project-TOAD/toad-local',
+        'C:\\Project-TOAD\\toad-local',
+      ]);
+      if (legacyPaths.has(saved)) {
+        await clearSavedProjectPath();
+        return;
+      }
+      const existing = projectRegistry.projects.find((p) => p.path === saved);
+      if (existing) {
+        if (projectRegistry.activeId !== existing.id) projectRegistry.setActive(existing.id);
+      } else {
+        const created = projectRegistry.addProject({
+          name: saved.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'project',
+          path: saved,
+        });
+        projectRegistry.setActive(created.id);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // First-run UX: when no project has been opened yet, force the picker
+  // screen. Without this the user lands on the workspace with no real
+  // data and no obvious "where do I start" affordance.
+  useEffect(() => {
+    if (projectRegistry.projects.length === 0 && tweaks.screen !== 'picker' && tweaks.screen !== 'create' && tweaks.screen !== 'settings' && tweaks.screen !== 'foundry') {
+      setTweak('screen', 'picker');
+    }
+  }, [projectRegistry.projects.length, tweaks.screen, setTweak]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', tweaks.theme);
@@ -126,10 +261,38 @@ function AppInner() {
   // reached merge_ready — that's the gate point — but we count any
   // un-cleared gate so the user can see the queue building up earlier in
   // the lifecycle too.
-  const pendingApprovals = useMemo(
-    () => tasks.filter((t) => t.requiresHumanApproval === true && t.humanApproved !== true).length,
-    [tasks],
-  );
+  const pendingApprovalItems = useMemo(() => {
+    // Translate task-gate approvals (set by §14 risk policy or task_human_approve
+    // requirements) into the shape the ApprovalsDrawer renders. Without this
+    // pass, the drawer shows "0 pending" while the sidebar badge says N — the
+    // badge counts task gates, the drawer expects an external prop that was
+    // never populated.
+    return tasks
+      .filter((t) => t.requiresHumanApproval === true && t.humanApproved !== true)
+      .map((t) => {
+        const member = team.members.find((m) => m.id === t.assignee || m.role === t.assignee);
+        const risk: 'low' | 'med' | 'high' = t.riskLevel === 'critical' || t.riskLevel === 'high'
+          ? 'high'
+          : t.riskLevel === 'medium'
+            ? 'med'
+            : 'low';
+        const reason = Array.isArray(t.matchedRules) && t.matchedRules.length > 0
+          ? `Matched ${t.matchedRules.length} risk rule${t.matchedRules.length === 1 ? '' : 's'}: ${t.matchedRules.map((r) => r.pattern).join(', ')}`
+          : 'Task gated for human approval before merge.';
+        return {
+          id: `task-gate-${t.id}`,
+          agentId: member?.id ?? (t.assignee || 'lead'),
+          tool: 'task-gate',
+          input: t.title,
+          requestedAgo: 'now',
+          taskId: t.id,
+          risk,
+          reason,
+          scope: 'task-gate' as const,
+        };
+      });
+  }, [tasks, team.members]);
+  const pendingApprovals = pendingApprovalItems.length;
 
   // The sidebar key reflects the active nav target. Drawer nav items don't
   // change `tweaks.screen` — they toggle the corresponding drawer instead.
@@ -138,6 +301,7 @@ function AppInner() {
     if (tweaks.showDiagnostics) return 'diagnostics';
     if (tweaks.showRuntimes) return 'runtimes';
     if (tweaks.screen === 'settings') return 'settings';
+    if (tweaks.screen === 'foundry') return 'foundry';
     if (tweaks.screen === 'costs') return 'costs';
     if (tweaks.screen === 'tasks') return 'tasks';
     return 'workspace';
@@ -150,6 +314,9 @@ function AppInner() {
         return;
       case 'tasks':
         setTweak('screen', 'tasks');
+        return;
+      case 'foundry':
+        setTweak('screen', 'foundry');
         return;
       case 'runtimes':
         setTweak('showRuntimes', true);
@@ -208,14 +375,14 @@ function AppInner() {
             gap: 12,
           }}
         >
-          <span>API not reachable — showing seed data. {error}</span>
+          <span>API not reachable - live workspace data unavailable. {error}</span>
           <button className="btn btn-sm btn-ghost" style={{ marginLeft: 'auto' }} onClick={refresh}>
             Retry
           </button>
         </div>
       )}
 
-      {liveSource === 'seed' && !error && loading && (
+      {liveSource === 'empty' && !error && loading && (
         <div style={{ padding: '4px 14px', fontSize: 11, color: 'var(--fg-dim)' }}>Loading…</div>
       )}
 
@@ -236,9 +403,15 @@ function AppInner() {
           )}
           {tweaks.screen === 'picker' && (
             <ProjectPicker
-              team={team}
-              onOpenTeam={() => setTweak('screen', 'workspace')}
+              projects={projectRegistry.projects}
+              activeId={projectRegistry.activeId}
+              onOpenProject={(id) => {
+                projectRegistry.setActive(id);
+                setTweak('screen', 'workspace');
+              }}
               onCreateTeam={() => setTweak('screen', 'create')}
+              onSelectFolder={pickProjectFolder}
+              onStartNewProject={() => setTweak('screen', 'foundry')}
             />
           )}
           {tweaks.screen === 'tasks' && (
@@ -250,6 +423,57 @@ function AppInner() {
                 setTweak('screen', 'task');
               }}
               onCreateTask={() => setTaskCreateOpen(true)}
+            />
+          )}
+          {tweaks.screen === 'foundry' && (
+            <FoundryScreen
+              teamId={team.name || activeTeamId || 'foundry'}
+              hasActiveProject={projectRegistry.activeId !== null}
+              onPickProjectFolder={async () => {
+                // Foundry "Create team" pre-flight when no project is
+                // loaded: pops the native folder picker, respawns the
+                // sidecar against the chosen path (Foundry sessions
+                // survive because the store lives at ~/.symphony/foundry.db),
+                // then opens the SetupProjectDialog so the user can
+                // optionally `git init` + create a GitHub repo before the
+                // team is crafted.
+                const picked = await pickAndSwitchProjectFolder();
+                if (!picked) return false;
+                const existing = projectRegistry.projects.find((p) => p.path === picked.path);
+                if (existing) {
+                  projectRegistry.setActive(existing.id);
+                } else {
+                  const created = projectRegistry.addProject({ name: picked.name, path: picked.path });
+                  projectRegistry.setActive(created.id);
+                }
+                refresh();
+                // Wait for sidecar to come back up before talking to it.
+                await new Promise((r) => setTimeout(r, 800));
+                // Open the setup dialog and wait for the user to either
+                // finish or skip. Returns true either way — the next step
+                // (materialize) doesn't depend on git/GitHub being set up.
+                await new Promise<void>((resolve) => {
+                  setSetupDialog({
+                    projectName: picked.name,
+                    projectPath: picked.path,
+                    resolve: () => resolve(),
+                  });
+                });
+                return true;
+              }}
+              onMaterializePlan={(plan) => {
+                // Foundry exported docs + suggested team. Open
+                // CreateTeamModal pre-filled so the user can craft the
+                // team before launch. Tasks get seeded after team_create
+                // via foundry_project_seed_tasks.
+                setFoundryPlan(plan);
+                setTweak('screen', 'create');
+              }}
+              onMaterialized={(teamId) => {
+                setActiveTeamId(teamId);
+                refresh();
+                setTweak('screen', 'workspace');
+              }}
             />
           )}
           {tweaks.screen === 'costs' && (
@@ -302,15 +526,85 @@ function AppInner() {
               onOpenAgent={(id) => setTweak('agentInbox', id)}
               onCloseAgent={() => setTweak('agentInbox', '')}
               onOpenLogs={(id) => setLogRuntimeId(id)}
+              onPauseTeam={handlePauseTeam}
+              onEndTeam={handleEndTeam}
+              agentStreams={agentStreams}
+              pendingApprovals={pendingApprovals}
+              onOpenApprovals={() => setTweak('showApprovals', true)}
+              erroredRuntimes={runtimes.filter((r) => r.status === 'error').length}
+              composerActor={{
+                teamId: team.name || activeTeamId || 'default',
+                agentId: 'ui-client',
+                agentName: 'ui',
+                role: 'human',
+              }}
+              onComposerSent={refresh}
+              onOpenTeamSettings={() => setShowTeamSettings(true)}
             />
           )}
         </div>
       </div>
 
+      {setupDialog && (
+        <SetupProjectDialog
+          defaultRepoName={setupDialog.projectName}
+          projectPath={setupDialog.projectPath}
+          onComplete={() => {
+            const r = setupDialog.resolve;
+            setSetupDialog(null);
+            r(true);
+          }}
+          onCancel={() => {
+            const r = setupDialog.resolve;
+            setSetupDialog(null);
+            r(false);
+          }}
+        />
+      )}
+
       {tweaks.screen === 'create' && (
         <CreateTeamModal
-          onClose={() => setTweak('screen', 'workspace')}
-          onCreated={(teamId) => {
+          seed={
+            foundryPlan
+              ? {
+                  teamName: foundryPlan.suggestedTeam.teamId,
+                  leadPrompt: foundryPlan.suggestedTeam.leadPrompt,
+                  leadProvider: foundryPlan.suggestedTeam.lead.providerId,
+                  projectPath: foundryPlan.suggestedTeam.cwd,
+                  members: foundryPlan.suggestedTeam.teammates.map((m) => ({
+                    name: m.agentId,
+                    // Cast through unknown — backend roles match the
+                    // RoleId set with 'lead' excluded for teammates.
+                    role: m.role as Exclude<import('@/types').RoleId, 'lead'>,
+                    provider: m.providerId,
+                    model: 'Default',
+                  })),
+                }
+              : undefined
+          }
+          onClose={() => {
+            setFoundryPlan(null);
+            setTweak('screen', 'workspace');
+          }}
+          onCreated={async (teamId) => {
+            setActiveTeamId(teamId);
+            // If the team was created from a Foundry session, attach the
+            // suggested starter tasks now that the team exists.
+            if (foundryPlan) {
+              try {
+                await callToadApi({
+                  actor: { teamId, agentId: 'ui-client', agentName: 'ui', role: 'human' },
+                  method: 'foundry_project_seed_tasks',
+                  args: { sessionId: foundryPlan.sessionId, teamId },
+                  idempotencyKey: `foundry-seed-${foundryPlan.sessionId}-${Date.now()}`,
+                });
+              } catch (err) {
+                // Non-blocking — the team is already real, tasks are best-effort.
+                // eslint-disable-next-line no-console
+                console.warn('foundry_project_seed_tasks failed:', err);
+              }
+              setFoundryPlan(null);
+            }
             refresh();
             setLaunchingTeamId(teamId);
             setTweak('screen', 'launching');
@@ -349,26 +643,59 @@ function AppInner() {
         <TaskCreationModal
           team={team}
           existingTasks={tasks}
+          actor={{
+            teamId: team.name || activeTeamId || 'default',
+            agentId: 'ui-client',
+            agentName: 'ui',
+            role: 'human',
+          }}
           onClose={() => setTaskCreateOpen(false)}
           onCreated={() => refresh()}
         />
       )}
 
       {tweaks.showApprovals && (
-        <ApprovalsDrawer team={team} onClose={() => setTweak('showApprovals', false)} />
+        <ApprovalsDrawer
+          team={team}
+          onClose={() => setTweak('showApprovals', false)}
+          approvals={pendingApprovalItems}
+          actor={{ teamId: team.name || activeTeamId || 'default', agentId: 'ui-client', agentName: 'ui', role: 'human' }}
+          onDecided={refresh}
+        />
+      )}
+      {showTeamSettings && team.members.length > 0 && (
+        <TeamSettingsDrawer
+          team={team}
+          actor={{ teamId: team.name || activeTeamId || 'default', agentId: 'ui-client', agentName: 'ui', role: 'human' }}
+          onClose={() => setShowTeamSettings(false)}
+          onSaved={refresh}
+        />
       )}
       {logRuntimeId && (
         <LogViewerDrawer
           runtimeId={logRuntimeId}
           title={runtimes.find((r) => r.id === logRuntimeId)?.agent}
+          runtime={runtimes.find((r) => r.id === logRuntimeId)}
           onClose={() => setLogRuntimeId(null)}
+          actor={{
+            teamId: team.name || activeTeamId || 'default',
+            agentId: 'ui-client',
+            agentName: 'ui',
+            role: 'human',
+          }}
+          onAfterAction={refresh}
         />
       )}
       {shortcutsOpen && <ShortcutsModal onClose={() => setShortcutsOpen(false)} />}
       {tweaks.showNotifs && (
         <NotificationsDrawer team={team} onClose={() => setTweak('showNotifs', false)} />
       )}
-      {tweaks.showProviders && <ProvidersModal onClose={() => setTweak('showProviders', false)} />}
+      {tweaks.showProviders && (
+        <ProvidersModal
+          onClose={() => setTweak('showProviders', false)}
+          onOpenSettings={() => setTweak('screen', 'settings')}
+        />
+      )}
       {tweaks.showRuntimes && (
         <RuntimeDrawer team={team} onClose={() => setTweak('showRuntimes', false)} />
       )}
@@ -425,6 +752,7 @@ function AppInner() {
               options={[
                 { value: 'workspace', label: 'Workspace' },
                 { value: 'tasks', label: 'Tasks' },
+                { value: 'foundry', label: 'Foundry' },
                 { value: 'settings', label: 'Settings' },
                 { value: 'costs', label: 'Cost dashboard' },
                 { value: 'audit', label: 'Audit log' },

@@ -1,56 +1,56 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Agent, Team, Message } from '@/types';
 import { ROLES, roleStyle } from '@/data/roles';
 import { Icon } from './Icon';
+import type { StreamEntry } from '@/utils/agentStream';
+import { callTool, ToadApiError, type Actor } from '@/api/client';
 
-interface StreamEntry {
-  time: string;
-  kind: 'thought' | 'tool' | 'output';
-  tool?: string;
-  body: string;
-}
+type ComposerMode = 'ask' | 'delegate' | 'interrupt';
 
-interface AgentInboxData {
-  currentTask: {
-    id: string;
-    title: string;
-    progress: number;
-    step: string;
-    files: string[];
-  } | null;
-  liveStream: StreamEntry[];
-}
-
-const AGENT_INBOX_DATA: Record<string, AgentInboxData> = {
-  tom: {
-    currentTask: {
-      id: 'T-481',
-      title: 'Streaming buffer for transcription',
-      progress: 68,
-      step: 'Writing tests',
-      files: ['src/audio/stream.ts', 'src/audio/buffer.ts', 'tests/stream.test.ts'],
-    },
-    liveStream: [
-      { time: '14:34:02', kind: 'thought', body: 'Need to handle the partial frame on pause — alice flagged dropping <16ms of audio' },
-      { time: '14:34:08', kind: 'tool', tool: 'edit', body: 'src/audio/stream.ts +12 −3' },
-      { time: '14:34:14', kind: 'tool', tool: 'bash', body: 'npm test -- stream.test.ts' },
-      { time: '14:34:19', kind: 'output', body: '✓ 9 passed (1.4s)' },
-    ],
+const MODE_META: Record<ComposerMode, { label: string; placeholder: string; kind: string; urgentPrefix?: string; sendLabel: string }> = {
+  ask: {
+    label: 'Ask',
+    placeholder: 'Ask a question — no work expected.',
+    // Use 'instruction' kind so the agent treats it as a question they
+    // should answer in chat, not as a task to act on.
+    kind: 'instruction',
+    sendLabel: 'Ask',
   },
-  alice: {
-    currentTask: {
-      id: 'T-479',
-      title: 'Review PR #42 — chunking edge cases',
-      progress: 92,
-      step: 'Final pass',
-      files: ['src/audio/stream.ts', 'tests/stream.test.ts'],
-    },
-    liveStream: [
-      { time: '14:32:01', kind: 'tool', tool: 'read', body: 'src/audio/stream.ts (264 lines)' },
-      { time: '14:32:18', kind: 'thought', body: 'Checking the reversal guard implementation. Need to trace pause/resume path.' },
-    ],
+  delegate: {
+    label: 'Delegate',
+    placeholder: 'Assign work — the agent will treat this as a task.',
+    kind: 'task_notification',
+    sendLabel: 'Delegate',
+  },
+  interrupt: {
+    label: 'Interrupt',
+    placeholder: 'Pre-empt the agent — stop what they\'re doing and follow this instead.',
+    // System-kind messages bypass the normal "follow lead" pattern and
+    // signal "this is from the operator, take it as a high-priority
+    // override". The prefix makes that explicit in the message body.
+    kind: 'system',
+    urgentPrefix: '[OPERATOR INTERRUPT — pre-empt current work]\n\n',
+    sendLabel: 'Interrupt',
   },
 };
+
+interface AgentInboxProps {
+  agent: Agent;
+  team: Team;
+  messages: Message[];
+  onClose: () => void;
+  /** Pre-aggregated stream of events for this agent. Owned by useToadData
+   *  and persists across agent-card switches so the inbox doesn't reset. */
+  stream: StreamEntry[];
+  /** Actor used when the operator sends a direct message via the composer. */
+  actor?: Actor;
+  /** Called after a message is sent so the parent can refresh its data. */
+  onMessageSent?: () => void;
+}
+
+const COMPOSER_DEFAULT_ACTOR: Actor = { teamId: 'default', agentId: 'ui-client', agentName: 'ui', role: 'human' };
+
+type InboxTab = 'activity' | 'messages';
 
 function StreamItem({ item }: { item: StreamEntry }) {
   if (item.kind === 'thought') {
@@ -58,7 +58,7 @@ function StreamItem({ item }: { item: StreamEntry }) {
       <div className="ai-stream-item ai-stream-thought">
         <span className="ai-stream-time mono">{item.time}</span>
         <Icon name="sparkle" size={11} className="ai-stream-icon" />
-        <div className="ai-stream-body">{item.body}</div>
+        <div className="ai-stream-body" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{item.body}</div>
       </div>
     );
   }
@@ -67,7 +67,16 @@ function StreamItem({ item }: { item: StreamEntry }) {
       <div className="ai-stream-item ai-stream-tool">
         <span className="ai-stream-time mono">{item.time}</span>
         <span className="chip mono" style={{ fontSize: 10, padding: '1px 6px' }}>{item.tool}</span>
-        <div className="ai-stream-body mono">{item.body}</div>
+        <div className="ai-stream-body mono" style={{ wordBreak: 'break-word' }}>{item.body}</div>
+      </div>
+    );
+  }
+  if (item.kind === 'system') {
+    return (
+      <div className="ai-stream-item" style={{ opacity: 0.7 }}>
+        <span className="ai-stream-time mono">{item.time}</span>
+        <span className="ai-stream-icon" style={{ color: 'var(--fg-dim)' }}>·</span>
+        <div className="ai-stream-body" style={{ fontStyle: 'italic', color: 'var(--fg-muted)' }}>{item.body}</div>
       </div>
     );
   }
@@ -75,24 +84,59 @@ function StreamItem({ item }: { item: StreamEntry }) {
     <div className="ai-stream-item ai-stream-output">
       <span className="ai-stream-time mono">{item.time}</span>
       <span className="ai-stream-icon" style={{ color: 'var(--ok)' }}>›</span>
-      <div className="ai-stream-body mono">{item.body}</div>
+      <div className="ai-stream-body" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{item.body}</div>
     </div>
   );
 }
 
-interface AgentInboxProps {
-  agent: Agent;
-  team: Team;
-  messages: Message[];
-  onClose: () => void;
-}
-
-type InboxTab = 'activity' | 'messages' | 'files';
-
-export function AgentInbox({ agent, team, messages, onClose }: AgentInboxProps) {
+export function AgentInbox({ agent, team, messages, onClose, stream, actor = COMPOSER_DEFAULT_ACTOR, onMessageSent }: AgentInboxProps) {
   const [tab, setTab] = useState<InboxTab>('activity');
-  const data = AGENT_INBOX_DATA[agent.id] ?? { liveStream: [], currentTask: null };
   const myMsgs = messages.filter((m) => m.from === agent.id || m.to === agent.id);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // Composer state — selectable mode + draft text + in-flight + error
+  const [mode, setMode] = useState<ComposerMode>('delegate');
+  const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
+  const [composerError, setComposerError] = useState<string | null>(null);
+
+  async function sendComposerMessage() {
+    const text = draft.trim();
+    if (!text || sending) return;
+    const meta = MODE_META[mode];
+    const body = meta.urgentPrefix ? `${meta.urgentPrefix}${text}` : text;
+    setSending(true);
+    setComposerError(null);
+    try {
+      await callTool({
+        actor,
+        method: 'message_send',
+        args: {
+          to: { kind: 'agent', agentId: agent.id, teamId: actor.teamId },
+          kind: meta.kind,
+          text: body,
+        },
+        idempotencyKey: `composer-${agent.id}-${Date.now()}`,
+      });
+      setDraft('');
+      onMessageSent?.();
+    } catch (err) {
+      const m = err instanceof ToadApiError ? err.message
+        : err instanceof Error ? err.message
+        : 'Failed to send message';
+      setComposerError(m);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  // Auto-scroll to newest entry as the stream grows. Only when on the
+  // activity tab so switching to messages/files doesn't yank the scroll.
+  useEffect(() => {
+    if (tab !== 'activity') return;
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [stream.length, tab, agent.id]);
 
   return (
     <div className="ai-inbox" style={roleStyle(agent.role)}>
@@ -111,46 +155,31 @@ export function AgentInbox({ agent, team, messages, onClose }: AgentInboxProps) 
         <button className="icon-btn" title="More"><Icon name="moreH" size={14} /></button>
       </div>
 
-      {data.currentTask && (
-        <div className="ai-task-card">
-          <div className="ai-task-head">
-            <span className="section-label">Working on</span>
-            <span className="mono dim" style={{ fontSize: 10.5 }}>{data.currentTask.id}</span>
-          </div>
-          <div className="ai-task-title">{data.currentTask.title}</div>
-          <div className="ai-task-progress">
-            <div className="ai-task-bar">
-              <div className="ai-task-bar-fill" style={{ width: `${data.currentTask.progress}%` }} />
-            </div>
-            <span className="dim mono" style={{ fontSize: 10.5 }}>{data.currentTask.progress}%</span>
-          </div>
-          <div className="ai-task-step">
-            <span className="status-dot thinking" />
-            <span style={{ fontSize: 12 }}>{data.currentTask.step}</span>
-          </div>
-        </div>
-      )}
-
       <div className="conv-tabs">
         <button className={`conv-tab ${tab === 'activity' ? 'active' : ''}`} onClick={() => setTab('activity')}>
-          <Icon name="sparkle" size={12} /> Live <span className="num">{data.liveStream.length}</span>
+          <Icon name="sparkle" size={12} /> Live <span className="num">{stream.length}</span>
         </button>
         <button className={`conv-tab ${tab === 'messages' ? 'active' : ''}`} onClick={() => setTab('messages')}>
           <Icon name="inbox" size={12} /> Messages <span className="num">{myMsgs.length}</span>
-        </button>
-        <button className={`conv-tab ${tab === 'files' ? 'active' : ''}`} onClick={() => setTab('files')}>
-          <Icon name="file" size={12} /> Files
         </button>
       </div>
 
       <div className="conv-body" style={{ padding: 0 }}>
         {tab === 'activity' && (
-          <div className="ai-stream">
-            {data.liveStream.map((s, i) => <StreamItem key={i} item={s} />)}
-            <div className="ai-stream-cursor mono">
-              <span className="status-dot thinking" style={{ marginRight: 6 }} />
-              thinking…
-            </div>
+          <div className="ai-stream" ref={scrollRef}>
+            {stream.length === 0 ? (
+              <div className="dim" style={{ padding: 24, textAlign: 'center', fontSize: 12 }}>
+                Waiting for activity from {agent.name}…
+                {agent.status === 'live' ? ' (agent is online)' : ''}
+              </div>
+            ) : null}
+            {stream.map((s) => <StreamItem key={s.id} item={s} />)}
+            {agent.status === 'live' || agent.status === 'thinking' ? (
+              <div className="ai-stream-cursor mono">
+                <span className="status-dot thinking" style={{ marginRight: 6 }} />
+                {agent.status === 'thinking' ? 'thinking…' : 'live'}
+              </div>
+            ) : null}
           </div>
         )}
 
@@ -181,37 +210,58 @@ export function AgentInbox({ agent, team, messages, onClose }: AgentInboxProps) 
           </div>
         )}
 
-        {tab === 'files' && data.currentTask && (
-          <div style={{ padding: '8px 14px' }}>
-            {data.currentTask.files.map((f) => (
-              <div key={f} className="ai-file-row">
-                <Icon name="file" size={12} style={{ color: 'var(--fg-muted)' }} />
-                <span className="mono" style={{ fontSize: 12, flex: 1 }}>{f}</span>
-                <span className="dim" style={{ fontSize: 10.5 }}>edited 2m ago</span>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
       <div className="composer">
         <div className="composer-target">
           <span className="status-dot" style={{ background: 'var(--accent)', marginRight: 6 }} />
           <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{agent.name}</span>
-          <span className="dim" style={{ marginLeft: 6 }}>direct message</span>
+          <span className="dim" style={{ marginLeft: 6 }}>{MODE_META[mode].label.toLowerCase()} mode</span>
         </div>
         <textarea
           className="composer-textarea"
-          placeholder={`Message ${agent.name} directly…`}
+          placeholder={MODE_META[mode].placeholder}
           rows={2}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            // Cmd/Ctrl+Enter sends — common pattern, doesn't fight with
+            // multi-line drafts. Plain Enter inserts a newline.
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+              e.preventDefault();
+              void sendComposerMessage();
+            }
+          }}
+          disabled={sending}
         />
+        {composerError ? (
+          <div style={{ fontSize: 11, color: 'var(--err, #f87171)', padding: '4px 0' }}>
+            {composerError}
+          </div>
+        ) : null}
         <div className="composer-actions">
           <div className="composer-modes">
-            <button className="mode-btn">Ask</button>
-            <button className="mode-btn active">Delegate</button>
-            <button className="mode-btn">Interrupt</button>
+            {(['ask', 'delegate', 'interrupt'] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                className={`mode-btn ${mode === m ? 'active' : ''}`}
+                onClick={() => setMode(m)}
+                title={MODE_META[m].placeholder}
+              >
+                {MODE_META[m].label}
+              </button>
+            ))}
           </div>
-          <button className="btn btn-primary btn-sm"><Icon name="send" size={11} /> Send</button>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            onClick={() => void sendComposerMessage()}
+            disabled={sending || draft.trim().length === 0}
+            title="Send (⌘/Ctrl + Enter)"
+          >
+            <Icon name="send" size={11} /> {sending ? 'Sending…' : MODE_META[mode].sendLabel}
+          </button>
         </div>
       </div>
     </div>

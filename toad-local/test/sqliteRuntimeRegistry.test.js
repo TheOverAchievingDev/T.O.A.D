@@ -165,3 +165,64 @@ test('SqliteRuntimeRegistry listRuntimes returns taskId on every row', () => {
     assert.equal(byId['r-free'], null);
   });
 });
+
+test('SqliteRuntimeRegistry.reconcileOrphans marks all live-status rows as stopped', () => {
+  // When the sidecar process is killed without a graceful shutdown (the
+  // common case during dev: `taskkill /T /F`), child claude processes die
+  // but the runtime_instances rows remain at status='running'/'starting'/
+  // 'live'. On the next sidecar boot those PIDs are dead but the UI's
+  // runtime_list and the right-panel LIVE section still surface them as
+  // alive. reconcileOrphans is the boot-time sweep that clears them.
+  withRegistry((registry) => {
+    registry.upsertRuntime({
+      runtimeId: 'r-running', teamId: 't', agentId: 'a', providerId: 'claude',
+      command: 'claude', deliveryMode: 'runtime_stdin', status: 'running', pid: 99999,
+    });
+    registry.upsertRuntime({
+      runtimeId: 'r-starting', teamId: 't', agentId: 'b', providerId: 'claude',
+      command: 'claude', deliveryMode: 'runtime_stdin', status: 'starting',
+    });
+    registry.upsertRuntime({
+      runtimeId: 'r-live', teamId: 't', agentId: 'c', providerId: 'claude',
+      command: 'claude', deliveryMode: 'runtime_stdin', status: 'live',
+    });
+    registry.upsertRuntime({
+      runtimeId: 'r-already-stopped', teamId: 't', agentId: 'd', providerId: 'claude',
+      command: 'claude', deliveryMode: 'runtime_stdin', status: 'stopped',
+    });
+    registry.upsertRuntime({
+      runtimeId: 'r-error', teamId: 't', agentId: 'e', providerId: 'claude',
+      command: 'claude', deliveryMode: 'runtime_stdin', status: 'error',
+    });
+
+    const result = registry.reconcileOrphans();
+
+    // Three of the five rows should have been reconciled.
+    assert.equal(result.reconciled, 3);
+    assert.equal(registry.getRuntime('r-running').status, 'stopped');
+    assert.equal(registry.getRuntime('r-starting').status, 'stopped');
+    assert.equal(registry.getRuntime('r-live').status, 'stopped');
+    // Already-terminal rows are untouched — we don't want to overwrite a
+    // recorded 'error' status with a generic 'stopped'.
+    assert.equal(registry.getRuntime('r-already-stopped').status, 'stopped');
+    assert.equal(registry.getRuntime('r-error').status, 'error');
+    // stopped_at should now be populated on the reconciled rows so the UI
+    // can show "stopped <when>" instead of the started_at timestamp.
+    assert.ok(registry.getRuntime('r-running').stoppedAt);
+    // Orphan PIDs surfaced for the caller to kill. Only rows that had a
+    // valid PID make it into orphanedPids — rows missing pid (starting,
+    // live in this fixture) are skipped silently.
+    assert.deepEqual(result.orphanedPids, [99999]);
+  });
+});
+
+test('SqliteRuntimeRegistry.reconcileOrphans returns reconciled=0 and empty orphanedPids when nothing is live', () => {
+  // Calling reconcileOrphans on a clean DB or after a previous sweep must
+  // be a no-op; otherwise we risk reporting noisy "reconciled N runtimes
+  // on boot" diagnostics every restart.
+  withRegistry((registry) => {
+    const result = registry.reconcileOrphans();
+    assert.equal(result.reconciled, 0);
+    assert.deepEqual(result.orphanedPids, []);
+  });
+});

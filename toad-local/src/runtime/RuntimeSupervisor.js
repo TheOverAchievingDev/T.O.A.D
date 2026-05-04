@@ -1,5 +1,37 @@
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { ClaudeStreamJsonAdapter } from './ClaudeStreamJsonAdapter.js';
+
+/**
+ * Resolve a bare command name (e.g. `claude`) to an absolute path on
+ * Windows by walking PATH and trying each PATHEXT extension. Lets us
+ * spawn the resolved binary DIRECTLY without `shell: true`, which on
+ * Windows wraps the call in `cmd.exe /d /s /c …` — that wrapper
+ * terminates as soon as the inner command finishes and breaks stdin
+ * piping for long-running agent processes.
+ *
+ * Returns the original command unchanged if:
+ *   - we're not on Windows
+ *   - the command already contains a path separator
+ *   - nothing matched (let the OS produce a real ENOENT)
+ */
+function resolveWindowsCommand(command) {
+  if (process.platform !== 'win32') return command;
+  if (typeof command !== 'string' || command.length === 0) return command;
+  if (command.includes('\\') || command.includes('/')) return command;
+  const dirs = String(process.env.PATH || '').split(';').filter(Boolean);
+  const pathext = String(process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').map((e) => e.toLowerCase());
+  for (const dir of dirs) {
+    // Some dev installs leak quotes into PATH entries; strip them.
+    const cleanDir = dir.replace(/^"|"$/g, '');
+    for (const ext of pathext) {
+      const candidate = path.join(cleanDir, command + ext);
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return command;
+}
 
 export class RuntimeSupervisor {
   #runtimes = new Map();
@@ -28,11 +60,74 @@ export class RuntimeSupervisor {
 
     const args = Array.isArray(input.args) ? input.args.map(String) : [];
     const stdio = input.stdio || ['pipe', 'pipe', 'pipe'];
-    const child = this.spawnProcess(command, args, {
+    // Windows: npm-installed CLI shims like `claude.cmd` aren't found by
+    // Node's bare spawn (which doesn't apply PATHEXT). Earlier we used
+    // `shell: true` to route through cmd.exe — but cmd /d /s /c
+    // terminates as soon as the wrapped command finishes its stdin
+    // pipe lifetime, breaking the stream-json adapter for long-running
+    // agents. Instead, resolve the .cmd path explicitly via PATH +
+    // PATHEXT and spawn it DIRECTLY. Node can spawn .cmd / .bat files
+    // directly — it just doesn't auto-search for them.
+    const resolvedCommand = resolveWindowsCommand(command);
+    // eslint-disable-next-line no-console
+    console.log(`[supervisor] spawn ${runtimeId}: ${resolvedCommand} ${args.join(' ')}`);
+    const child = this.spawnProcess(resolvedCommand, args, {
       cwd: input.cwd,
       env: { ...process.env, ...(input.env || {}) },
       stdio,
+      // Hide the cmd.exe console flash that .cmd shims pop on Windows.
+      windowsHide: true,
+      // .bat/.cmd shims need windowsVerbatimArguments=false (default) so
+      // Node escapes args properly. Setting nothing here uses Node's
+      // safe default. We deliberately do NOT use shell:true.
     });
+    // Pipe stderr to the sidecar log so we can see Claude's startup errors,
+    // auth failures, missing-flag complaints, etc. Without this they just
+    // accumulate in the unread pipe buffer and the agent looks "idle"
+    // when it's actually crashing.
+    if (child && child.stderr && typeof child.stderr.on === 'function') {
+      child.stderr.setEncoding('utf8');
+      child.stderr.on('data', (chunk) => {
+        const trimmed = String(chunk).trimEnd();
+        if (trimmed.length > 0) {
+          // eslint-disable-next-line no-console
+          console.error(`[${runtimeId}] stderr: ${trimmed}`);
+        }
+      });
+    }
+    // NOTE: don't add a 'data' listener on child.stdout — that would put
+    // the stream in flowing mode and starve the adapter's async iterator
+    // (which is what consumes stream-json events). The adapter handles
+    // stdout exclusively.
+    // Catch spawn-time errors (ENOENT for "CLI not on PATH", EACCES, etc.)
+    // BEFORE they bubble up as an unhandled 'error' event and crash the
+    // sidecar. Surface a clean record with status: 'error' so the UI can
+    // render a friendly message and the user can install the CLI.
+    if (child && typeof child.on === 'function') {
+      child.on('error', (err) => {
+        const record = this.#runtimes.get(runtimeId);
+        if (!record) return;
+        record.status = 'error';
+        record.exitCode = null;
+        record.signal = null;
+        record.stoppedAt = new Date().toISOString();
+        record.lastError = {
+          code: err && typeof err.code === 'string' ? err.code : null,
+          message: err && err.message ? err.message : String(err),
+        };
+        if (this.runtimeRegistry) {
+          try {
+            this.runtimeRegistry.markRuntimeStopped({
+              runtimeId: record.runtimeId,
+              status: 'error',
+              exitCode: null,
+              signal: null,
+              stoppedAt: record.stoppedAt,
+            });
+          } catch { /* best effort */ }
+        }
+      });
+    }
     const adapter = this.createAdapter({ runtimeId, teamId, agentId, child });
     const record = {
       runtimeId,
