@@ -82,7 +82,12 @@ export async function checkLlmSemantic({
 
 function makeMetaFinding(teamId, checkName, code, detail) {
   return {
-    id: `f_${checkName}_failed_${teamId}`,
+    id: stableFindingId({
+      checkName,
+      category: 'risk',
+      taskId: null,
+      salient: `failed:${code}`,
+    }),
     runId: '',
     teamId,
     taskId: null,
