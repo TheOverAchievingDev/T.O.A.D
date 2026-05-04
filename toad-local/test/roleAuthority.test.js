@@ -125,3 +125,19 @@ test('developer and tester can call validation_run; reviewer and architect canno
     /architect cannot call validation_run/,
   );
 });
+
+test('roleAuthority allows drift_run for lead, architect, human, but denies developer', () => {
+  // Allowed roles
+  for (const role of ['lead', 'architect', 'human']) {
+    assert.doesNotThrow(
+      () => assertRoleCanCallTool({ role, toolName: 'drift_run' }),
+      `${role} should be allowed`
+    );
+  }
+  // Denied
+  assert.throws(
+    () => assertRoleCanCallTool({ role: 'developer', toolName: 'drift_run' }),
+    /cannot call/i,
+    'developer should be denied'
+  );
+});
