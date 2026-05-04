@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { LocalToadRuntime } from '../src/app/LocalToadRuntime.js';
 import { SqliteDriftStore } from '../src/drift/driftStore.js';
 import { DriftEngine } from '../src/drift/driftEngine.js';
+import { ALL_CHECKS } from '../src/drift/checks/index.js';
 import { DriftMonitor } from '../src/drift/driftMonitor.js';
 
 // Project resolution:
@@ -37,16 +38,38 @@ const driftDb =
 let driftMonitor = null;
 if (driftDb) {
   const driftStore = new SqliteDriftStore({ db: driftDb });
+  // Read drift settings from the project's settings store at startup.
+  // readEffective() is async, so we await it once here and pass the
+  // resolved snapshot to the engine. Falls back to engine's DEFAULT_SETTINGS
+  // when the store is unavailable or read fails.
+  let driftSettings;
+  if (typeof runtime.settingsStore?.readEffective === 'function') {
+    try {
+      const all = await runtime.settingsStore.readEffective();
+      driftSettings = all && typeof all === 'object' ? all : undefined;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[drift] settingsStore.readEffective failed:', err && err.message ? err.message : err);
+      driftSettings = undefined;
+    }
+  }
+
   const driftEngine = new DriftEngine({
     deps: {
       taskBoard: runtime.taskBoard,
       eventLog: runtime.eventLog,
       foundryStore: runtime.foundryStore,
       worktreeManager: runtime.worktreeManager,
+      teamConfigRegistry: runtime.teamConfigRegistry,
       // diffComputer not constructed in LocalToadRuntime — buildSnapshot
       // tolerates missing optional deps.
     },
     store: driftStore,
+    // Slice 2: opt INTO the LLM tier by passing ALL_CHECKS (deterministic
+    // + LLM tier-1 + LLM tier-2). Engine's default is DETERMINISTIC_CHECKS,
+    // so unit tests stay isolated from real CLI spawns.
+    checks: ALL_CHECKS,
+    settings: driftSettings,
   });
   if (runtime.toolFacade) {
     runtime.toolFacade.driftEngine = driftEngine;

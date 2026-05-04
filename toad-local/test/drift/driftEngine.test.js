@@ -89,3 +89,29 @@ test('DriftEngine.runDrift includes last 30 history rows in the result', async (
   const result = await engine.runDrift({ teamId: 'team-a', trigger: 'manual' });
   assert.equal(result.history.length, 30);
 });
+
+test('DriftEngine awaits async check.fn results', async () => {
+  const db = bootstrapDb();
+  const store = new SqliteDriftStore({ db });
+  // Custom async check that resolves with a finding after a tick.
+  const asyncCheck = {
+    name: 'check_async_test',
+    tier: 1,
+    fn: async ({ snapshot }) => {
+      await new Promise((r) => setTimeout(r, 5));
+      return [{
+        id: 'f_async', runId: '', teamId: snapshot.teamId,
+        taskId: null, category: 'risk', severity: 'low',
+        checkName: 'check_async_test', title: 'Async OK',
+        expected: 'e', actual: 'a', evidence: ['ev'],
+        recommendedCorrection: 'r', autoFixable: false,
+      }];
+    },
+  };
+  const engine = new DriftEngine({
+    deps: makeDeps(), store, checks: [asyncCheck],
+  });
+  const result = await engine.runDrift({ teamId: 'team-a', trigger: 'manual' });
+  assert.equal(result.findings.length, 1);
+  assert.equal(result.findings[0].title, 'Async OK');
+});

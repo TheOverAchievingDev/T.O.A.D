@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Icon } from './Icon';
+import { findingTier } from './findingTier';
 import type { DriftFinding, DriftRunResult } from '@/hooks/useDrift';
 
 interface DriftScreenProps {
@@ -78,6 +79,17 @@ export function DriftScreen({ teamId, data, loading, error, refresh, onOpenTask 
           <Icon name="refresh" size={12} /> Run check
         </button>
       </div>
+
+      {data.llm && typeof data.llm.tier2 === 'object' && data.llm.tier2.failed && (
+        <div style={{
+          padding: '10px 14px', marginBottom: 16,
+          background: 'rgba(255, 205, 102, 0.08)',
+          border: '1px solid var(--warn, #ffcd66)',
+          borderRadius: 6, fontSize: 12, color: 'var(--fg-muted)',
+        }}>
+          ⚠️ Deep-scan unavailable — {data.llm.tier2.failed}. Showing tier-1 findings only.
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 16, marginBottom: 16 }}>
         <div className="card" style={{ padding: 16 }}>
@@ -176,6 +188,29 @@ export function DriftScreen({ teamId, data, loading, error, refresh, onOpenTask 
                 }}>
                   {f.severity}
                 </span>
+                {(() => {
+                  const tier = findingTier(f.checkName);
+                  if (tier === 'llm_t1') {
+                    return (
+                      <span style={{
+                        fontSize: 9, padding: '2px 6px', borderRadius: 3,
+                        background: 'rgba(255,255,255,0.06)',
+                        color: 'var(--fg-muted)', textTransform: 'uppercase',
+                        letterSpacing: '0.04em', fontWeight: 600,
+                      }}>AI</span>
+                    );
+                  }
+                  if (tier === 'llm_t2') {
+                    return (
+                      <span style={{
+                        fontSize: 9, padding: '2px 6px', borderRadius: 3,
+                        background: 'var(--clay, #d97757)', color: '#fff',
+                        textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 600,
+                      }}>Verified</span>
+                    );
+                  }
+                  return null;
+                })()}
                 <span style={{ fontWeight: 600, fontSize: 12, flex: 1 }}>{f.title}</span>
                 <span style={{ color: 'var(--fg-dim)', fontSize: 10 }}>
                   {CATEGORY_LABEL[f.category] ?? f.category}
