@@ -196,19 +196,55 @@ function killTree(proc) {
   }
 }
 
-async function captureScreens(playwright) {
-  const browser = await playwright.chromium.launch({ headless: true });
+async function captureScreens(playwright, { headed = false } = {}) {
+  const browser = await playwright.chromium.launch({ headless: !headed });
   const context = await browser.newContext({ viewport: VIEWPORT });
   const page = await context.newPage();
 
+  // Capture every kind of failure signal Playwright exposes.
   page.on('pageerror', (err) => console.warn('[ui] pageerror:', err.message));
+  page.on('crash', () => console.warn('[ui] page CRASHED'));
   page.on('console', (msg) => {
-    if (msg.type() === 'error') console.warn('[ui] console.error:', msg.text());
+    const t = msg.type();
+    if (t === 'error' || t === 'warning') console.warn(`[ui] console.${t}:`, msg.text());
+  });
+  page.on('requestfailed', (req) => {
+    console.warn('[ui] request failed:', req.url(), '-', req.failure()?.errorText);
+  });
+  page.on('response', (res) => {
+    if (res.status() >= 400) console.warn(`[ui] HTTP ${res.status()} ${res.url()}`);
   });
 
-  await page.goto(VITE_URL, { waitUntil: 'networkidle', timeout: 30_000 });
-  // Give the UI a moment to finish its initial polls.
-  await sleep(1500);
+  console.log(`Loading ${VITE_URL}...`);
+  await page.goto(VITE_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+  // domcontentloaded is enough to know HTML/JS reached the browser. After
+  // that we wait for React to paint by polling the DOM. The titlebar is
+  // the first thing the App component renders so it's a good "ready" mark.
+  console.log('Waiting for React to paint (polling for .titlebar)...');
+  await page.waitForSelector('.titlebar, .empty-state, [role="dialog"], .modal', {
+    timeout: 15_000,
+  }).catch(() => {
+    console.warn('  (no anchor selector found within 15s — UI may not be rendering)');
+  });
+
+  // Sanity check: does the page have non-trivial content? If it's blank,
+  // dump the HTML so we can debug instead of writing junk PNGs.
+  const bodyText = await page.evaluate(() => document.body?.innerText?.length ?? 0).catch(() => 0);
+  const bodyHtmlLength = await page.evaluate(() => document.body?.outerHTML?.length ?? 0).catch(() => 0);
+  console.log(`Body innerText length: ${bodyText}, outerHTML length: ${bodyHtmlLength}`);
+  if (bodyText < 20) {
+    const html = await page.content();
+    const dumpPath = join(OUT_DIR, '_blank-page-dump.html');
+    await (await import('node:fs/promises')).writeFile(dumpPath, html, 'utf8');
+    console.warn(`\n⚠️  Body has almost no text — UI is not rendering.`);
+    console.warn(`   Dumped current HTML to ${dumpPath} for inspection.`);
+    console.warn(`   Tip: re-run with HEADED=1 npm run screenshots to see the page live.`);
+    console.warn(`   Bailing out before writing junk PNGs.\n`);
+    await browser.close();
+    return false;
+  }
+
+  await sleep(1500); // settle in animations / async state
 
   for (const screen of SCREENS) {
     const target = join(OUT_DIR, `${screen.name}.png`);
@@ -233,6 +269,7 @@ async function captureScreens(playwright) {
   }
 
   await browser.close();
+  return true;
 }
 
 async function main() {
@@ -284,9 +321,16 @@ async function main() {
     }
 
     console.log('\nCapturing screens...\n');
-    await captureScreens(playwright);
-
-    console.log(`\nDone. PNGs in ${OUT_DIR}`);
+    const headed = process.env.HEADED === '1';
+    if (headed) console.log('(HEADED=1 — Chromium will open visibly)');
+    const ok = await captureScreens(playwright, { headed });
+    if (!ok) {
+      console.error('\nCapture aborted because the UI did not render.');
+      console.error('Inspect the HTML dump or re-run with HEADED=1.');
+      process.exitCode = 1;
+    } else {
+      console.log(`\nDone. PNGs in ${OUT_DIR}`);
+    }
   } catch (err) {
     console.error('\nFAILED:', err.message);
     process.exitCode = 1;
