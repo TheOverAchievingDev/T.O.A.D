@@ -47,11 +47,15 @@ const VITE_URL = `http://${VITE_HOST}:${VITE_PORT}/`;
 // right modal. `waitFor` is a CSS selector or function to wait for before
 // the screenshot is taken.
 const SCREENS = [
+  // Sidebar nav buttons all set a `title` attribute matching their label
+  // (see SidebarNav.tsx renderItem). title-attribute selectors are far more
+  // reliable than :has-text() matching, which can miss when the visible
+  // text is wrapped in spans.
   {
     name: 'workspace',
     description: 'Workspace overview (hero shot)',
     navigate: async (page) => {
-      await page.click('button:has-text("Workspace"), [data-screen="workspace"]').catch(() => {});
+      await page.click('button[title="Workspace"]').catch(() => {});
     },
     waitFor: '.titlebar',
   },
@@ -59,7 +63,7 @@ const SCREENS = [
     name: 'drift-screen',
     description: 'Drift Monitor dashboard',
     navigate: async (page) => {
-      await page.click('button:has-text("Drift"), [data-screen="drift"]').catch(() => {});
+      await page.click('button[title="Drift"]').catch(() => {});
     },
     waitFor: 'text=Drift Monitor',
   },
@@ -67,7 +71,7 @@ const SCREENS = [
     name: 'tasks',
     description: 'Tasks board with drift badges',
     navigate: async (page) => {
-      await page.click('button:has-text("Tasks"), [data-screen="tasks"]').catch(() => {});
+      await page.click('button[title="Tasks"]').catch(() => {});
     },
     waitFor: '.titlebar',
   },
@@ -75,7 +79,7 @@ const SCREENS = [
     name: 'foundry',
     description: 'Foundry kiro-style spec docs',
     navigate: async (page) => {
-      await page.click('button:has-text("Foundry"), [data-screen="foundry"]').catch(() => {});
+      await page.click('button[title="Foundry"]').catch(() => {});
     },
     waitFor: '.titlebar',
   },
@@ -83,7 +87,7 @@ const SCREENS = [
     name: 'settings-providers',
     description: 'Settings → Providers (plan-quota panel visible)',
     navigate: async (page) => {
-      await page.click('[title="Settings"], button:has-text("Settings")').catch(() => {});
+      await page.click('button[title="Settings"]').catch(() => {});
       await sleep(400);
       await page.click('text=Providers').catch(() => {});
     },
@@ -292,12 +296,20 @@ async function main() {
 
   try {
     if (await alreadyListening(SIDECAR_HOST, SIDECAR_PORT)) {
-      console.log(`Sidecar already running on ${SIDECAR_HOST}:${SIDECAR_PORT}`);
+      console.log(`Sidecar already running on ${SIDECAR_HOST}:${SIDECAR_PORT} (using as-is — make sure auth matches the UI)`);
     } else {
-      console.log('Booting sidecar API...');
+      console.log('Booting sidecar API (unauthenticated mode for screenshots)...');
       sidecar = spawnBackground('node', ['--no-warnings', 'scripts/dev-api-server.mjs'], {
         cwd: REPO_ROOT,
         silent: true,
+        // Force unauthenticated mode so the UI's tokenless requests don't 401.
+        // The user's shell may have TOAD_API_TOKEN exported globally; clearing
+        // it for THIS spawn is the simplest way to avoid the token mismatch
+        // between the sidecar (with token) and Vite (no VITE_TOAD_API_TOKEN).
+        // Note: per src/transport/apiServer.js, if TOAD_API_TOKEN is empty,
+        // ALL requests are accepted — fine for local screenshot capture but
+        // do NOT use this script against a sidecar exposed beyond localhost.
+        env: { TOAD_API_TOKEN: '' },
       }, 'sidecar');
       await waitForUrl(SIDECAR_HEALTH_URL, 30_000, 'sidecar API');
       console.log(`Sidecar API ready at http://${SIDECAR_HOST}:${SIDECAR_PORT}`);
