@@ -17,7 +17,7 @@ Real CLI agents — Anthropic Claude, OpenAI Codex, Google Gemini — coordinate
 
 <br/>
 
-<img src="docs/screenshots/workspace.png" alt="Symphony AI workspace" width="900" />
+<img src="toad-local/docs/screenshots/workspace.png" alt="Symphony AI workspace" width="900" />
 
 <sub><i>Hero shot — multi-agent team in flight. Run <code>npm run screenshots</code> to regenerate from your local app.</i></sub>
 
@@ -43,7 +43,7 @@ Real CLI agents — Anthropic Claude, OpenAI Codex, Google Gemini — coordinate
 
 A **lead** agent decomposes work into tasks and delegates to specialists (developer, reviewer, researcher, architect). The orchestrator pins each agent to a task, captures their tool calls in real time, and surfaces the activity stream in the UI.
 
-<img src="docs/screenshots/workspace.png" alt="Workspace" width="100%"/>
+<img src="toad-local/docs/screenshots/workspace.png" alt="Workspace" width="100%"/>
 
 </td>
 <td width="50%" valign="top">
@@ -52,7 +52,7 @@ A **lead** agent decomposes work into tasks and delegates to specialists (develo
 
 Seven deterministic checks score the team's drift from spec — illegal lifecycle transitions, out-of-scope file changes, missing test artifacts, role-permission denials, rubber-stamped reviews, provider-logic leakage, "done" tasks without merge evidence. Color-coded per task and aggregated team-wide.
 
-<img src="docs/screenshots/drift-screen.png" alt="Drift Monitor" width="100%"/>
+<img src="toad-local/docs/screenshots/drift-screen.png" alt="Drift Monitor" width="100%"/>
 
 </td>
 </tr>
@@ -63,7 +63,7 @@ Seven deterministic checks score the team's drift from spec — illegal lifecycl
 
 Before a team launches, Foundry captures the project's product brief, tech spec, architecture, steering rules, design decisions (ADRs), definition of done, and roadmap. The lead agent reads these at boot — no more "what is this project even" thrashing.
 
-<img src="docs/screenshots/foundry.png" alt="Foundry" width="100%"/>
+<img src="toad-local/docs/screenshots/foundry.png" alt="Foundry" width="100%"/>
 
 </td>
 <td width="50%" valign="top">
@@ -72,7 +72,7 @@ Before a team launches, Foundry captures the project's product brief, tech spec,
 
 The §14 risk classifier auto-elevates tasks that touch sensitive paths (`.env`, `secrets/`, `package.json`) or run destructive commands. The orchestrator blocks `merge_ready → done` until a human signs off in the Approvals drawer. Every rule is editable in the UI with a live preview.
 
-<img src="docs/screenshots/risk-approvals.png" alt="Risk approvals" width="100%"/>
+<img src="toad-local/docs/screenshots/tasks.png" alt="Tasks board with risk + drift badges" width="100%"/>
 
 </td>
 </tr>
@@ -90,7 +90,7 @@ Every task gets its own `git worktree` so agents work in isolation without stepp
 
 Live signed-in status and remaining plan quota for each subscription provider. Anthropic's `/usage` panel is scraped via a pty probe; Codex and Gemini show sign-in state from their auth files. Rendered in Settings → Providers and inside the new-team modal so you can see headroom before assigning roles.
 
-<img src="docs/screenshots/settings-providers.png" alt="Plan usage" width="100%"/>
+<img src="toad-local/docs/screenshots/settings-providers.png" alt="Plan usage" width="100%"/>
 
 </td>
 </tr>
