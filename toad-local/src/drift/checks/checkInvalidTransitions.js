@@ -24,6 +24,7 @@ export function checkInvalidTransitions({ snapshot } = {}) {
   }
 
   for (const [taskId, list] of byTask) {
+    // byTask values are fresh arrays we built — sort-in-place is safe.
     list.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
     for (const ev of list) {
       const from = ev.payload?.from;

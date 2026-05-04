@@ -60,3 +60,24 @@ test('produces stable finding id for the same offense across runs', () => {
   const b = checkInvalidTransitions({ snapshot: snap(events) });
   assert.equal(a[0].id, b[0].id);
 });
+
+test('emits one finding per illegal transition (not deduped per task)', () => {
+  const findings = checkInvalidTransitions({
+    snapshot: snap([
+      { taskId: 'task-1', eventType: 'task.created',
+        createdAt: '2026-05-04T08:00:00Z',
+        payload: { status: 'ready', subject: 'x' } },
+      // First illegal: ready → testing (skips planned, in_progress, review)
+      { taskId: 'task-1', eventType: 'task.status_changed',
+        createdAt: '2026-05-04T09:00:00Z',
+        payload: { from: 'ready', to: 'testing' } },
+      // Second illegal: testing → backlog (no such allowed transition)
+      { taskId: 'task-1', eventType: 'task.status_changed',
+        createdAt: '2026-05-04T09:30:00Z',
+        payload: { from: 'testing', to: 'backlog' } },
+    ]),
+  });
+  assert.equal(findings.length, 2);
+  // Stable ids — must differ since the salient (from→to@time) differs.
+  assert.notEqual(findings[0].id, findings[1].id);
+});
