@@ -17,6 +17,13 @@ export interface DriftFinding {
   autoFixable: boolean;
 }
 
+export type LlmTierStatus =
+  | 'completed'
+  | 'skipped:cooldown'
+  | 'skipped:below_threshold'
+  | 'skipped:disabled'
+  | { failed: string };
+
 export interface DriftRunResult {
   runId: string;
   asOf: string;
@@ -27,6 +34,12 @@ export interface DriftRunResult {
   perTaskScores: Record<string, number>;
   history: { runId: string; teamScore: number; createdAt: string }[];
   trigger: 'manual' | 'periodic' | 'task_event';
+  /** Slice-2: LLM tier status per run. Optional for back-compat with
+   *  older response payloads (the field is always present in slice 2+). */
+  llm?: {
+    tier1: LlmTierStatus;
+    tier2: LlmTierStatus;
+  };
 }
 
 interface UseDriftOptions {
