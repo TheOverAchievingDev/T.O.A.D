@@ -46,6 +46,15 @@ export async function buildSnapshot({ teamId, deps = {} } = {}) {
     }
   }
 
+  let teamConfig = null;
+  if (deps.teamConfigRegistry && typeof deps.teamConfigRegistry.getTeam === 'function') {
+    try {
+      teamConfig = deps.teamConfigRegistry.getTeam({ teamId }) || null;
+    } catch {
+      teamConfig = null;
+    }
+  }
+
   const diffsByTask = {};
   if (diffComputer && typeof diffComputer.computeDiff === 'function') {
     for (const wt of worktrees) {
@@ -75,6 +84,7 @@ export async function buildSnapshot({ teamId, deps = {} } = {}) {
     foundryDocs,
     worktrees,
     diffsByTask,
+    teamConfig,
   };
 }
 

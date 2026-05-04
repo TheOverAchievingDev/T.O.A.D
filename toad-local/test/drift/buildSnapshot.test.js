@@ -131,3 +131,33 @@ test('buildSnapshot throws when teamId is missing or empty', async () => {
     /teamId/,
   );
 });
+
+test('buildSnapshot includes teamConfig from teamConfigRegistry', async () => {
+  const fakeRegistry = {
+    getTeam: ({ teamId }) =>
+      teamId === 'team-a'
+        ? { teamId, lead: { providerId: 'openai', agentId: 'lead' }, teammates: [] }
+        : null,
+  };
+  const snap = await buildSnapshot({
+    teamId: 'team-a',
+    deps: {
+      taskBoard: fakeTaskBoard(),
+      eventLog: fakeEventLog(),
+      teamConfigRegistry: fakeRegistry,
+    },
+  });
+  assert.ok(snap.teamConfig, 'teamConfig present');
+  assert.equal(snap.teamConfig.lead.providerId, 'openai');
+});
+
+test('buildSnapshot tolerates missing teamConfigRegistry', async () => {
+  const snap = await buildSnapshot({
+    teamId: 'team-a',
+    deps: {
+      taskBoard: fakeTaskBoard(),
+      eventLog: fakeEventLog(),
+    },
+  });
+  assert.equal(snap.teamConfig, null);
+});
