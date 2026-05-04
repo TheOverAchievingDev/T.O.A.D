@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { callToadApi } from '@/api/client';
+import { callTool as callToadApi } from '@/api/client';
 import { Icon } from './Icon';
 
 /**
