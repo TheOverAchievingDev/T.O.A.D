@@ -13,6 +13,10 @@ test('schema.sql defines drift_findings and drift_score_history with required co
   const db = new DatabaseSync(':memory:');
   db.exec(sql);
 
+  // Parent row required by FOREIGN KEY (team_id) REFERENCES teams(team_id).
+  db.prepare(`INSERT INTO teams (team_id, display_name, created_at)
+              VALUES ('t1', 'Team 1', '2026-05-03T00:00:00Z')`).run();
+
   // drift_findings — sanity-insert one row, then query columns by name.
   db.prepare(`INSERT INTO drift_findings
     (finding_id, run_id, team_id, task_id, category, severity, check_name,

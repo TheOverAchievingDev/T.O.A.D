@@ -243,7 +243,8 @@ CREATE TABLE IF NOT EXISTS drift_findings (
   actual          TEXT NOT NULL,
   recommended     TEXT NOT NULL,
   auto_fixable    INTEGER NOT NULL DEFAULT 0,
-  created_at      TEXT NOT NULL
+  created_at      TEXT NOT NULL,
+  FOREIGN KEY (team_id) REFERENCES teams(team_id)
 );
 CREATE INDEX IF NOT EXISTS idx_drift_findings_team ON drift_findings(team_id);
 CREATE INDEX IF NOT EXISTS idx_drift_findings_task ON drift_findings(task_id);
@@ -259,7 +260,8 @@ CREATE TABLE IF NOT EXISTS drift_score_history (
   per_task_scores_json TEXT NOT NULL,
   findings_count      INTEGER NOT NULL,
   trigger             TEXT NOT NULL,
-  created_at          TEXT NOT NULL
+  created_at          TEXT NOT NULL,
+  FOREIGN KEY (team_id) REFERENCES teams(team_id)
 );
 CREATE INDEX IF NOT EXISTS idx_drift_score_history_team_time
   ON drift_score_history(team_id, created_at DESC);
