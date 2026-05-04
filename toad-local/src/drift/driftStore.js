@@ -2,9 +2,12 @@
  * SQLite-backed reader/writer for drift findings + score history.
  * Engine is the only writer; UI + drift_run callers read.
  *
- * recordRun is atomic: deletes prior findings for the team, inserts the new
- * findings, inserts one score-history row, and runs pruneHistory in a
- * single transaction so a partial run can't leave the tables inconsistent.
+ * recordRun is atomic for findings + history: deletes prior findings for
+ * the team, inserts the new findings, and inserts one score-history row,
+ * all in a single BEGIN/COMMIT transaction. After the transaction
+ * commits, pruneHistory runs as best-effort cleanup (a crash between
+ * commit and prune leaves data correct, just over-sized — the next
+ * recordRun trims again).
  */
 export class SqliteDriftStore {
   constructor({ db, historyKeep = 500 } = {}) {
@@ -52,7 +55,7 @@ export class SqliteDriftStore {
       );
       commit.run();
     } catch (err) {
-      rollback.run();
+      try { rollback.run(); } catch { /* transaction already aborted */ }
       throw err;
     }
     this.pruneHistory({ teamId, keep: this.historyKeep });
@@ -88,8 +91,9 @@ export class SqliteDriftStore {
     }));
   }
 
-  pruneHistory({ teamId, keep = 500 } = {}) {
+  pruneHistory({ teamId, keep } = {}) {
     if (!teamId) return { deleted: 0 };
+    const limit = typeof keep === 'number' ? keep : this.historyKeep;
     const result = this.db.prepare(
       `DELETE FROM drift_score_history
        WHERE team_id = ?
@@ -99,7 +103,7 @@ export class SqliteDriftStore {
            ORDER BY created_at DESC, run_id DESC
            LIMIT ?
          )`
-    ).run(teamId, teamId, keep);
+    ).run(teamId, teamId, limit);
     return { deleted: result.changes };
   }
 }
