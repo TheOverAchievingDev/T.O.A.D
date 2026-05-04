@@ -38,6 +38,22 @@ const driftDb =
 let driftMonitor = null;
 if (driftDb) {
   const driftStore = new SqliteDriftStore({ db: driftDb });
+  // Read drift settings from the project's settings store at startup.
+  // readEffective() is async, so we await it once here and pass the
+  // resolved snapshot to the engine. Falls back to engine's DEFAULT_SETTINGS
+  // when the store is unavailable or read fails.
+  let driftSettings;
+  if (typeof runtime.settingsStore?.readEffective === 'function') {
+    try {
+      const all = await runtime.settingsStore.readEffective();
+      driftSettings = all && typeof all === 'object' ? all : undefined;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[drift] settingsStore.readEffective failed:', err && err.message ? err.message : err);
+      driftSettings = undefined;
+    }
+  }
+
   const driftEngine = new DriftEngine({
     deps: {
       taskBoard: runtime.taskBoard,
@@ -53,18 +69,7 @@ if (driftDb) {
     // + LLM tier-1 + LLM tier-2). Engine's default is DETERMINISTIC_CHECKS,
     // so unit tests stay isolated from real CLI spawns.
     checks: ALL_CHECKS,
-    // Read drift settings from the project's settings store. If unavailable
-    // (no settings store wired) the engine falls back to its DEFAULT_SETTINGS
-    // (llmTierEnabled: true, threshold 41, cooldown 5 min, delta 10).
-    settings: (() => {
-      if (typeof runtime.settingsStore?.readEffective !== 'function') return undefined;
-      try {
-        const all = runtime.settingsStore.readEffective();
-        return all && typeof all === 'object' ? all : undefined;
-      } catch {
-        return undefined;
-      }
-    })(),
+    settings: driftSettings,
   });
   if (runtime.toolFacade) {
     runtime.toolFacade.driftEngine = driftEngine;
