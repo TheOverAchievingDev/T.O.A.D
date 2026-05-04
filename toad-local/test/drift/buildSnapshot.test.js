@@ -52,9 +52,12 @@ function fakeWorktreeManager() {
 function fakeDiffComputer() {
   return {
     computeDiff: ({ worktreePath }) => ({
-      changedFiles: worktreePath === '/wt/task-1'
+      // Real diffComputer returns {diff, files, error} — match that.
+      diff: null,
+      files: worktreePath === '/wt/task-1'
         ? ['src/billing/invoice.js', 'src/auth/oauth.js']
         : [],
+      error: null,
     }),
   };
 }
@@ -106,4 +109,25 @@ test('buildSnapshot returns empty arrays for an unknown team rather than throwin
   });
   assert.equal(snap.tasks.length, 0);
   assert.equal(snap.taskEvents.length, 0);
+});
+
+test('buildSnapshot throws when required taskBoard dep is missing', async () => {
+  await assert.rejects(
+    buildSnapshot({ teamId: 'team-a', deps: { eventLog: fakeEventLog() } }),
+    /taskBoard/,
+  );
+});
+
+test('buildSnapshot throws when required eventLog dep is missing', async () => {
+  await assert.rejects(
+    buildSnapshot({ teamId: 'team-a', deps: { taskBoard: fakeTaskBoard() } }),
+    /eventLog/,
+  );
+});
+
+test('buildSnapshot throws when teamId is missing or empty', async () => {
+  await assert.rejects(
+    buildSnapshot({ deps: { taskBoard: fakeTaskBoard(), eventLog: fakeEventLog() } }),
+    /teamId/,
+  );
 });

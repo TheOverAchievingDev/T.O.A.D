@@ -51,10 +51,15 @@ export async function buildSnapshot({ teamId, deps = {} } = {}) {
     for (const wt of worktrees) {
       if (!wt || typeof wt.path !== 'string' || typeof wt.taskId !== 'string') continue;
       try {
-        diffsByTask[wt.taskId] = diffComputer.computeDiff({
+        const result = diffComputer.computeDiff({
           worktreePath: wt.path,
           baseRef: wt.baseRef ?? 'main',
         });
+        diffsByTask[wt.taskId] = {
+          changedFiles: Array.isArray(result?.files) ? result.files : [],
+          diff: result?.diff ?? null,
+          error: result?.error ?? null,
+        };
       } catch {
         // skip — the check that needs the diff will treat it as empty
       }
