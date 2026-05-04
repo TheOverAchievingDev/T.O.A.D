@@ -25,6 +25,7 @@ import { ToastProvider } from '@/components/ToastSystem';
 import { LogViewerDrawer } from '@/components/LogViewerDrawer';
 import { CostsScreen } from '@/components/CostsScreen';
 import { AuditLogScreen } from '@/components/AuditLogScreen';
+import { DriftScreen } from '@/components/DriftScreen';
 import { FoundryScreen } from '@/components/FoundryScreen';
 import { ShortcutsModal } from '@/components/ShortcutsModal';
 import { useShortcutsHotkey } from '@/hooks/useShortcutsHotkey';
@@ -191,7 +192,7 @@ function AppInner() {
   // screen. Without this the user lands on the workspace with no real
   // data and no obvious "where do I start" affordance.
   useEffect(() => {
-    if (projectRegistry.projects.length === 0 && tweaks.screen !== 'picker' && tweaks.screen !== 'create' && tweaks.screen !== 'settings' && tweaks.screen !== 'foundry') {
+    if (projectRegistry.projects.length === 0 && tweaks.screen !== 'picker' && tweaks.screen !== 'create' && tweaks.screen !== 'settings' && tweaks.screen !== 'foundry' && tweaks.screen !== 'drift') {
       setTweak('screen', 'picker');
     }
   }, [projectRegistry.projects.length, tweaks.screen, setTweak]);
@@ -303,6 +304,7 @@ function AppInner() {
     if (tweaks.screen === 'settings') return 'settings';
     if (tweaks.screen === 'foundry') return 'foundry';
     if (tweaks.screen === 'costs') return 'costs';
+    if (tweaks.screen === 'drift') return 'drift';
     if (tweaks.screen === 'tasks') return 'tasks';
     return 'workspace';
   }, [tweaks]);
@@ -326,6 +328,9 @@ function AppInner() {
         return;
       case 'costs':
         setTweak('screen', 'costs');
+        return;
+      case 'drift':
+        setTweak('screen', 'drift');
         return;
       case 'diagnostics':
         setTweak('showDiagnostics', true);
@@ -484,6 +489,15 @@ function AppInner() {
               team={team}
               onOpenTask={openTaskFromPalette}
               onOpenLogs={(id) => setLogRuntimeId(id)}
+            />
+          )}
+          {tweaks.screen === 'drift' && (
+            <DriftScreen
+              teamId={team.name || activeTeamId}
+              onOpenTask={(id) => {
+                setSelectedTaskId(id);
+                setTweak('screen', 'task');
+              }}
             />
           )}
           {tweaks.screen === 'launching' && (
@@ -756,6 +770,7 @@ function AppInner() {
                 { value: 'settings', label: 'Settings' },
                 { value: 'costs', label: 'Cost dashboard' },
                 { value: 'audit', label: 'Audit log' },
+                { value: 'drift', label: 'Drift monitor' },
                 { value: 'picker', label: 'Project picker' },
                 { value: 'empty', label: 'Empty workspace' },
                 { value: 'onboarding', label: 'Onboarding' },
