@@ -10,7 +10,6 @@ import { AgentInbox } from './AgentInbox';
 import { TaskRiskBadge } from './TaskRiskBadge';
 import { EmptyTasksState } from './EmptyTasksState';
 import { EmptyWorkspace } from './EmptyWorkspace';
-import { useDrift } from '@/hooks/useDrift';
 import { DriftBadge } from './DriftBadge';
 
 interface WorkspaceProps {
@@ -49,6 +48,9 @@ interface WorkspaceProps {
   onComposerSent?: () => void;
   /** Open the team-settings drawer for this team. */
   onOpenTeamSettings?: () => void;
+  /** Per-task drift scores from App-level useDrift. Empty object when
+   *  drift hasn't loaded yet — DriftBadge hides on undefined scores. */
+  perTaskDrift?: Record<string, number>;
 }
 
 function formatTokens(value: number): string {
@@ -126,6 +128,7 @@ export function Workspace({
   onPauseTeam, onEndTeam, agentStreams,
   pendingApprovals = 0, onOpenApprovals, erroredRuntimes = 0,
   composerActor, onComposerSent, onOpenTeamSettings,
+  perTaskDrift = {},
 }: WorkspaceProps) {
   const [pausing, setPausing] = useState(false);
   const [ending, setEnding] = useState(false);
@@ -158,10 +161,8 @@ export function Workspace({
   const [selected, setSelected] = useState<string>(team.members[1]?.id ?? team.members[0]?.id ?? '');
   const [kanbanOpen, setKanbanOpen] = useState(true);
   const [teamView, setTeamView] = useState<'org' | 'graph' | 'list'>('org');
-  // Drift scores keyed by taskId. Mirrors App.tsx's DriftScreen wiring —
-  // team.name is the backend team id. Hook handles null teamId gracefully.
-  const { data: drift } = useDrift({ teamId: team.name || null });
-  const perTaskDrift = drift?.perTaskScores ?? {};
+  // Drift scores arrive via the perTaskDrift prop — App.tsx hosts the
+  // single useDrift loop and threads scores down to every consumer.
   const hasTeam = team.name.trim().length > 0 || team.members.length > 0;
   const inboxAgent = hasTeam && agentInbox ? team.members.find((m) => m.id === agentInbox) : null;
 

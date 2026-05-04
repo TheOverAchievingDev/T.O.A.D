@@ -4,7 +4,6 @@ import { roleStyle } from '@/data/roles';
 import { Icon, type IconName } from './Icon';
 import { TaskRiskBadge } from './TaskRiskBadge';
 import { EmptyTasksState } from './EmptyTasksState';
-import { useDrift } from '@/hooks/useDrift';
 import { DriftBadge } from './DriftBadge';
 
 type TasksView = 'kanban' | 'list';
@@ -14,6 +13,9 @@ interface TasksScreenProps {
   tasks: UiTask[];
   onOpenTask: (id: string) => void;
   onCreateTask?: () => void;
+  /** Per-task drift scores from App-level useDrift. Empty object when
+   *  drift hasn't loaded yet — DriftBadge hides on undefined scores. */
+  perTaskDrift?: Record<string, number>;
 }
 
 const KANBAN_COLS: { key: TaskStatus; label: string; icon: IconName }[] = [
@@ -32,14 +34,13 @@ const STATUS_LABEL: Record<TaskStatus, string> = {
   'rejected': 'Rejected',
 };
 
-export function TasksScreen({ team, tasks, onOpenTask, onCreateTask }: TasksScreenProps) {
+export function TasksScreen({ team, tasks, onOpenTask, onCreateTask, perTaskDrift = {} }: TasksScreenProps) {
   const [view, setView] = useState<TasksView>('kanban');
   const [query, setQuery] = useState('');
-  // Mirror App.tsx's DriftScreen wiring: team.name is the team id used by
-  // the backend. Drift findings carry taskId — UiTask.id IS that taskId
-  // (see normalizeTask in useToadData).
-  const { data: drift } = useDrift({ teamId: team.name || null });
-  const perTask = drift?.perTaskScores ?? {};
+  // Drift scores arrive via the perTaskDrift prop — App.tsx hosts the
+  // single useDrift loop and threads scores down to every consumer.
+  // UiTask.id IS the backend's taskId (see normalizeTask in useToadData).
+  const perTask = perTaskDrift;
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

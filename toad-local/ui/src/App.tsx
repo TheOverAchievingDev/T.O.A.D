@@ -44,6 +44,7 @@ import { useCommandPaletteHotkey } from '@/hooks/useCommandPaletteHotkey';
 import { useEventToasts, type NotificationsConfig } from '@/hooks/useEventToasts';
 import { pickAndSwitchProjectFolder, getSavedProjectPath, clearSavedProjectPath } from '@/integrations/tauri';
 import { callTool as callToadApi } from '@/api/client';
+import { useDrift } from '@/hooks/useDrift';
 
 export default function App() {
   return (
@@ -83,6 +84,11 @@ function AppInner() {
   const [logRuntimeId, setLogRuntimeId] = useState<string | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const projectRegistry = useProjects();
+  // Single drift polling loop for the whole app — lifted from
+  // Workspace + TasksScreen + DriftScreen so we don't triple-poll.
+  // Each consumer gets the slice it needs as a prop.
+  const drift = useDrift({ teamId: team.name || activeTeamId });
+  const perTaskDrift = drift.data?.perTaskScores ?? {};
 
   const pickProjectFolder = useCallback(async () => {
     const picked = await pickAndSwitchProjectFolder();
@@ -428,6 +434,7 @@ function AppInner() {
                 setTweak('screen', 'task');
               }}
               onCreateTask={() => setTaskCreateOpen(true)}
+              perTaskDrift={perTaskDrift}
             />
           )}
           {tweaks.screen === 'foundry' && (
@@ -494,6 +501,10 @@ function AppInner() {
           {tweaks.screen === 'drift' && (
             <DriftScreen
               teamId={team.name || activeTeamId}
+              data={drift.data}
+              loading={drift.loading}
+              error={drift.error}
+              refresh={drift.refresh}
               onOpenTask={(id) => {
                 setSelectedTaskId(id);
                 setTweak('screen', 'task');
@@ -554,6 +565,7 @@ function AppInner() {
               }}
               onComposerSent={refresh}
               onOpenTeamSettings={() => setShowTeamSettings(true)}
+              perTaskDrift={perTaskDrift}
             />
           )}
         </div>

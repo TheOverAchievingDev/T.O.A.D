@@ -1,9 +1,18 @@
 import { useMemo, useState } from 'react';
 import { Icon } from './Icon';
-import { useDrift, type DriftFinding } from '@/hooks/useDrift';
+import type { DriftFinding, DriftRunResult } from '@/hooks/useDrift';
 
 interface DriftScreenProps {
+  /** The team this drift run reports on. Used only for the empty-state
+   *  message when no team is active; the actual data comes from the
+   *  parent's lifted useDrift hook (App.tsx). */
   teamId: string | null;
+  /** Drift state lifted up to App.tsx so Workspace + TasksScreen +
+   *  DriftScreen all share one polling loop. */
+  data: DriftRunResult | null;
+  loading: boolean;
+  error: string | null;
+  refresh: () => Promise<void>;
   onOpenTask?: (taskId: string) => void;
 }
 
@@ -31,8 +40,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   risk:         'Risk',
 };
 
-export function DriftScreen({ teamId, onOpenTask }: DriftScreenProps) {
-  const { data, loading, error, refresh } = useDrift({ teamId });
+export function DriftScreen({ teamId, data, loading, error, refresh, onOpenTask }: DriftScreenProps) {
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterSeverity, setFilterSeverity] = useState<string>('all');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
