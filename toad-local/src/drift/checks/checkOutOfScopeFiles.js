@@ -36,7 +36,7 @@ export function checkOutOfScopeFiles({ snapshot } = {}) {
       findings.push({
         id: stableFindingId({
           checkName: CHECK_NAME, category: CATEGORY, taskId: task.taskId,
-          salient: file,
+          salient: `${file}|allowed:${allowed.join(',')}|forbidden:${forbidden.join(',')}`,
         }),
         runId: '',
         teamId: snapshot.teamId,
@@ -61,8 +61,12 @@ export function checkOutOfScopeFiles({ snapshot } = {}) {
 }
 
 /**
- * Minimal glob: supports **, *, and literal segments. Same shape the
- * project's risk policy uses.
+ * Minimal glob: `**` matches any path (across `/`), `*` matches one segment,
+ * `?` matches a single non-`/` char, plus literal segments. Defined locally
+ * rather than reused from src/policy/riskClassifier.js because that helper
+ * uses prefix matching (e.g. `endsWith('/**')`) and doesn't support
+ * arbitrary segment wildcards we need here. Hoisting to a shared utility
+ * is a candidate for slice 2.
  */
 function globMatch(pattern, file) {
   const re = new RegExp('^' + pattern
@@ -70,6 +74,7 @@ function globMatch(pattern, file) {
     .replace(/\*\*/g, '@@DOUBLESTAR@@')
     .replace(/\*/g, '[^/]*')
     .replace(/@@DOUBLESTAR@@/g, '.*')
+    .replace(/\?/g, '[^/]')
     + '$');
   return re.test(file);
 }

@@ -73,3 +73,16 @@ test('skips tasks not in active statuses', () => {
     assert.equal(findings.length, 1, `status=${status} should be checked`);
   }
 });
+
+test('? glob matches a single non-slash character', () => {
+  const findings = checkOutOfScopeFiles({
+    snapshot: makeSnap({
+      // Allow only files exactly 1 char long under src/, like src/a.js
+      allowedFiles: ['src/?.js'],
+      changedFiles: ['src/a.js', 'src/abc.js'], // a.js matches; abc.js doesn't
+    }),
+  });
+  // src/abc.js is out of scope (3 chars don't match `?`)
+  assert.equal(findings.length, 1);
+  assert.match(findings[0].actual, /abc\.js/);
+});
