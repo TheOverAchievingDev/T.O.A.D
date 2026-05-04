@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { LocalToadRuntime } from '../src/app/LocalToadRuntime.js';
 import { SqliteDriftStore } from '../src/drift/driftStore.js';
 import { DriftEngine } from '../src/drift/driftEngine.js';
+import { ALL_CHECKS } from '../src/drift/checks/index.js';
 import { DriftMonitor } from '../src/drift/driftMonitor.js';
 
 // Project resolution:
@@ -43,10 +44,27 @@ if (driftDb) {
       eventLog: runtime.eventLog,
       foundryStore: runtime.foundryStore,
       worktreeManager: runtime.worktreeManager,
+      teamConfigRegistry: runtime.teamConfigRegistry,
       // diffComputer not constructed in LocalToadRuntime — buildSnapshot
       // tolerates missing optional deps.
     },
     store: driftStore,
+    // Slice 2: opt INTO the LLM tier by passing ALL_CHECKS (deterministic
+    // + LLM tier-1 + LLM tier-2). Engine's default is DETERMINISTIC_CHECKS,
+    // so unit tests stay isolated from real CLI spawns.
+    checks: ALL_CHECKS,
+    // Read drift settings from the project's settings store. If unavailable
+    // (no settings store wired) the engine falls back to its DEFAULT_SETTINGS
+    // (llmTierEnabled: true, threshold 41, cooldown 5 min, delta 10).
+    settings: (() => {
+      if (typeof runtime.settingsStore?.readEffective !== 'function') return undefined;
+      try {
+        const all = runtime.settingsStore.readEffective();
+        return all && typeof all === 'object' ? all : undefined;
+      } catch {
+        return undefined;
+      }
+    })(),
   });
   if (runtime.toolFacade) {
     runtime.toolFacade.driftEngine = driftEngine;
