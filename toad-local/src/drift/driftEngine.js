@@ -1,16 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { buildSnapshot } from './buildSnapshot.js';
 import { scoreFindings } from './scoreFindings.js';
-import { ALL_CHECKS } from './checks/index.js';
+import { DETERMINISTIC_CHECKS } from './checks/index.js';
 import { escalationGate } from './llm/escalationGate.js';
 
 const DEFAULT_SETTINGS = Object.freeze({
   drift: Object.freeze({
-    // Default opt-out: LLM tier is a no-op unless callers explicitly
-    // enable it via settings.drift.llmTierEnabled. Callers that don't
-    // pass settings (back-compat with the slice-1 engine) get the
-    // deterministic-only behavior they had before.
-    llmTierEnabled: false,
+    llmTierEnabled: true,
     escalationThreshold: 41,
     tier2CooldownMs: 300_000,
     tier2ScoreDelta: 10,
@@ -35,12 +31,23 @@ const DEFAULT_SETTINGS = Object.freeze({
  * Per-team mutex: only one runDrift({teamId}) is in flight at a time.
  * In-memory cooldown state: lost on sidecar restart (acceptable per spec
  * §4.3 — heuristic re-warms in <60s).
+ *
+ * Default `checks` is the slice-1 deterministic registry. Production
+ * wiring (scripts/dev-api-server.mjs) opts into the slice-2 LLM tier
+ * by passing `checks: ALL_CHECKS` from `./checks/index.js`. Tests that
+ * want the LLM tier active inject their own check list.
  */
 export class DriftEngine {
   #inflight = new Map();
   #tier2Cooldown = new Map(); // teamId -> { lastRunAt, lastScore }
 
-  constructor({ deps, store, checks = ALL_CHECKS, settings = DEFAULT_SETTINGS, now = Date.now } = {}) {
+  constructor({
+    deps,
+    store,
+    checks = DETERMINISTIC_CHECKS,
+    settings = DEFAULT_SETTINGS,
+    now = Date.now,
+  } = {}) {
     if (!deps) throw new TypeError('DriftEngine: deps required');
     if (!store || typeof store.recordRun !== 'function') {
       throw new TypeError('DriftEngine: store with recordRun required');
