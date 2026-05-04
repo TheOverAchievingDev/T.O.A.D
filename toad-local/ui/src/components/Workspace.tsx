@@ -10,6 +10,8 @@ import { AgentInbox } from './AgentInbox';
 import { TaskRiskBadge } from './TaskRiskBadge';
 import { EmptyTasksState } from './EmptyTasksState';
 import { EmptyWorkspace } from './EmptyWorkspace';
+import { useDrift } from '@/hooks/useDrift';
+import { DriftBadge } from './DriftBadge';
 
 interface WorkspaceProps {
   team: Team;
@@ -156,6 +158,10 @@ export function Workspace({
   const [selected, setSelected] = useState<string>(team.members[1]?.id ?? team.members[0]?.id ?? '');
   const [kanbanOpen, setKanbanOpen] = useState(true);
   const [teamView, setTeamView] = useState<'org' | 'graph' | 'list'>('org');
+  // Drift scores keyed by taskId. Mirrors App.tsx's DriftScreen wiring —
+  // team.name is the backend team id. Hook handles null teamId gracefully.
+  const { data: drift } = useDrift({ teamId: team.name || null });
+  const perTaskDrift = drift?.perTaskScores ?? {};
   const hasTeam = team.name.trim().length > 0 || team.members.length > 0;
   const inboxAgent = hasTeam && agentInbox ? team.members.find((m) => m.id === agentInbox) : null;
 
@@ -441,6 +447,7 @@ export function Workspace({
                                       style={{ marginLeft: 6 }}
                                     />
                                   )}
+                                  <DriftBadge score={perTaskDrift[task.id]} />
                                   {member && (
                                     <span style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--accent)' }}>
                                       {member.name}
