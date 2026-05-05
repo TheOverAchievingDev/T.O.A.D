@@ -130,6 +130,33 @@ function AppInner() {
   const handleEndTeam = useCallback(async () => {
     const teamId = team.name || activeTeamId;
     if (!teamId) return;
+
+    // Slice-1 plugin warning: check live resources before delete.
+    // The resources are NOT auto-deprovisioned in slice 1 — operator must
+    // remove them in the plugin's dashboard.
+    let pluginResources: { resourceId: string; pluginId: string; kind: string; externalId: string }[] = [];
+    try {
+      const r = await callToadApi({
+        actor: { teamId, agentId: 'ui-client', role: 'human' },
+        method: 'plugin_resource_list',
+        args: { teamId },
+      }) as { resources: typeof pluginResources };
+      pluginResources = r.resources ?? [];
+    } catch {
+      // Best-effort: if the plugin tool isn't registered or the call fails,
+      // fall through to the normal delete flow.
+    }
+
+    if (pluginResources.length > 0) {
+      const list = pluginResources.map((r) => `  • ${r.pluginId}/${r.kind} (${r.externalId})`).join('\n');
+      const proceed = window.confirm(
+        `This team has ${pluginResources.length} live plugin resource${pluginResources.length === 1 ? '' : 's'}:\n\n${list}\n\n`
+        + `These will NOT be auto-deprovisioned. They will continue to incur cost until you remove them in their respective dashboards.\n\n`
+        + `Continue with team deletion?`,
+      );
+      if (!proceed) return;
+    }
+
     try {
       // Stop runtimes first so we don't leak orphan claude processes.
       await callToadApi({
