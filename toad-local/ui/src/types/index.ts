@@ -23,6 +23,8 @@ export interface AgentActivity {
   kind: AgentActivityKind;
   /** Short human-readable label (e.g. "Reading product-brief.md", "Created task CP-001"). */
   label: string;
+  /** Raw tool name when kind is "tool"; used for compact verb-form UI labels. */
+  tool?: string;
   /** ISO timestamp the activity was observed. */
   at: string;
 }

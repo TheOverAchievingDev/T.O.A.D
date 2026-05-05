@@ -327,7 +327,7 @@ export function DriftScreen({ teamId, data, loading, error, refresh, onOpenTask 
           selectedFindings={
             Array.from(selectedFindingIds)
               .map((id) => sortedFindings.find((f) => f.id === id))
-              .filter((f): f is DriftFindingForModal => Boolean(f))
+              .filter((f): f is DriftFinding => Boolean(f))
               .map((f) => ({
                 id: f.id,
                 taskId: f.taskId,

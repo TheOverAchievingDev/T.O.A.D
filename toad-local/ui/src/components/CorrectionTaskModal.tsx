@@ -33,7 +33,7 @@ function inferRiskLevel(findings: DriftFindingForModal[]): 'low' | 'medium' | 'h
   for (const f of findings) {
     const r = SEVERITY_TO_RISK[f.severity] ?? 'low';
     if (r === 'high') return 'high';
-    if (r === 'medium' && max !== 'high') max = 'medium';
+    if (r === 'medium') max = 'medium';
   }
   return max;
 }

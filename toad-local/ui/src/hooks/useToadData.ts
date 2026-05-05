@@ -277,8 +277,9 @@ function deriveAgentActivity(event: RuntimeEvent): AgentActivity | null {
     const input =
       ((event as { raw?: { message?: { content?: Array<{ input?: unknown }> } } }).raw?.message?.content?.[0]?.input as Record<string, unknown> | undefined)
       || (event as { input?: Record<string, unknown> }).input;
-    const summary = summarizeToolCall(String(toolName), input);
-    return { kind: 'tool', label: summary, at };
+    const tool = String(toolName);
+    const summary = summarizeToolCall(tool, input);
+    return { kind: 'tool', label: summary, tool: tool.replace(/^mcp__[^_]+__/, ''), at };
   }
   if (event.type === 'assistant_text') {
     const text =

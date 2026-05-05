@@ -5,7 +5,8 @@ export type IconName =
   | 'moreH' | 'settings' | 'bell' | 'search' | 'users' | 'user' | 'minimize' | 'maxBtn'
   | 'github' | 'layers' | 'folder' | 'git' | 'play' | 'pause' | 'send' | 'mic'
   | 'paperclip' | 'inbox' | 'list' | 'kanban' | 'trash' | 'edit' | 'code' | 'terminal'
-  | 'sparkle' | 'sun' | 'moon' | 'drag' | 'cpu' | 'workflow' | 'info' | 'file' | 'check' | 'eye';
+  | 'sparkle' | 'sun' | 'moon' | 'drag' | 'cpu' | 'workflow' | 'info' | 'file' | 'check' | 'eye'
+  | 'refresh';
 
 interface IconProps {
   name: IconName;
@@ -56,6 +57,7 @@ const PATHS: Record<IconName, ReactNode> = {
   file: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></>,
   check: <polyline points="20 6 9 17 4 12"/>,
   eye: <><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></>,
+  refresh: <><path d="M21 12a9 9 0 0 1-15.5 6.3"/><path d="M3 12A9 9 0 0 1 18.5 5.7"/><path d="M18 2v4h4"/><path d="M6 22v-4H2"/></>,
 };
 
 export function Icon({ name, size = 16, className = '', style }: IconProps) {
