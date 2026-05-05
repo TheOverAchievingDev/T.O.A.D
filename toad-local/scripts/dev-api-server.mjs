@@ -3,6 +3,8 @@ import { LocalToadRuntime } from '../src/app/LocalToadRuntime.js';
 import { SqliteDriftStore } from '../src/drift/driftStore.js';
 import { DriftEngine } from '../src/drift/driftEngine.js';
 import { ALL_CHECKS } from '../src/drift/checks/index.js';
+import { SqlitePluginJobs } from '../src/plugins/pluginJobs.js';
+import { SqlitePluginResources } from '../src/plugins/pluginResources.js';
 import { DriftMonitor } from '../src/drift/driftMonitor.js';
 
 // Project resolution:
@@ -112,6 +114,18 @@ if (driftDb) {
 } else {
   // eslint-disable-next-line no-console
   console.warn('[drift] no SQLite handle available on runtime — drift engine disabled');
+}
+
+let pluginJobs = null;
+let pluginResources = null;
+if (driftDb) {
+  pluginJobs = new SqlitePluginJobs({ db: driftDb });
+  pluginResources = new SqlitePluginResources({ db: driftDb });
+}
+
+if (runtime.toolFacade) {
+  runtime.toolFacade.pluginJobs = pluginJobs;
+  runtime.toolFacade.pluginResources = pluginResources;
 }
 
 await runtime.start();
