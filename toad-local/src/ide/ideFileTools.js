@@ -85,7 +85,7 @@ export function readIdeFile({
 }) {
   const root = resolveIdeSourceRoot({ projectCwd, taskBoard, teamId, source });
   const resolved = resolveInsideRoot(root.rootPath, relativePath);
-  const stats = statSync(resolved.absolutePath);
+  const stats = withReadFileErrors(() => statSync(resolved.absolutePath));
 
   if (stats.isDirectory()) {
     throw new Error('ide_read_file: cannot read directory');
@@ -97,7 +97,7 @@ export function readIdeFile({
     throw new Error('ide_read_file: file too large');
   }
 
-  const bytes = readFileSync(resolved.absolutePath);
+  const bytes = withReadFileErrors(() => readFileSync(resolved.absolutePath));
   if (isBinaryBuffer(bytes)) {
     throw new Error('ide_read_file: binary file');
   }
@@ -189,8 +189,8 @@ function resolveInsideRoot(rootPath, relativePath) {
     throw new Error('ide_read_file: path outside source root');
   }
 
-  const realRootPath = realpathSync(rootPath);
-  const realTargetPath = realpathSync(absolutePath);
+  const realRootPath = withReadFileErrors(() => realpathSync(rootPath));
+  const realTargetPath = withReadFileErrors(() => realpathSync(absolutePath));
   const realRelativeToRoot = path.relative(realRootPath, realTargetPath);
   if (realRelativeToRoot.startsWith('..') || path.isAbsolute(realRelativeToRoot)) {
     throw new Error('ide_read_file: path outside source root');
@@ -200,6 +200,17 @@ function resolveInsideRoot(rootPath, relativePath) {
     absolutePath: realTargetPath,
     relativePath: toPosixPath(relativeToRoot),
   };
+}
+
+function withReadFileErrors(operation) {
+  try {
+    return operation();
+  } catch (error) {
+    if (error?.message?.startsWith('ide_read_file:')) {
+      throw error;
+    }
+    throw new Error(`ide_read_file: ${error?.message || 'filesystem error'}`);
+  }
 }
 
 function isBinaryBuffer(bytes) {

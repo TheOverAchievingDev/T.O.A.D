@@ -103,6 +103,10 @@ test('listIdeTree returns text project files and skips ignored directories inclu
     writeProjectFile(tmp.dir, 'node_modules/pkg/index.js', 'module.exports = {};\n');
     writeProjectFile(tmp.dir, '.git/config', '[core]\n');
     writeProjectFile(tmp.dir, '.toad/mcp-configs/server.json', '{}\n');
+    writeProjectFile(tmp.dir, 'dist/bundle.js', 'bundle\n');
+    writeProjectFile(tmp.dir, 'build/output.js', 'output\n');
+    writeProjectFile(tmp.dir, '.vite/cache.js', 'cache\n');
+    writeProjectFile(tmp.dir, 'coverage/lcov.info', 'coverage\n');
 
     const result = listIdeTree({
       projectCwd: tmp.dir,
@@ -117,6 +121,10 @@ test('listIdeTree returns text project files and skips ignored directories inclu
     assert.equal(result.entries.some((entry) => entry.path.startsWith('node_modules/')), false);
     assert.equal(result.entries.some((entry) => entry.path.startsWith('.git/')), false);
     assert.equal(result.entries.some((entry) => entry.path.startsWith('.toad/mcp-configs/')), false);
+    assert.equal(result.entries.some((entry) => entry.path.startsWith('dist/')), false);
+    assert.equal(result.entries.some((entry) => entry.path.startsWith('build/')), false);
+    assert.equal(result.entries.some((entry) => entry.path.startsWith('.vite/')), false);
+    assert.equal(result.entries.some((entry) => entry.path.startsWith('coverage/')), false);
     assert.equal(result.entries.find((entry) => entry.path === 'src').kind, 'directory');
     assert.equal(result.entries.find((entry) => entry.path === 'README.md').kind, 'file');
     assert.equal(typeof result.entries.find((entry) => entry.path === 'README.md').sizeBytes, 'number');
@@ -206,6 +214,38 @@ test('readIdeFile reads utf8 files with a language hint for TypeScript', () => {
   }
 });
 
+test('readIdeFile returns required language hints by extension', () => {
+  const tmp = makeTmpProject();
+  try {
+    const cases = [
+      ['file.js', 'javascript'],
+      ['file.jsx', 'javascriptreact'],
+      ['file.ts', 'typescript'],
+      ['file.tsx', 'typescriptreact'],
+      ['file.json', 'json'],
+      ['file.md', 'markdown'],
+      ['file.css', 'css'],
+      ['file.html', 'html'],
+      ['file.rs', 'rust'],
+      ['file.sql', 'sql'],
+      ['file.yml', 'yaml'],
+      ['file.yaml', 'yaml'],
+    ];
+
+    for (const [relativePath, languageHint] of cases) {
+      writeProjectFile(tmp.dir, relativePath, 'content\n');
+      const result = readIdeFile({
+        projectCwd: tmp.dir,
+        source: { kind: 'project' },
+        relativePath,
+      });
+      assert.equal(result.languageHint, languageHint, relativePath);
+    }
+  } finally {
+    tmp.cleanup();
+  }
+});
+
 test('readIdeFile rejects traversal outside source root', () => {
   const tmp = makeTmpProject();
   try {
@@ -214,6 +254,25 @@ test('readIdeFile rejects traversal outside source root', () => {
         projectCwd: tmp.dir,
         source: { kind: 'project' },
         relativePath: '../outside.txt',
+      }),
+      /ide_read_file: path outside source root/,
+    );
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('readIdeFile rejects absolute paths', () => {
+  const tmp = makeTmpProject();
+  try {
+    const absolutePath = join(tmp.dir, 'inside.txt');
+    writeFileSync(absolutePath, 'inside\n');
+
+    assert.throws(
+      () => readIdeFile({
+        projectCwd: tmp.dir,
+        source: { kind: 'project' },
+        relativePath: absolutePath,
       }),
       /ide_read_file: path outside source root/,
     );
@@ -247,6 +306,40 @@ test('readIdeFile rejects symlinks that resolve outside source root', (t) => {
     );
   } finally {
     outside.cleanup();
+    tmp.cleanup();
+  }
+});
+
+test('readIdeFile rejects directories', () => {
+  const tmp = makeTmpProject();
+  try {
+    mkdirSync(join(tmp.dir, 'src'), { recursive: true });
+
+    assert.throws(
+      () => readIdeFile({
+        projectCwd: tmp.dir,
+        source: { kind: 'project' },
+        relativePath: 'src',
+      }),
+      /ide_read_file: cannot read directory/,
+    );
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('readIdeFile wraps missing file errors with command prefix', () => {
+  const tmp = makeTmpProject();
+  try {
+    assert.throws(
+      () => readIdeFile({
+        projectCwd: tmp.dir,
+        source: { kind: 'project' },
+        relativePath: 'missing.txt',
+      }),
+      /ide_read_file: .*missing\.txt/,
+    );
+  } finally {
     tmp.cleanup();
   }
 });
