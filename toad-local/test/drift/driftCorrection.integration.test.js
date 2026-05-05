@@ -29,7 +29,7 @@ function makeInMemoryTaskBoard() {
       tasks.set(taskId, row);
       return row;
     },
-    get({ taskId }) {
+    getTask({ teamId: _teamId, taskId }) {
       return tasks.get(taskId) ?? null;
     },
     setStatus(taskId, status) {

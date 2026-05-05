@@ -326,7 +326,7 @@ export class LocalToolFacade {
       case COMMANDS.DRIFT_RUN:
         return this.#driftRun(actor, args);
       case COMMANDS.DRIFT_CORRECTION_CREATE:
-        return this.#driftCorrectionCreate(actor, args);
+        return this.#driftCorrectionCreate(actor, command.idempotencyKey, args);
       default:
         throw new Error(`unsupported command: ${commandName}`);
     }
@@ -1545,7 +1545,7 @@ export class LocalToolFacade {
     return this.driftEngine.runDrift({ teamId, trigger });
   }
 
-  async #driftCorrectionCreate(actor, args) {
+  async #driftCorrectionCreate(actor, idempotencyKey, args) {
     const driftStore = this.driftEngine?.store ?? null;
     if (!driftStore) {
       throw new Error('drift_correction_create: driftStore not configured for this facade (driftEngine missing or has no .store)');
@@ -1562,6 +1562,7 @@ export class LocalToolFacade {
         rawBoard.appendEvent({
           teamId: tId,
           taskId,
+          idempotencyKey,                    // FORWARD the caller's key
           eventType: TASK_EVENT_TYPES.CREATED,
           actorId: 'drift_correction',
           payload: { subject, description: description || '', riskLevel, source },

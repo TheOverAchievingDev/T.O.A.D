@@ -180,7 +180,7 @@ test('runDrift calls reapResolvedCorrections with deps.taskBoard each run', asyn
     taskBoard: {
       listTasks: () => [],
       listEvents: () => [],
-      get: ({ taskId }) => taskId === 'task_done' ? { taskId, status: 'done' } : null,
+      getTask: ({ taskId }) => taskId === 'task_done' ? { taskId, status: 'done' } : null,
     },
   };
 

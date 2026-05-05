@@ -163,14 +163,14 @@ export class SqliteDriftStore {
    * Returns { reaped: <rows cleared> }.
    */
   reapResolvedCorrections({ teamId, taskBoard } = {}) {
-    if (!teamId || !taskBoard || typeof taskBoard.get !== 'function') {
+    if (!teamId || !taskBoard || typeof taskBoard.getTask !== 'function') {
       return { reaped: 0 };
     }
     const linkages = this.getCorrectionLinkages({ teamId });
     if (linkages.size === 0) return { reaped: 0 };
 
     const RESOLVED_OR_GONE = (taskId) => {
-      const task = taskBoard.get({ taskId });
+      const task = taskBoard.getTask({ teamId, taskId });
       if (!task) return true;
       return task.status === 'done' || task.status === 'rejected';
     };

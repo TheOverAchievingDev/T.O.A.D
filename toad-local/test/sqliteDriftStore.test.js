@@ -205,7 +205,7 @@ test('SqliteDriftStore.reapResolvedCorrections clears linkage when task is done'
   store.linkCorrection({ findingIds: ['f1'], correctionTaskId: 'task_done' });
 
   const fakeTaskBoard = {
-    get: ({ taskId }) => taskId === 'task_done'
+    getTask: ({ taskId }) => taskId === 'task_done'
       ? { taskId: 'task_done', status: 'done' }
       : null,
   };
@@ -228,7 +228,7 @@ test('SqliteDriftStore.reapResolvedCorrections leaves in-progress task linkages 
   store.linkCorrection({ findingIds: ['f1'], correctionTaskId: 'task_inprog' });
 
   const fakeTaskBoard = {
-    get: ({ taskId }) => ({ taskId, status: 'in_progress' }),
+    getTask: ({ taskId }) => ({ taskId, status: 'in_progress' }),
   };
 
   const result = store.reapResolvedCorrections({ teamId: 'team-a', taskBoard: fakeTaskBoard });
@@ -247,7 +247,7 @@ test('SqliteDriftStore.reapResolvedCorrections clears linkage when task is rejec
   store.linkCorrection({ findingIds: ['f1'], correctionTaskId: 'task_rejected' });
 
   const fakeTaskBoard = {
-    get: () => ({ taskId: 'task_rejected', status: 'rejected' }),
+    getTask: () => ({ taskId: 'task_rejected', status: 'rejected' }),
   };
   const result = store.reapResolvedCorrections({ teamId: 'team-a', taskBoard: fakeTaskBoard });
   assert.equal(result.reaped, 1);
@@ -263,7 +263,7 @@ test('SqliteDriftStore.reapResolvedCorrections clears linkage when task is missi
   });
   store.linkCorrection({ findingIds: ['f1'], correctionTaskId: 'task_gone' });
 
-  const fakeTaskBoard = { get: () => null };
+  const fakeTaskBoard = { getTask: () => null };
   const result = store.reapResolvedCorrections({ teamId: 'team-a', taskBoard: fakeTaskBoard });
   assert.equal(result.reaped, 1);
 });
@@ -284,4 +284,27 @@ test('SqliteDriftStore.recordRun writes correctionTaskId from finding when prese
   const f2 = findings.find((f) => f.id === 'f2');
   assert.equal(f1.correctionTaskId, 'task_persist');
   assert.equal(f2.correctionTaskId, null);
+});
+
+test('SqliteDriftStore.reapResolvedCorrections works with a real-shaped taskBoard (uses .getTask, not .get)', () => {
+  const { store } = makeStore();
+  store.recordRun({
+    runId: 'r1', teamId: 'team-a', asOf: '2026-05-04T00:00:00Z',
+    teamScore: 50, status: 'warning',
+    categoryScores: {}, perTaskScores: {}, trigger: 'manual',
+    findings: [makeFinding({ id: 'f1', taskId: 't1' })],
+  });
+  store.linkCorrection({ findingIds: ['f1'], correctionTaskId: 'task_real' });
+
+  // Real-shaped board: only `.getTask`, no `.get`. This was the silent
+  // no-op bug — the prior guard checked `typeof taskBoard.get` and the
+  // real boards don't have that method.
+  const realShapedBoard = {
+    getTask: ({ teamId: t, taskId }) =>
+      taskId === 'task_real' ? { taskId, teamId: t, status: 'done' } : null,
+  };
+
+  const result = store.reapResolvedCorrections({ teamId: 'team-a', taskBoard: realShapedBoard });
+  assert.equal(result.reaped, 1, 'reap must call getTask, not get');
+  assert.equal(store.getCorrectionLinkages({ teamId: 'team-a' }).size, 0);
 });
