@@ -265,3 +265,43 @@ CREATE TABLE IF NOT EXISTS drift_score_history (
 );
 CREATE INDEX IF NOT EXISTS idx_drift_score_history_team_time
   ON drift_score_history(team_id, created_at DESC);
+
+-- Plugin Slice 0+1 — see docs/superpowers/specs/2026-05-04-plugin-slice-0-1-railway-design.md
+-- Background-job tracker for long-running plugin actions (EAS builds,
+-- Vercel deploys, etc). Mostly unused in slice 1 (Railway is synchronous);
+-- table exists so slice 2 (EAS) can plug in without a schema migration.
+CREATE TABLE IF NOT EXISTS plugin_jobs (
+  job_id          TEXT PRIMARY KEY,
+  team_id         TEXT NOT NULL,
+  plugin_id       TEXT NOT NULL,
+  action          TEXT NOT NULL,
+  state           TEXT NOT NULL,
+  args_json       TEXT NOT NULL,
+  log_tail        TEXT,
+  started_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL,
+  finished_at     TEXT,
+  error           TEXT,
+  FOREIGN KEY (team_id) REFERENCES teams(team_id)
+);
+CREATE INDEX IF NOT EXISTS idx_plugin_jobs_team ON plugin_jobs(team_id);
+CREATE INDEX IF NOT EXISTS idx_plugin_jobs_state ON plugin_jobs(state);
+
+-- Provisioned-resource tracker. Used immediately by Railway's idempotency
+-- check (the partial index makes "is there a live Postgres for this team?"
+-- a single index lookup). Cleanup-on-team-delete reads from this table.
+CREATE TABLE IF NOT EXISTS plugin_resources (
+  resource_id     TEXT PRIMARY KEY,
+  team_id         TEXT NOT NULL,
+  plugin_id       TEXT NOT NULL,
+  kind            TEXT NOT NULL,
+  external_id     TEXT NOT NULL,
+  metadata_json   TEXT NOT NULL DEFAULT '{}',
+  created_at      TEXT NOT NULL,
+  deprovisioned_at TEXT,
+  FOREIGN KEY (team_id) REFERENCES teams(team_id)
+);
+CREATE INDEX IF NOT EXISTS idx_plugin_resources_team ON plugin_resources(team_id);
+CREATE INDEX IF NOT EXISTS idx_plugin_resources_live
+  ON plugin_resources(team_id, plugin_id, kind)
+  WHERE deprovisioned_at IS NULL;
