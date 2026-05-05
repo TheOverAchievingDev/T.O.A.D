@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classify, RISK_LEVEL_ORDER } from '../src/policy/riskClassifier.js';
+import { classify, RISK_LEVEL_ORDER, classifyToolCall } from '../src/policy/riskClassifier.js';
 
 test('RISK_LEVEL_ORDER is the canonical low→critical ordering', () => {
   assert.deepEqual(RISK_LEVEL_ORDER, ['low', 'medium', 'high', 'critical']);
@@ -183,4 +183,24 @@ test('classify is robust to malformed rule entries (skipped, not crashing)', () 
   });
   assert.equal(r.riskLevel, 'high');
   assert.equal(r.matchedRules.length, 1);
+});
+
+test('classifyToolCall: railway_provision_db → medium', () => {
+  const v = classifyToolCall({ toolName: 'railway_provision_db' });
+  assert.equal(v.riskLevel, 'medium');
+});
+
+test('classifyToolCall: railway_run_migration → high', () => {
+  const v = classifyToolCall({ toolName: 'railway_run_migration' });
+  assert.equal(v.riskLevel, 'high');
+});
+
+test('classifyToolCall: railway_link → low', () => {
+  const v = classifyToolCall({ toolName: 'railway_link' });
+  assert.equal(v.riskLevel, 'low');
+});
+
+test('classifyToolCall: unknown tool → null (defer to default)', () => {
+  const v = classifyToolCall({ toolName: 'something_unknown' });
+  assert.equal(v.riskLevel, null);
 });

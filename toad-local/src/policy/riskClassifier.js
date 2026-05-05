@@ -10,6 +10,8 @@
  * policy object from disk.
  */
 
+import { PLUGIN_COMMANDS } from '../plugins/pluginRegistry.js';
+
 export const RISK_LEVEL_ORDER = Object.freeze(['low', 'medium', 'high', 'critical']);
 
 export function classify({
@@ -153,4 +155,36 @@ function matchesPattern(file, pattern) {
   }
 
   return false;
+}
+
+/**
+ * Classify a tool call by name. Returns { riskLevel: 'low'|'medium'|'high'|null, reasons }.
+ *
+ * Slice-1 lookup table: maps `<plugin>_<action>` tool names against the
+ * plugin's `riskProfile` from PLUGIN_COMMANDS. Returns null for unknown
+ * tools so callers can fall back to whatever default they want.
+ *
+ * Used by LocalToolFacade's plugin-tool dispatch to (eventually) gate
+ * high-risk tool calls behind a §14-style approval modal. Slice 1 only
+ * uses this for telemetry + the per-call audit row's risk-level field;
+ * actual gating is via roleAuthority (lead/human only for high-risk).
+ */
+export function classifyToolCall({ toolName } = {}) {
+  if (typeof toolName !== 'string' || toolName.length === 0) {
+    return { riskLevel: null, reasons: ['no tool name supplied'] };
+  }
+  // Plugin tools: split on first underscore, look up in PLUGIN_COMMANDS.<plugin>.riskProfile
+  const idx = toolName.indexOf('_');
+  if (idx > 0) {
+    const pluginId = toolName.slice(0, idx);
+    const action = toolName.slice(idx + 1);
+    const cfg = PLUGIN_COMMANDS[pluginId];
+    if (cfg && cfg.riskProfile && cfg.riskProfile[action]) {
+      return {
+        riskLevel: cfg.riskProfile[action],
+        reasons: [`${pluginId}.${action} → ${cfg.riskProfile[action]}`],
+      };
+    }
+  }
+  return { riskLevel: null, reasons: [] };
 }
