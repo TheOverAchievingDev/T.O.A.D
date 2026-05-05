@@ -152,3 +152,42 @@ test('railwayGetConnectionString: surfaces CLI failure', async () => {
     /no service|exit 1/,
   );
 });
+
+import { railwayRunMigration } from '../../../src/plugins/railway/railwayTools.js';
+
+test('railwayRunMigration: passes SQL via stdin to railway run', async () => {
+  let receivedStdin = null;
+  const fakeRunner = async ({ args, stdin }) => {
+    receivedStdin = stdin;
+    return { stdout: 'CREATE TABLE\n', stderr: '', exitCode: 0 };
+  };
+  const result = await railwayRunMigration({
+    teamId: 'team-a',
+    resourceId: 'res_x',
+    sql: 'CREATE TABLE foo (id INT);',
+    runRailwayCli: fakeRunner,
+  });
+  assert.equal(result.executed, true);
+  assert.match(receivedStdin, /CREATE TABLE foo/);
+});
+
+test('railwayRunMigration: rejects empty SQL', async () => {
+  await assert.rejects(
+    () => railwayRunMigration({
+      teamId: 'team-a', resourceId: 'res_x', sql: '',
+      runRailwayCli: async () => ({ stdout: '', stderr: '', exitCode: 0 }),
+    }),
+    /sql required/i,
+  );
+});
+
+test('railwayRunMigration: surfaces CLI failure as error', async () => {
+  const fakeRunner = async () => ({ stdout: '', stderr: 'syntax error', exitCode: 1 });
+  await assert.rejects(
+    () => railwayRunMigration({
+      teamId: 'team-a', resourceId: 'res_x', sql: 'INVALID;',
+      runRailwayCli: fakeRunner,
+    }),
+    /syntax error|exit 1/,
+  );
+});

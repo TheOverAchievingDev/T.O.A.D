@@ -34,6 +34,7 @@ export async function runRailwayCli({
   args,
   cwd = process.cwd(),
   timeoutMs = 30_000,
+  stdin = null,
   spawnImpl,
 } = {}) {
   if (!Array.isArray(args)) {
@@ -41,11 +42,14 @@ export async function runRailwayCli({
   }
   const spawnFn = spawnImpl || defaultSpawn;
   const cliPath = resolveCommandPath('railway');
+  const stdioConfig = stdin
+    ? ['pipe', 'pipe', 'pipe']
+    : ['ignore', 'pipe', 'pipe'];
 
   return await new Promise((resolve, reject) => {
     let proc;
     try {
-      proc = spawnFn(cliPath, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      proc = spawnFn(cliPath, args, { cwd, stdio: stdioConfig });
     } catch (err) {
       reject(new Error(`railway spawn failed: ${err && err.message ? err.message : err}`));
       return;
@@ -63,6 +67,11 @@ export async function runRailwayCli({
 
     if (proc.stdout) proc.stdout.on('data', (c) => { stdoutBuf += c.toString(); });
     if (proc.stderr) proc.stderr.on('data', (c) => { stderrBuf += c.toString(); });
+
+    if (stdin && proc.stdin) {
+      proc.stdin.write(stdin);
+      proc.stdin.end();
+    }
 
     proc.on('exit', (code) => {
       if (timedOut) return;

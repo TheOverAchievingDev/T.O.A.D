@@ -129,3 +129,41 @@ export async function railwayGetConnectionString({
     value: result.stdout.trim(),
   };
 }
+
+/**
+ * Run a SQL migration against a Railway-provisioned database. The SQL
+ * is piped via stdin to `railway run psql --service <id>`. Risk profile:
+ * "high" — role-gated to lead/human only. Per-tool-call approval modal
+ * is a slice-1.5 follow-up.
+ *
+ * Throws on empty SQL or CLI failure.
+ */
+export async function railwayRunMigration({
+  teamId,
+  resourceId,
+  sql,
+  runRailwayCli,
+} = {}) {
+  if (!teamId) throw new TypeError('railwayRunMigration: teamId required');
+  if (!resourceId) throw new TypeError('railwayRunMigration: resourceId required');
+  if (typeof sql !== 'string' || sql.trim().length === 0) {
+    throw new TypeError('railwayRunMigration: sql required (non-empty)');
+  }
+
+  const runner = runRailwayCli || (await import('./railwayCli.js')).runRailwayCli;
+
+  const result = await runner({
+    args: ['run', '--service', resourceId, 'psql'],
+    stdin: sql,
+    timeoutMs: 60_000,
+  });
+  if (result.exitCode !== 0) {
+    throw new Error(`railway migration failed (exit ${result.exitCode}): ${result.stderr.trim() || result.stdout.trim()}`);
+  }
+  return {
+    teamId,
+    resourceId,
+    executed: true,
+    output: result.stdout.trim(),
+  };
+}
