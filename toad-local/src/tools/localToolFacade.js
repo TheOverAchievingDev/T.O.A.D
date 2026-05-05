@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { COMMANDS, commandRequiresIdempotency } from '../commands/command-contract.js';
 import { MESSAGE_KINDS } from '../protocol/envelopes.js';
 import {
@@ -53,6 +54,7 @@ import {
 // §17: review-feedback severity scale, ordered low → high blocking weight.
 export const REVIEW_FEEDBACK_SEVERITIES = Object.freeze(['nit', 'minor', 'major', 'blocking']);
 import { computeDiff as defaultComputeDiff } from '../task/diffComputer.js';
+import { createDriftCorrection } from '../drift/driftCorrection.js';
 
 export class LocalToolFacade {
   // 90s TTL cache for the claude /usage pty probe. We don't store this
@@ -323,6 +325,8 @@ export class LocalToolFacade {
         return this.#githubCreateRepository(args);
       case COMMANDS.DRIFT_RUN:
         return this.#driftRun(actor, args);
+      case COMMANDS.DRIFT_CORRECTION_CREATE:
+        return this.#driftCorrectionCreate(actor, args);
       default:
         throw new Error(`unsupported command: ${commandName}`);
     }
@@ -1539,6 +1543,41 @@ export class LocalToolFacade {
       ? args.trigger
       : 'manual';
     return this.driftEngine.runDrift({ teamId, trigger });
+  }
+
+  async #driftCorrectionCreate(actor, args) {
+    const driftStore = this.driftEngine?.store ?? null;
+    if (!driftStore) {
+      throw new Error('drift_correction_create: driftStore not configured for this facade (driftEngine missing or has no .store)');
+    }
+    const teamId = (typeof args?.teamId === 'string' && args.teamId.length > 0)
+      ? args.teamId
+      : actor.teamId;
+    // driftCorrection.js expects taskBoard.create({teamId, subject, description, riskLevel, source})
+    // returning {taskId, ...}. Adapt InMemoryTaskBoard's appendEvent API.
+    const rawBoard = this.taskBoard;
+    const taskBoardAdapter = {
+      create({ teamId: tId, subject, description, riskLevel, source }) {
+        const taskId = randomUUID();
+        rawBoard.appendEvent({
+          teamId: tId,
+          taskId,
+          eventType: TASK_EVENT_TYPES.CREATED,
+          actorId: 'drift_correction',
+          payload: { subject, description: description || '', riskLevel, source },
+        });
+        return { taskId, teamId: tId, subject, description, riskLevel, source };
+      },
+    };
+    return createDriftCorrection({
+      teamId,
+      findingIds: args?.findingIds,
+      subject: args?.subject,
+      description: args?.description,
+      riskLevel: args?.riskLevel,
+      taskBoard: taskBoardAdapter,
+      driftStore,
+    });
   }
 
   async #usageSummary(_actor, _args) {

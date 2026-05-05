@@ -5943,3 +5943,45 @@ test('LocalToolFacade railway_run_migration delegates to railwayRunMigration', a
   });
   assert.equal(result.executed, true);
 });
+
+test('LocalToolFacade drift_correction_create delegates to driftStore + taskBoard', async () => {
+  const taskBoard = new InMemoryTaskBoard();
+  // Fake driftStore with the methods createDriftCorrection needs.
+  const driftStoreFake = {
+    listLatestFindings: () => [{ id: 'f1' }],
+    linkCorrection: ({ findingIds, correctionTaskId }) => ({ linked: findingIds.length }),
+  };
+  // The facade reads driftStore via this.driftEngine?.store, so wire a
+  // minimal fake engine that exposes it.
+  const fakeEngine = { runDrift: async () => null, store: driftStoreFake };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard,
+    driftEngine: fakeEngine,
+  });
+  const result = await facade.execute({
+    commandName: COMMANDS.DRIFT_CORRECTION_CREATE,
+    actor: { teamId: 'team-a', agentId: 'ui-client', role: 'human' },
+    args: { findingIds: ['f1'], subject: 'Fix it', description: 'do the thing', riskLevel: 'medium' },
+    idempotencyKey: 'drift-correction-test-1',
+  });
+  assert.ok(result.taskId);
+  assert.equal(result.linkedFindingCount, 1);
+  assert.equal(result.riskLevel, 'medium');
+});
+
+test('LocalToolFacade drift_correction_create rejects when driftEngine.store is not configured', async () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  await assert.rejects(
+    () => facade.execute({
+      commandName: COMMANDS.DRIFT_CORRECTION_CREATE,
+      actor: { teamId: 't', agentId: 'ui-client', role: 'human' },
+      args: { findingIds: ['f1'], subject: 's', description: 'd', riskLevel: 'low' },
+      idempotencyKey: 'k1',
+    }),
+    /driftStore not configured|driftEngine/i,
+  );
+});
