@@ -51,3 +51,13 @@ test('SqlitePluginJobs.list filters by team and state', () => {
   const queued = jobs.list({ teamId: 'team-a', state: 'queued' });
   assert.equal(queued.length, 2);
 });
+
+test('SqlitePluginJobs.get returns null for unknown jobId', () => {
+  const { jobs } = makeStore();
+  assert.equal(jobs.get({ jobId: 'nonexistent' }), null);
+});
+
+test('SqlitePluginJobs.update throws on unknown jobId', () => {
+  const { jobs } = makeStore();
+  assert.throws(() => jobs.update({ jobId: 'nope', state: 'running' }), /no job/);
+});

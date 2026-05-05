@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { openToadDatabase, jsonParseObject } from '../storage/sqlite.js';
 
 const LOG_TAIL_MAX = 64 * 1024; // 64KB cap
 
@@ -9,11 +10,8 @@ const LOG_TAIL_MAX = 64 * 1024; // 64KB cap
  * src/storage/schema.sql.
  */
 export class SqlitePluginJobs {
-  constructor({ db } = {}) {
-    if (!db || typeof db.prepare !== 'function') {
-      throw new TypeError('SqlitePluginJobs: db with prepare() required');
-    }
-    this.db = db;
+  constructor({ filePath = ':memory:', db = null } = {}) {
+    this.db = db || openToadDatabase(filePath);
   }
 
   create({ teamId, pluginId, action, args, jobId, now = new Date().toISOString() }) {
@@ -27,6 +25,12 @@ export class SqlitePluginJobs {
     return this.get({ jobId: id });
   }
 
+  /**
+   * Note: passing `error: null` or `finishedAt: null` does NOT clear an existing
+   * value (COALESCE preserves the prior value). To clear, use a follow-up direct
+   * DB write — slice 2 may add explicit transitions if retry-with-clear becomes
+   * a real flow.
+   */
   update({ jobId, state, logChunk, finishedAt, error, now = new Date().toISOString() }) {
     const existing = this.get({ jobId });
     if (!existing) throw new Error(`pluginJobs.update: no job ${jobId}`);
@@ -78,7 +82,7 @@ function rowToJob(r) {
     pluginId: r.plugin_id,
     action: r.action,
     state: r.state,
-    args: safeParse(r.args_json, {}),
+    args: jsonParseObject(r.args_json, {}),
     logTail: r.log_tail || '',
     startedAt: r.started_at,
     updatedAt: r.updated_at,
@@ -87,6 +91,3 @@ function rowToJob(r) {
   };
 }
 
-function safeParse(s, fallback) {
-  try { return JSON.parse(s); } catch { return fallback; }
-}
