@@ -4,6 +4,7 @@ import { ROLES, roleStyle } from '@/data/roles';
 import { Icon } from './Icon';
 import type { StreamEntry } from '@/utils/agentStream';
 import { callTool, ToadApiError, type Actor } from '@/api/client';
+import { secretMask } from '@/api/secretMask';
 
 type ComposerMode = 'ask' | 'delegate' | 'interrupt';
 
@@ -63,11 +64,27 @@ function StreamItem({ item }: { item: StreamEntry }) {
     );
   }
   if (item.kind === 'tool') {
+    const { masked, didMask } = secretMask(item.body);
     return (
       <div className="ai-stream-item ai-stream-tool">
         <span className="ai-stream-time mono">{item.time}</span>
         <span className="chip mono" style={{ fontSize: 10, padding: '1px 6px' }}>{item.tool}</span>
-        <div className="ai-stream-body mono" style={{ wordBreak: 'break-word' }}>{item.body}</div>
+        <div style={{ flex: 1 }}>
+          {didMask && (
+            <div style={{
+              fontSize: 10,
+              color: 'var(--warn, #ffcd66)',
+              background: 'rgba(255, 205, 102, 0.06)',
+              padding: '2px 6px',
+              borderRadius: 4,
+              marginBottom: 4,
+              display: 'inline-block',
+            }}>
+              ⚠️ Secret value masked. The agent received the unredacted value.
+            </div>
+          )}
+          <div className="ai-stream-body mono" style={{ wordBreak: 'break-word' }}>{masked}</div>
+        </div>
       </div>
     );
   }
