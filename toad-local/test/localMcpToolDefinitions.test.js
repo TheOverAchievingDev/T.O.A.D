@@ -20,6 +20,7 @@ test('listLocalMcpTools exposes MCP-shaped local command tools', () => {
     'cross_team_messages',
     'cross_team_send',
     'diagnostics_run',
+    'drift_correction_create',
     'foundry_artifact_export',
     'foundry_artifact_generate',
     'foundry_artifact_upsert',

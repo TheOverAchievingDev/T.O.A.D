@@ -399,6 +399,24 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
     properties: {},
   }),
   makeTool({
+    name: COMMANDS.DRIFT_CORRECTION_CREATE,
+    title: 'Create Drift Correction Task',
+    description: 'Create a correction task linked to one or more drift findings. The task lands in backlog with the offending evidence in its description; the linked findings are excluded from drift score until the correction task hits done/rejected.',
+    required: ['findingIds', 'subject', 'riskLevel'],
+    properties: {
+      findingIds: {
+        type: 'array',
+        items: { type: 'string' },
+        minItems: 1,
+        description: 'One or more drift finding IDs to link.',
+      },
+      subject: { type: 'string', description: '1-line task subject.' },
+      description: { type: 'string', description: 'Markdown description (caller pre-aggregates if multi-finding).' },
+      riskLevel: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Risk classification.' },
+      teamId: { type: 'string', description: 'Optional team ID; defaults to actor.teamId.' },
+    },
+  }),
+  makeTool({
     name: COMMANDS.FOUNDRY_SESSION_CREATE,
     title: 'Create Foundry Session',
     description: 'Create a persisted Foundry planning session. Foundry sessions capture project discovery chat and produce repo-exportable planning artifacts for TOAD teams.',
