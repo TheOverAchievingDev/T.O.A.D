@@ -248,6 +248,18 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
     },
   }),
   makeTool({
+    name: COMMANDS.IDE_WRITE_FILE,
+    title: 'IDE Write File',
+    description: 'Mutating. Writes a UTF-8 text file under the selected project root or task worktree for the Code view.',
+    required: ['relativePath', 'content'],
+    properties: {
+      source: IDE_SOURCE_SCHEMA,
+      relativePath: { type: 'string', minLength: 1 },
+      content: { type: 'string' },
+      expectedSha256: { type: 'string', minLength: 1 },
+    },
+  }),
+  makeTool({
     name: COMMANDS.CROSS_TEAM_MESSAGES,
     title: 'Cross-Team Messages',
     description: 'List cross-team messages visible to the current team.',

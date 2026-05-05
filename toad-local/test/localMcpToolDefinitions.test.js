@@ -46,6 +46,7 @@ test('listLocalMcpTools exposes MCP-shaped local command tools', () => {
     'health_status',
     'ide_read_file',
     'ide_tree_list',
+    'ide_write_file',
     'message_send',
     'provider_auth_login',
     'provider_auth_logout',
@@ -94,6 +95,7 @@ test('mutating MCP tools require idempotencyKey in their schemas', () => {
     'task_comment',
     'review_request',
     'review_decide',
+    'ide_write_file',
   ]) {
     const tool = getLocalMcpTool(name);
     assert.ok(tool.inputSchema.required.includes('idempotencyKey'), name);
@@ -160,6 +162,17 @@ test('ide MCP tools expose read-only file browser schemas', () => {
   assert.equal(read.inputSchema.properties.relativePath.minLength, 1);
   assert.equal(read.inputSchema.properties.source.properties.kind.enum.includes('project'), true);
   assert.equal(read.inputSchema.required.includes('idempotencyKey'), false);
+});
+
+test('ide_write_file MCP tool exposes mutating save schema', () => {
+  const write = getLocalMcpTool('ide_write_file');
+  assert.equal(write.annotations.readOnlyHint, false);
+  assert.equal(write.annotations.destructiveHint, false);
+  assert.deepEqual(write.inputSchema.required, ['idempotencyKey', 'relativePath', 'content']);
+  assert.equal(write.inputSchema.properties.source.properties.kind.enum.includes('task_worktree'), true);
+  assert.equal(write.inputSchema.properties.relativePath.minLength, 1);
+  assert.equal(write.inputSchema.properties.content.type, 'string');
+  assert.equal(write.inputSchema.properties.expectedSha256.minLength, 1);
 });
 
 test('task_create MCP schema exposes task risk contract fields', () => {
@@ -273,6 +286,40 @@ test('callLocalMcpTool executes read-only ide_read_file without idempotencyKey',
     args: { source: { kind: 'project' }, relativePath: 'README.md' },
   });
   assert.equal(result.structuredContent.content, '# Project\n');
+});
+
+test('callLocalMcpTool executes mutating ide_write_file with idempotencyKey', async () => {
+  const calls = [];
+  const result = await callLocalMcpTool({
+    toolFacade: {
+      execute(command) {
+        calls.push(command);
+        return { relativePath: 'README.md', content: '# Saved\n' };
+      },
+    },
+    actor: { teamId: 'team-a', agentId: 'operator', role: 'human' },
+    name: 'ide_write_file',
+    arguments: {
+      idempotencyKey: 'ide-write-mcp-1',
+      source: { kind: 'project' },
+      relativePath: 'README.md',
+      content: '# Saved\n',
+      expectedSha256: 'a'.repeat(64),
+    },
+  });
+
+  assert.deepEqual(calls[0], {
+    commandName: 'ide_write_file',
+    idempotencyKey: 'ide-write-mcp-1',
+    actor: { teamId: 'team-a', agentId: 'operator', role: 'human' },
+    args: {
+      source: { kind: 'project' },
+      relativePath: 'README.md',
+      content: '# Saved\n',
+      expectedSha256: 'a'.repeat(64),
+    },
+  });
+  assert.equal(result.structuredContent.content, '# Saved\n');
 });
 
 test('callLocalMcpTool executes read-only agent_status without idempotencyKey', async () => {
