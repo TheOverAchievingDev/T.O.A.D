@@ -132,14 +132,12 @@ function collectTreeEntries(rootPath, parentRelativePath) {
 
     if (child.isDirectory()) {
       const descendantEntries = collectTreeEntries(rootPath, childRelativePath);
-      if (descendantEntries.length > 0) {
-        entries.push({
-          path: normalizedPath,
-          name: child.name,
-          kind: 'directory',
-        });
-        entries.push(...descendantEntries);
-      }
+      entries.push({
+        path: normalizedPath,
+        name: child.name,
+        kind: 'directory',
+      });
+      entries.push(...descendantEntries);
       continue;
     }
 
@@ -148,11 +146,6 @@ function collectTreeEntries(rootPath, parentRelativePath) {
     }
 
     const stats = statSync(childAbsolutePath);
-    const bytes = readFileSync(childAbsolutePath);
-    if (isBinaryBuffer(bytes) || bytes.toString('utf8').includes('\uFFFD')) {
-      continue;
-    }
-
     entries.push({
       path: normalizedPath,
       name: child.name,

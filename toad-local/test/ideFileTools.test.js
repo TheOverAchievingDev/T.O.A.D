@@ -103,7 +103,6 @@ test('listIdeTree returns text project files and skips ignored directories inclu
     writeProjectFile(tmp.dir, 'node_modules/pkg/index.js', 'module.exports = {};\n');
     writeProjectFile(tmp.dir, '.git/config', '[core]\n');
     writeProjectFile(tmp.dir, '.toad/mcp-configs/server.json', '{}\n');
-    writeFileSync(join(tmp.dir, 'logo.png'), Buffer.from([0, 1, 2, 3]));
 
     const result = listIdeTree({
       projectCwd: tmp.dir,
@@ -112,17 +111,54 @@ test('listIdeTree returns text project files and skips ignored directories inclu
 
     assert.equal(result.rootLabel, 'Project root');
     assert.equal(result.truncated, false);
-    assert.deepEqual(
-      result.entries.map((entry) => entry.path).sort(),
-      ['README.md', 'src', 'src/app.ts'],
-    );
+    assert.ok(result.entries.some((entry) => entry.path === 'README.md'));
+    assert.ok(result.entries.some((entry) => entry.path === 'src'));
+    assert.ok(result.entries.some((entry) => entry.path === 'src/app.ts'));
     assert.equal(result.entries.some((entry) => entry.path.startsWith('node_modules/')), false);
     assert.equal(result.entries.some((entry) => entry.path.startsWith('.git/')), false);
     assert.equal(result.entries.some((entry) => entry.path.startsWith('.toad/mcp-configs/')), false);
-    assert.equal(result.entries.some((entry) => entry.path === 'logo.png'), false);
     assert.equal(result.entries.find((entry) => entry.path === 'src').kind, 'directory');
     assert.equal(result.entries.find((entry) => entry.path === 'README.md').kind, 'file');
     assert.equal(typeof result.entries.find((entry) => entry.path === 'README.md').sizeBytes, 'number');
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('listIdeTree includes binary files as file entries', () => {
+  const tmp = makeTmpProject();
+  try {
+    writeFileSync(join(tmp.dir, 'binary.dat'), Buffer.from([0, 1, 2, 3]));
+
+    const result = listIdeTree({
+      projectCwd: tmp.dir,
+      source: { kind: 'project' },
+    });
+
+    const binaryEntry = result.entries.find((entry) => entry.path === 'binary.dat');
+    assert.ok(binaryEntry);
+    assert.equal(binaryEntry.kind, 'file');
+    assert.equal(binaryEntry.name, 'binary.dat');
+    assert.equal(binaryEntry.sizeBytes, 4);
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('listIdeTree includes empty non-ignored directories', () => {
+  const tmp = makeTmpProject();
+  try {
+    mkdirSync(join(tmp.dir, 'empty-dir'), { recursive: true });
+
+    const result = listIdeTree({
+      projectCwd: tmp.dir,
+      source: { kind: 'project' },
+    });
+
+    const emptyEntry = result.entries.find((entry) => entry.path === 'empty-dir');
+    assert.ok(emptyEntry);
+    assert.equal(emptyEntry.kind, 'directory');
+    assert.equal(emptyEntry.name, 'empty-dir');
   } finally {
     tmp.cleanup();
   }
