@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -215,9 +215,38 @@ test('readIdeFile rejects traversal outside source root', () => {
         source: { kind: 'project' },
         relativePath: '../outside.txt',
       }),
-      /outside source root/,
+      /ide_read_file: path outside source root/,
     );
   } finally {
+    tmp.cleanup();
+  }
+});
+
+test('readIdeFile rejects symlinks that resolve outside source root', (t) => {
+  const tmp = makeTmpProject();
+  const outside = makeTmpProject();
+  try {
+    writeProjectFile(outside.dir, 'secret.txt', 'outside\n');
+    try {
+      symlinkSync(join(outside.dir, 'secret.txt'), join(tmp.dir, 'linked-secret.txt'), 'file');
+    } catch (error) {
+      if (['EPERM', 'EACCES', 'ENOTSUP'].includes(error?.code)) {
+        t.skip(`symlink creation unavailable: ${error.code}`);
+        return;
+      }
+      throw error;
+    }
+
+    assert.throws(
+      () => readIdeFile({
+        projectCwd: tmp.dir,
+        source: { kind: 'project' },
+        relativePath: 'linked-secret.txt',
+      }),
+      /ide_read_file: path outside source root/,
+    );
+  } finally {
+    outside.cleanup();
     tmp.cleanup();
   }
 });
@@ -233,7 +262,7 @@ test('readIdeFile rejects binary files', () => {
         source: { kind: 'project' },
         relativePath: 'data.bin',
       }),
-      /binary file/,
+      /ide_read_file: binary file/,
     );
   } finally {
     tmp.cleanup();
@@ -252,7 +281,7 @@ test('readIdeFile rejects files over maxBytes', () => {
         relativePath: 'big.txt',
         maxBytes: 5,
       }),
-      /file too large/,
+      /ide_read_file: file too large/,
     );
   } finally {
     tmp.cleanup();

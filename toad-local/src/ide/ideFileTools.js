@@ -1,5 +1,6 @@
 import {
   readdirSync,
+  realpathSync,
   readFileSync,
   statSync,
 } from 'node:fs';
@@ -87,23 +88,23 @@ export function readIdeFile({
   const stats = statSync(resolved.absolutePath);
 
   if (stats.isDirectory()) {
-    throw new Error('ide_file_read: cannot read directory');
+    throw new Error('ide_read_file: cannot read directory');
   }
   if (!stats.isFile()) {
-    throw new Error('ide_file_read: not a file');
+    throw new Error('ide_read_file: not a file');
   }
   if (stats.size > maxBytes) {
-    throw new Error('ide_file_read: file too large');
+    throw new Error('ide_read_file: file too large');
   }
 
   const bytes = readFileSync(resolved.absolutePath);
   if (isBinaryBuffer(bytes)) {
-    throw new Error('ide_file_read: binary file');
+    throw new Error('ide_read_file: binary file');
   }
 
   const content = bytes.toString('utf8');
   if (content.includes('\uFFFD')) {
-    throw new Error('ide_file_read: binary file');
+    throw new Error('ide_read_file: binary file');
   }
 
   return {
@@ -179,17 +180,24 @@ function compareDirectoryEntries(a, b) {
 
 function resolveInsideRoot(rootPath, relativePath) {
   if (!relativePath || path.isAbsolute(relativePath)) {
-    throw new Error('ide_file_read: path outside source root');
+    throw new Error('ide_read_file: path outside source root');
   }
 
   const absolutePath = path.resolve(rootPath, relativePath);
   const relativeToRoot = path.relative(rootPath, absolutePath);
   if (relativeToRoot.startsWith('..') || path.isAbsolute(relativeToRoot)) {
-    throw new Error('ide_file_read: path outside source root');
+    throw new Error('ide_read_file: path outside source root');
+  }
+
+  const realRootPath = realpathSync(rootPath);
+  const realTargetPath = realpathSync(absolutePath);
+  const realRelativeToRoot = path.relative(realRootPath, realTargetPath);
+  if (realRelativeToRoot.startsWith('..') || path.isAbsolute(realRelativeToRoot)) {
+    throw new Error('ide_read_file: path outside source root');
   }
 
   return {
-    absolutePath,
+    absolutePath: realTargetPath,
     relativePath: toPosixPath(relativeToRoot),
   };
 }
