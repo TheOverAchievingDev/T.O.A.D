@@ -25,6 +25,7 @@ export async function railwayLink({ teamId, projectId, cwd, runRailwayCli } = {}
     linked: true,
     projectId: projectId ?? null,
     teamId,
+    linkedAt: new Date().toISOString(),
   };
 }
 
@@ -44,6 +45,7 @@ const SLICE_1_SUPPORTED_TYPES = new Set(['postgres']);
 export async function railwayProvisionDb({
   teamId,
   type = 'postgres',
+  cwd,
   runRailwayCli,
   pluginResources,
 } = {}) {
@@ -61,12 +63,13 @@ export async function railwayProvisionDb({
     return { ...existing, wasExisting: true };
   }
 
-  const runner = runRailwayCli || (await import('./railwayCli.js')).runRailwayCli;
+  const runner = runRailwayCli || defaultRunner;
 
   // `railway add --plugin postgresql --json` provisions a Postgres and
   // emits a JSON record on stdout. Slice 1 keys on the JSON output.
   const result = await runner({
     args: ['add', '--plugin', 'postgresql', '--json'],
+    cwd,
   });
   if (result.exitCode !== 0) {
     throw new Error(`railway add failed (exit ${result.exitCode}): ${result.stderr.trim() || result.stdout.trim()}`);
@@ -107,16 +110,18 @@ export async function railwayGetConnectionString({
   teamId,
   resourceId,
   varName = 'DATABASE_URL',
+  cwd,
   runRailwayCli,
 } = {}) {
   if (!teamId) throw new TypeError('railwayGetConnectionString: teamId required');
   if (!resourceId) throw new TypeError('railwayGetConnectionString: resourceId required');
 
-  const runner = runRailwayCli || (await import('./railwayCli.js')).runRailwayCli;
+  const runner = runRailwayCli || defaultRunner;
 
   // `railway variables get <NAME> --service <id>` prints the raw value.
   const result = await runner({
     args: ['variables', 'get', varName, '--service', resourceId],
+    cwd,
   });
   if (result.exitCode !== 0) {
     throw new Error(`railway variables get failed (exit ${result.exitCode}): ${result.stderr.trim() || result.stdout.trim()}`);
@@ -142,6 +147,7 @@ export async function railwayRunMigration({
   teamId,
   resourceId,
   sql,
+  cwd,
   runRailwayCli,
 } = {}) {
   if (!teamId) throw new TypeError('railwayRunMigration: teamId required');
@@ -150,11 +156,12 @@ export async function railwayRunMigration({
     throw new TypeError('railwayRunMigration: sql required (non-empty)');
   }
 
-  const runner = runRailwayCli || (await import('./railwayCli.js')).runRailwayCli;
+  const runner = runRailwayCli || defaultRunner;
 
   const result = await runner({
     args: ['run', '--service', resourceId, 'psql'],
     stdin: sql,
+    cwd,
     timeoutMs: 60_000,
   });
   if (result.exitCode !== 0) {

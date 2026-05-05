@@ -69,6 +69,10 @@ export async function runRailwayCli({
     if (proc.stderr) proc.stderr.on('data', (c) => { stderrBuf += c.toString(); });
 
     if (stdin && proc.stdin) {
+      // Swallow EPIPE / write errors when the child closes stdin early
+      // (e.g., psql rejected the connection); the non-zero exit code
+      // surfaces through the 'exit' handler.
+      proc.stdin.on('error', () => { /* ignore */ });
       proc.stdin.write(stdin);
       proc.stdin.end();
     }
