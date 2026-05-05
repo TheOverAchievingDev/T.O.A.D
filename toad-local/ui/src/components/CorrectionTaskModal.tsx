@@ -5,7 +5,7 @@ export interface DriftFindingForModal {
   id: string;
   taskId: string | null;
   category: string;
-  severity: 'low' | 'medium' | 'high' | 'critical';
+  severity: 'low' | 'medium' | 'high' | 'critical' | 'info';
   title: string;
   expected: string;
   actual: string;
@@ -25,6 +25,7 @@ const SEVERITY_TO_RISK: Record<string, 'low' | 'medium' | 'high'> = {
   high: 'high',
   medium: 'medium',
   low: 'low',
+  info: 'low',
 };
 
 function inferRiskLevel(findings: DriftFindingForModal[]): 'low' | 'medium' | 'high' {

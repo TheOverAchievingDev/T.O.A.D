@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Icon } from './Icon';
 import { findingTier } from './findingTier';
 import type { DriftFinding, DriftRunResult } from '@/hooks/useDrift';
+import { CorrectionTaskModal, type DriftFindingForModal } from './CorrectionTaskModal';
 
 interface DriftScreenProps {
   /** The team this drift run reports on. Used only for the empty-state
@@ -45,6 +46,18 @@ export function DriftScreen({ teamId, data, loading, error, refresh, onOpenTask 
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterSeverity, setFilterSeverity] = useState<string>('all');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [selectedFindingIds, setSelectedFindingIds] = useState<Set<string>>(new Set());
+  const [modalOpen, setModalOpen] = useState(false);
+  const [hideRemediated, setHideRemediated] = useState(false);
+
+  const toggleFinding = (id: string) => {
+    setSelectedFindingIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const sortedFindings = useMemo(() => {
     if (!data) return [];
@@ -53,8 +66,9 @@ export function DriftScreen({ teamId, data, loading, error, refresh, onOpenTask 
 
   const filtered = useMemo(() => sortedFindings.filter((f) =>
     (filterCategory === 'all' || f.category === filterCategory) &&
-    (filterSeverity === 'all' || f.severity === filterSeverity)
-  ), [sortedFindings, filterCategory, filterSeverity]);
+    (filterSeverity === 'all' || f.severity === filterSeverity) &&
+    (!hideRemediated || !f.correctionTaskId)
+  ), [sortedFindings, filterCategory, filterSeverity, hideRemediated]);
 
   const topFindings = sortedFindings.slice(0, 4);
 
@@ -163,69 +177,132 @@ export function DriftScreen({ teamId, data, loading, error, refresh, onOpenTask 
             </select>
           </div>
         </div>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12,
+          padding: '8px 12px',
+          background: 'rgba(255,255,255,0.02)',
+          border: '1px solid var(--border-soft, rgba(255,255,255,0.06))',
+          borderRadius: 6,
+          marginBottom: 12,
+        }}>
+          <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
+            Selected: {selectedFindingIds.size}
+          </span>
+          <button
+            className="btn btn-sm"
+            onClick={() => setModalOpen(true)}
+            disabled={selectedFindingIds.size === 0}
+          >
+            Create correction task
+          </button>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, marginLeft: 'auto' }}>
+            <input
+              type="checkbox"
+              checked={hideRemediated}
+              onChange={(e) => setHideRemediated(e.target.checked)}
+            />
+            Hide remediated findings
+          </label>
+        </div>
         {filtered.length === 0 && (
           <div style={{ fontSize: 11, color: 'var(--fg-dim)', padding: 8 }}>No findings match this filter.</div>
         )}
         {filtered.map((f) => {
           const open = expanded.has(f.id);
+          const isRemediated = Boolean(f.correctionTaskId);
           return (
             <div key={f.id} style={{
               border: '1px solid var(--border-soft, rgba(255,255,255,0.06))',
               borderRadius: 6, padding: 12, marginBottom: 8,
+              opacity: isRemediated ? 0.55 : 1,
             }}>
-              <div
-                onClick={() => setExpanded((s) => {
-                  const next = new Set(s);
-                  if (next.has(f.id)) next.delete(f.id); else next.add(f.id);
-                  return next;
-                })}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
-              >
-                <span style={{
-                  fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 3,
-                  background: SEVERITY_COLOR[f.severity], color: '#000',
-                  textTransform: 'uppercase',
-                }}>
-                  {f.severity}
-                </span>
-                {(() => {
-                  const tier = findingTier(f.checkName);
-                  if (tier === 'llm_t1') {
-                    return (
-                      <span style={{
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={selectedFindingIds.has(f.id)}
+                  onChange={(e) => { e.stopPropagation(); toggleFinding(f.id); }}
+                  disabled={isRemediated}
+                  style={{ flex: 'none' }}
+                />
+                <div
+                  onClick={() => setExpanded((s) => {
+                    const next = new Set(s);
+                    if (next.has(f.id)) next.delete(f.id); else next.add(f.id);
+                    return next;
+                  })}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flex: 1 }}
+                >
+                  <span style={{
+                    fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 3,
+                    background: SEVERITY_COLOR[f.severity], color: '#000',
+                    textTransform: 'uppercase',
+                  }}>
+                    {f.severity}
+                  </span>
+                  {(() => {
+                    const tier = findingTier(f.checkName);
+                    if (tier === 'llm_t1') {
+                      return (
+                        <span style={{
+                          fontSize: 9, padding: '2px 6px', borderRadius: 3,
+                          background: 'rgba(255,255,255,0.06)',
+                          color: 'var(--fg-muted)', textTransform: 'uppercase',
+                          letterSpacing: '0.04em', fontWeight: 600,
+                        }}>AI</span>
+                      );
+                    }
+                    if (tier === 'llm_t2') {
+                      return (
+                        <span style={{
+                          fontSize: 9, padding: '2px 6px', borderRadius: 3,
+                          background: 'var(--clay, #d97757)', color: '#fff',
+                          textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 600,
+                        }}>Verified</span>
+                      );
+                    }
+                    return null;
+                  })()}
+                  <span style={{ fontWeight: 600, fontSize: 12, flex: 1 }}>{f.title}</span>
+                  {isRemediated && (
+                    <span
+                      style={{
                         fontSize: 9, padding: '2px 6px', borderRadius: 3,
-                        background: 'rgba(255,255,255,0.06)',
-                        color: 'var(--fg-muted)', textTransform: 'uppercase',
-                        letterSpacing: '0.04em', fontWeight: 600,
-                      }}>AI</span>
-                    );
-                  }
-                  if (tier === 'llm_t2') {
-                    return (
-                      <span style={{
-                        fontSize: 9, padding: '2px 6px', borderRadius: 3,
-                        background: 'var(--clay, #d97757)', color: '#fff',
+                        background: 'rgba(74, 222, 128, 0.12)',
+                        color: 'var(--ok, #4ade80)',
                         textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 600,
-                      }}>Verified</span>
-                    );
-                  }
-                  return null;
-                })()}
-                <span style={{ fontWeight: 600, fontSize: 12, flex: 1 }}>{f.title}</span>
-                <span style={{ color: 'var(--fg-dim)', fontSize: 10 }}>
-                  {CATEGORY_LABEL[f.category] ?? f.category}
-                  {f.taskId && (
-                    <>
-                      {' · '}
-                      <span
-                        onClick={(e) => { e.stopPropagation(); if (f.taskId) onOpenTask?.(f.taskId); }}
-                        style={{ textDecoration: 'underline', cursor: 'pointer' }}
-                      >
-                        {f.taskId}
-                      </span>
-                    </>
+                      }}
+                      title="This finding has a correction task in flight."
+                    >
+                      Correction in progress
+                    </span>
                   )}
-                </span>
+                  <span style={{ color: 'var(--fg-dim)', fontSize: 10 }}>
+                    {CATEGORY_LABEL[f.category] ?? f.category}
+                    {f.taskId && (
+                      <>
+                        {' · '}
+                        <span
+                          onClick={(e) => { e.stopPropagation(); if (f.taskId) onOpenTask?.(f.taskId); }}
+                          style={{ textDecoration: 'underline', cursor: 'pointer' }}
+                        >
+                          {f.taskId}
+                        </span>
+                      </>
+                    )}
+                    {f.correctionTaskId && (
+                      <>
+                        {' · '}
+                        <span
+                          onClick={(e) => { e.stopPropagation(); if (f.correctionTaskId) onOpenTask?.(f.correctionTaskId); }}
+                          style={{ textDecoration: 'underline', cursor: 'pointer' }}
+                          title="Open correction task"
+                        >
+                          {f.correctionTaskId}
+                        </span>
+                      </>
+                    )}
+                  </span>
+                </div>
               </div>
               {open && (
                 <div style={{ marginTop: 10, fontSize: 11, color: 'var(--fg-muted)' }}>
@@ -243,6 +320,32 @@ export function DriftScreen({ teamId, data, loading, error, refresh, onOpenTask 
           );
         })}
       </div>
+      {modalOpen && teamId && (
+        <CorrectionTaskModal
+          open={modalOpen}
+          onClose={() => setModalOpen(false)}
+          selectedFindings={
+            Array.from(selectedFindingIds)
+              .map((id) => sortedFindings.find((f) => f.id === id))
+              .filter((f): f is DriftFindingForModal => Boolean(f))
+              .map((f) => ({
+                id: f.id,
+                taskId: f.taskId,
+                category: f.category,
+                severity: f.severity,
+                title: f.title,
+                expected: f.expected,
+                actual: f.actual,
+                recommendedCorrection: f.recommendedCorrection,
+              }))
+          }
+          teamId={teamId}
+          onCreated={() => {
+            setSelectedFindingIds(new Set());
+            void refresh();
+          }}
+        />
+      )}
     </div>
   );
 }

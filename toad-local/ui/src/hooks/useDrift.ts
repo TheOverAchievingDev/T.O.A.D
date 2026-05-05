@@ -15,6 +15,7 @@ export interface DriftFinding {
   actual: string;
   recommendedCorrection: string;
   autoFixable: boolean;
+  correctionTaskId?: string | null;
 }
 
 export type LlmTierStatus =
