@@ -267,3 +267,21 @@ test('SqliteDriftStore.reapResolvedCorrections clears linkage when task is missi
   const result = store.reapResolvedCorrections({ teamId: 'team-a', taskBoard: fakeTaskBoard });
   assert.equal(result.reaped, 1);
 });
+
+test('SqliteDriftStore.recordRun writes correctionTaskId from finding when present', () => {
+  const { store } = makeStore();
+  store.recordRun({
+    runId: 'r1', teamId: 'team-a', asOf: '2026-05-04T00:00:00Z',
+    teamScore: 30, status: 'warning',
+    categoryScores: {}, perTaskScores: {}, trigger: 'manual',
+    findings: [
+      { ...makeFinding({ id: 'f1', taskId: 't1' }), correctionTaskId: 'task_persist' },
+      makeFinding({ id: 'f2', taskId: 't2' }),  // no correctionTaskId
+    ],
+  });
+  const findings = store.listLatestFindings({ teamId: 'team-a' });
+  const f1 = findings.find((f) => f.id === 'f1');
+  const f2 = findings.find((f) => f.id === 'f2');
+  assert.equal(f1.correctionTaskId, 'task_persist');
+  assert.equal(f2.correctionTaskId, null);
+});

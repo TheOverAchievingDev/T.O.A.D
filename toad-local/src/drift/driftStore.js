@@ -26,8 +26,9 @@ export class SqliteDriftStore {
     const deleteFindings = this.db.prepare('DELETE FROM drift_findings WHERE team_id = ?');
     const insertFinding = this.db.prepare(`INSERT INTO drift_findings
       (finding_id, run_id, team_id, task_id, category, severity, check_name,
-       title, evidence_json, expected, actual, recommended, auto_fixable, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+       title, evidence_json, expected, actual, recommended, auto_fixable,
+       correction_task_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const insertHistory = this.db.prepare(`INSERT INTO drift_score_history
       (run_id, team_id, team_score, status, category_scores_json,
        per_task_scores_json, findings_count, trigger, created_at)
@@ -44,7 +45,9 @@ export class SqliteDriftStore {
           f.id, runId, teamId, f.taskId ?? null, f.category, f.severity,
           f.checkName, f.title, JSON.stringify(f.evidence ?? []),
           f.expected, f.actual, f.recommendedCorrection,
-          f.autoFixable ? 1 : 0, asOf
+          f.autoFixable ? 1 : 0,
+          f.correctionTaskId ?? null,
+          asOf
         );
       }
       insertHistory.run(
@@ -203,6 +206,7 @@ function rowToFinding(r) {
     actual: r.actual,
     recommendedCorrection: r.recommended,
     autoFixable: r.auto_fixable === 1,
+    correctionTaskId: r.correction_task_id ?? null,
   };
 }
 
