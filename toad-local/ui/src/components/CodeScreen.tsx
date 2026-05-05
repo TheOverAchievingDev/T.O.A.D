@@ -56,6 +56,7 @@ interface IdeFileResult {
   content: string;
   encoding: 'utf8';
   sizeBytes: number;
+  sha256: string;
   languageHint?: string;
 }
 
@@ -82,8 +83,11 @@ export function CodeScreen({ teamId, tasks, actor = DEFAULT_ACTOR }: CodeScreenP
   const [file, setFile] = useState<IdeFileResult | null>(null);
   const [treeError, setTreeError] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [draftContent, setDraftContent] = useState('');
   const [loadingTree, setLoadingTree] = useState(false);
   const [loadingFile, setLoadingFile] = useState(false);
+  const [savingFile, setSavingFile] = useState(false);
 
   const worktreeTasks = useMemo(
     () => tasks.filter((task) => task.worktree?.status === 'created' && task.worktree.path),
@@ -104,11 +108,19 @@ export function CodeScreen({ teamId, tasks, actor = DEFAULT_ACTOR }: CodeScreenP
     role: actor.role,
   }), [actor.agentId, actor.agentName, actor.role, actor.teamId, teamId]);
 
+  const isDirty = file !== null && draftContent !== file.content;
+
+  function confirmDiscardDirty(): boolean {
+    return !isDirty || window.confirm('Discard unsaved changes?');
+  }
+
   async function openFile(relativePath: string) {
     if (!teamId) return;
+    if (relativePath !== selectedPath && !confirmDiscardDirty()) return;
     setSelectedPath(relativePath);
     setLoadingFile(true);
     setFileError(null);
+    setSaveError(null);
     try {
       const result = await callTool<IdeFileResult>({
         actor: toolActor,
@@ -116,16 +128,19 @@ export function CodeScreen({ teamId, tasks, actor = DEFAULT_ACTOR }: CodeScreenP
         args: { source, relativePath },
       });
       setFile(result);
+      setDraftContent(result.content);
     } catch (err) {
       setFile(null);
+      setDraftContent('');
       setFileError(errorMessage(err));
     } finally {
       setLoadingFile(false);
     }
   }
 
-  async function refreshTree(pathToReopen = selectedPath) {
+  async function refreshTree(pathToReopen = selectedPath, skipDirtyCheck = false) {
     if (!teamId) return;
+    if (!skipDirtyCheck && isDirty && !confirmDiscardDirty()) return;
     setLoadingTree(true);
     setTreeError(null);
     try {
@@ -141,7 +156,9 @@ export function CodeScreen({ teamId, tasks, actor = DEFAULT_ACTOR }: CodeScreenP
       } else {
         setSelectedPath(null);
         setFile(null);
+        setDraftContent('');
         setFileError(null);
+        setSaveError(null);
       }
     } catch (err) {
       setTree(null);
@@ -151,13 +168,64 @@ export function CodeScreen({ teamId, tasks, actor = DEFAULT_ACTOR }: CodeScreenP
     }
   }
 
+  async function saveFile() {
+    if (!teamId || !file || !isDirty) return;
+    setSavingFile(true);
+    setSaveError(null);
+    try {
+      const result = await callTool<IdeFileResult>({
+        actor: toolActor,
+        method: 'ide_write_file',
+        idempotencyKey: createIdempotencyKey(file.relativePath),
+        args: {
+          source: file.source,
+          relativePath: file.relativePath,
+          content: draftContent,
+          expectedSha256: file.sha256,
+        },
+      });
+      setFile(result);
+      setDraftContent(result.content);
+      setSelectedPath(result.relativePath);
+      const nextTree = await callTool<IdeTreeResult>({
+        actor: toolActor,
+        method: 'ide_tree_list',
+        args: { source: result.source },
+      });
+      setTree(nextTree);
+      setTreeError(null);
+    } catch (err) {
+      setSaveError(errorMessage(err));
+    } finally {
+      setSavingFile(false);
+    }
+  }
+
+  function revertFile() {
+    if (!file) return;
+    setDraftContent(file.content);
+    setSaveError(null);
+  }
+
   useEffect(() => {
     setSelectedPath(null);
     setFile(null);
+    setDraftContent('');
     setFileError(null);
-    void refreshTree(null);
+    setSaveError(null);
+    void refreshTree(null, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teamId, sourceKey]);
+
+  useEffect(() => {
+    function handleBeforeUnload(event: BeforeUnloadEvent) {
+      if (!isDirty) return;
+      event.preventDefault();
+      event.returnValue = '';
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isDirty]);
 
   if (!teamId) {
     return (
@@ -173,7 +241,7 @@ export function CodeScreen({ teamId, tasks, actor = DEFAULT_ACTOR }: CodeScreenP
     <main className="code-screen">
       <header className="code-header">
         <div>
-          <div className="eyebrow">Read-only IDE</div>
+          <div className="eyebrow">Orchestrator IDE</div>
           <h1>Code</h1>
           <p>{tree?.rootLabel ?? 'Project root'}</p>
         </div>
@@ -181,7 +249,10 @@ export function CodeScreen({ teamId, tasks, actor = DEFAULT_ACTOR }: CodeScreenP
           <select
             className="field-input mono code-source-select"
             value={sourceKey}
-            onChange={(event) => setSourceKey(event.target.value)}
+            onChange={(event) => {
+              if (!confirmDiscardDirty()) return;
+              setSourceKey(event.target.value);
+            }}
           >
             <option value="project">Project root</option>
             {worktreeTasks.map((task) => (
@@ -229,22 +300,45 @@ export function CodeScreen({ teamId, tasks, actor = DEFAULT_ACTOR }: CodeScreenP
 
         <section className="code-editor-pane" aria-label="Selected file">
           <div className="code-filebar">
-            <span className="mono">{selectedPath ?? 'No file selected'}</span>
-            {file && <span className="dim">{formatBytes(file.sizeBytes)}</span>}
+            <div className="code-file-meta">
+              <span className="mono">{selectedPath ?? 'No file selected'}</span>
+              {isDirty && <span className="code-dirty-pill">Unsaved</span>}
+            </div>
+            <div className="code-file-actions">
+              {file && <span className="dim">{formatBytes(file.sizeBytes)}</span>}
+              <button
+                className="btn btn-sm"
+                type="button"
+                onClick={revertFile}
+                disabled={!isDirty || savingFile}
+              >
+                Revert
+              </button>
+              <button
+                className="btn btn-sm btn-primary"
+                type="button"
+                onClick={() => void saveFile()}
+                disabled={!isDirty || savingFile}
+              >
+                <Icon name="check" size={12} />
+                {savingFile ? 'Saving' : 'Save'}
+              </button>
+            </div>
           </div>
           {loadingFile && <div className="code-editor-state">Loading file...</div>}
           {fileError && <div className="code-editor-state error">{fileError}</div>}
+          {saveError && <div className="code-save-error">{saveError}</div>}
           {!loadingFile && !fileError && !file && (
-            <div className="code-editor-state">Select a file to inspect it.</div>
+            <div className="code-editor-state">Select a file to edit it.</div>
           )}
           {file && (
             <Editor
               height="100%"
-              value={file.content}
+              value={draftContent}
               language={file.languageHint ?? languageFromPath(file.relativePath)}
               theme="vs-dark"
+              onChange={(value) => setDraftContent(value ?? '')}
               options={{
-                readOnly: true,
                 minimap: { enabled: false },
                 automaticLayout: true,
                 scrollBeyondLastLine: false,
@@ -256,6 +350,14 @@ export function CodeScreen({ teamId, tasks, actor = DEFAULT_ACTOR }: CodeScreenP
       </div>
     </main>
   );
+}
+
+function createIdempotencyKey(relativePath: string): string {
+  const suffix =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `ide-write:${relativePath}:${suffix}`;
 }
 
 function errorMessage(err: unknown): string {
