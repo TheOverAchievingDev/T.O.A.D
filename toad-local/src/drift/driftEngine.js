@@ -74,6 +74,12 @@ export class DriftEngine {
 
   async #runDriftInner({ teamId, trigger }) {
     const runId = `run_${randomUUID()}`;
+
+    // Step A: Read correction linkages BEFORE building snapshot / running checks.
+    const linkages = (typeof this.store.getCorrectionLinkages === 'function')
+      ? this.store.getCorrectionLinkages({ teamId })
+      : new Map();
+
     const snapshot = await buildSnapshot({ teamId, deps: this.deps });
     const driftSettings = this.settings.drift ?? DEFAULT_SETTINGS.drift;
     const llmEnabled = driftSettings.llmTierEnabled !== false;
@@ -90,14 +96,18 @@ export class DriftEngine {
       if (!llmEnabled && check.name.startsWith('check_llm_')) continue;
       try {
         const out = (await check.fn({ snapshot, settings: this.settings })) || [];
-        for (const f of out) tier1Findings.push({ ...f, runId, teamId });
+        for (const f of out) {
+          const stamped = { ...f, runId, teamId };
+          if (linkages.has(stamped.id)) stamped.correctionTaskId = linkages.get(stamped.id);
+          tier1Findings.push(stamped);
+        }
       } catch (err) {
         tier1Findings.push(this.#metaFinding(check.name, runId, teamId, err));
       }
     }
 
-    // Score tier 1 to decide on escalation.
-    const tier1Score = scoreFindings(tier1Findings).teamScore;
+    // Score tier 1 to decide on escalation (filter out findings already being corrected).
+    const tier1Score = scoreFindings(tier1Findings.filter(f => !f.correctionTaskId)).teamScore;
 
     // Decide tier 2.
     let tier2Findings = [];
@@ -125,7 +135,11 @@ export class DriftEngine {
               settings: this.settings,
               tier1Findings,
             })) || [];
-            for (const f of out) tier2Findings.push({ ...f, runId, teamId });
+            for (const f of out) {
+              const stamped = { ...f, runId, teamId };
+              if (linkages.has(stamped.id)) stamped.correctionTaskId = linkages.get(stamped.id);
+              tier2Findings.push(stamped);
+            }
           }
           tier2Status = 'completed';
           this.#tier2Cooldown.set(teamId, {
@@ -148,10 +162,14 @@ export class DriftEngine {
       }
     }
 
-    // Combine + score everything.
+    // Combine all findings (unfiltered, so UI can render correction-in-progress badges).
     const allFindings = [...tier1Findings, ...tier2Findings];
-    const { teamScore, status, perTaskScores, categoryScores } = scoreFindings(allFindings);
 
+    // Step C: Score only the active (non-corrected) findings for the final result.
+    const activeFindings = allFindings.filter(f => !f.correctionTaskId);
+    const { teamScore, status, perTaskScores, categoryScores } = scoreFindings(activeFindings);
+
+    // Persist unfiltered allFindings so the correction_task_id is stored and UI can badge them.
     this.store.recordRun({
       runId,
       teamId,
@@ -163,6 +181,11 @@ export class DriftEngine {
       trigger,
       findings: allFindings,
     });
+
+    // Step D: Reap resolved corrections after persisting.
+    if (typeof this.store.reapResolvedCorrections === 'function') {
+      this.store.reapResolvedCorrections({ teamId, taskBoard: this.deps?.taskBoard });
+    }
 
     const history = this.store.listScoreHistory({ teamId, limit: 30 })
       .map((h) => ({ runId: h.runId, teamScore: h.teamScore, createdAt: h.createdAt }));

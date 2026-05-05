@@ -115,3 +115,82 @@ test('DriftEngine awaits async check.fn results', async () => {
   assert.equal(result.findings.length, 1);
   assert.equal(result.findings[0].title, 'Async OK');
 });
+
+test('runDrift filters findings with active correctionTaskId out of score', async () => {
+  const db = bootstrapDb();
+  const store = new SqliteDriftStore({ db });
+
+  // Manually seed one prior finding + link it (simulate operator created a correction)
+  store.recordRun({
+    runId: 'r0', teamId: 'team-a', asOf: '2026-05-04T00:00:00Z',
+    teamScore: 50, status: 'warning',
+    categoryScores: {}, perTaskScores: {}, trigger: 'manual',
+    findings: [{
+      id: 'f_existing', taskId: 't1', category: 'lifecycle', severity: 'medium',
+      checkName: 'test', title: 'still drifting', evidence: [],
+      expected: 'x', actual: 'y', recommendedCorrection: 'z', autoFixable: false,
+    }],
+  });
+  store.linkCorrection({ findingIds: ['f_existing'], correctionTaskId: 'task_active' });
+
+  // Build a check that emits the SAME finding ID (would otherwise count toward score)
+  const stableId = 'f_existing';
+  const repeatCheck = {
+    name: 'test_repeat',
+    tier: 1,
+    fn: async () => [{
+      id: stableId, taskId: 't1', category: 'lifecycle', severity: 'medium',
+      checkName: 'test_repeat', title: 'still drifting', evidence: [],
+      expected: 'x', actual: 'y', recommendedCorrection: 'z',
+    }],
+  };
+
+  const engine = new DriftEngine({
+    deps: makeDeps(), store, checks: [repeatCheck],
+  });
+  const result = await engine.runDrift({ teamId: 'team-a', trigger: 'manual' });
+
+  // Score should be 0 (the only finding is suppressed)
+  assert.equal(result.teamScore, 0);
+  // But the finding should still appear in result.findings (UI needs to render in-progress badge)
+  assert.equal(result.findings.length, 1);
+  assert.equal(result.findings[0].correctionTaskId, 'task_active');
+});
+
+test('runDrift calls reapResolvedCorrections with deps.taskBoard each run', async () => {
+  const db = bootstrapDb();
+  const store = new SqliteDriftStore({ db });
+
+  // Seed a linked finding whose correction task is "done"
+  store.recordRun({
+    runId: 'r0', teamId: 'team-a', asOf: '2026-05-04T00:00:00Z',
+    teamScore: 50, status: 'warning',
+    categoryScores: {}, perTaskScores: {}, trigger: 'manual',
+    findings: [{
+      id: 'f_to_reap', taskId: 't1', category: 'lifecycle', severity: 'medium',
+      checkName: 'test', title: 'old', evidence: [],
+      expected: 'x', actual: 'y', recommendedCorrection: 'z', autoFixable: false,
+    }],
+  });
+  store.linkCorrection({ findingIds: ['f_to_reap'], correctionTaskId: 'task_done' });
+
+  // taskBoard reports the linked task as done
+  const deps = {
+    ...makeDeps(),
+    taskBoard: {
+      listTasks: () => [],
+      listEvents: () => [],
+      get: ({ taskId }) => taskId === 'task_done' ? { taskId, status: 'done' } : null,
+    },
+  };
+
+  // Engine runs with no checks (so result.findings is empty after recordRun's wholesale-replace)
+  const engine = new DriftEngine({
+    deps, store, checks: [],
+  });
+  await engine.runDrift({ teamId: 'team-a', trigger: 'manual' });
+
+  // After the run, the linkage should have been reaped
+  const linkagesAfter = store.getCorrectionLinkages({ teamId: 'team-a' });
+  assert.equal(linkagesAfter.size, 0, 'reap should have cleared the done-task linkage');
+});
