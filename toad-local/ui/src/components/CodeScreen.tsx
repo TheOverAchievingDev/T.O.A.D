@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import * as monaco from 'monaco-editor';
 import Editor, { loader } from '@monaco-editor/react';
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
@@ -9,6 +9,12 @@ import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker'
 import { callTool, type Actor } from '@/api/client';
 import type { UiTask } from '@/types';
 import { Icon } from './Icon';
+import {
+  buildCodeTree,
+  collectDirectoryPaths,
+  filterCodeTree,
+  flattenVisibleCodeTree,
+} from './codeTreeNavigator';
 
 loader.config({ monaco });
 
@@ -85,6 +91,8 @@ export function CodeScreen({ teamId, tasks, actor = DEFAULT_ACTOR }: CodeScreenP
   const [fileError, setFileError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [draftContent, setDraftContent] = useState('');
+  const [treeQuery, setTreeQuery] = useState('');
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
   const [loadingTree, setLoadingTree] = useState(false);
   const [loadingFile, setLoadingFile] = useState(false);
   const [savingFile, setSavingFile] = useState(false);
@@ -109,6 +117,17 @@ export function CodeScreen({ teamId, tasks, actor = DEFAULT_ACTOR }: CodeScreenP
   }), [actor.agentId, actor.agentName, actor.role, actor.teamId, teamId]);
 
   const isDirty = file !== null && draftContent !== file.content;
+  const codeTree = useMemo(() => buildCodeTree(tree?.entries ?? []), [tree?.entries]);
+  const filteredTree = useMemo(() => filterCodeTree(codeTree, treeQuery), [codeTree, treeQuery]);
+  const effectiveExpandedPaths = useMemo(
+    () => (treeQuery.trim() ? new Set(filteredTree.expandedPaths) : expandedPaths),
+    [expandedPaths, filteredTree.expandedPaths, treeQuery],
+  );
+  const visibleTreeNodes = useMemo(
+    () => flattenVisibleCodeTree(filteredTree.nodes, effectiveExpandedPaths),
+    [effectiveExpandedPaths, filteredTree.nodes],
+  );
+  const visibleFiles = visibleTreeNodes.filter((node) => node.kind === 'file');
 
   function confirmDiscardDirty(): boolean {
     return !isDirty || window.confirm('Discard unsaved changes?');
@@ -150,6 +169,7 @@ export function CodeScreen({ teamId, tasks, actor = DEFAULT_ACTOR }: CodeScreenP
         args: { source },
       });
       setTree(result);
+      setExpandedPaths((current) => mergeExpandedPaths(current, getInitialExpandedPaths(result.entries, pathToReopen)));
 
       if (pathToReopen && result.entries.some((entry) => entry.path === pathToReopen && entry.kind === 'file')) {
         await openFile(pathToReopen);
@@ -211,6 +231,8 @@ export function CodeScreen({ teamId, tasks, actor = DEFAULT_ACTOR }: CodeScreenP
     setSelectedPath(null);
     setFile(null);
     setDraftContent('');
+    setTreeQuery('');
+    setExpandedPaths(new Set());
     setFileError(null);
     setSaveError(null);
     void refreshTree(null, true);
@@ -275,27 +297,73 @@ export function CodeScreen({ teamId, tasks, actor = DEFAULT_ACTOR }: CodeScreenP
 
       <div className="code-body">
         <aside className="code-tree" aria-label="Project files">
+          <div className="code-tree-toolbar">
+            <div className="code-tree-search">
+              <Icon name="search" size={12} />
+              <input
+                value={treeQuery}
+                onChange={(event) => setTreeQuery(event.target.value)}
+                placeholder="Search files..."
+                aria-label="Search files"
+              />
+              {treeQuery && (
+                <button
+                  type="button"
+                  className="code-tree-clear"
+                  onClick={() => setTreeQuery('')}
+                  aria-label="Clear file search"
+                >
+                  x
+                </button>
+              )}
+            </div>
+            <div className="code-tree-tools">
+              <button type="button" onClick={() => setExpandedPaths(new Set(collectDirectoryPaths(codeTree)))}>
+                Expand all
+              </button>
+              <button type="button" onClick={() => setExpandedPaths(new Set())}>
+                Collapse all
+              </button>
+            </div>
+          </div>
           {loadingTree && <div className="code-muted">Loading files...</div>}
           {treeError && <div className="code-error">{treeError}</div>}
           {tree?.truncated && <div className="code-muted">Tree truncated at the backend entry cap.</div>}
           {tree && files.length === 0 && (
             <div className="code-muted">No readable files found.</div>
           )}
-          {tree?.entries.map((entry) => (
-            <button
-              key={entry.path}
-              type="button"
-              className={`code-tree-row ${entry.kind} ${selectedPath === entry.path ? 'active' : ''}`}
-              disabled={entry.kind !== 'file'}
-              onClick={() => void openFile(entry.path)}
-              title={entry.path}
-            >
-              <span className="code-tree-icon">
-                <Icon name={entry.kind === 'directory' ? 'folder' : 'file'} size={13} />
-              </span>
-              <span className="code-tree-path">{entry.path}</span>
-            </button>
-          ))}
+          {tree && treeQuery && visibleFiles.length === 0 && (
+            <div className="code-muted">No matches found.</div>
+          )}
+          <div className="code-tree-list">
+            {visibleTreeNodes.map((node) => (
+              <button
+                key={node.path}
+                type="button"
+                className={`code-tree-row ${node.kind} ${selectedPath === node.path ? 'active' : ''}`}
+                onClick={() => {
+                  if (node.kind === 'directory') {
+                    setExpandedPaths((current) => toggleExpandedPath(current, node.path));
+                    return;
+                  }
+                  void openFile(node.path);
+                }}
+                title={node.path}
+                style={{ '--depth': node.depth } as CSSProperties}
+              >
+                <span className="code-tree-disclosure" aria-hidden="true">
+                  {node.kind === 'directory' ? (effectiveExpandedPaths.has(node.path) ? 'v' : '>') : ''}
+                </span>
+                <span className="code-tree-icon">
+                  <Icon name={node.kind === 'directory' ? 'folder' : 'file'} size={13} />
+                </span>
+                <span className="code-tree-path">{node.name}</span>
+                {node.kind === 'file' && node.sizeBytes !== undefined && (
+                  <span className="code-tree-size">{formatCompactBytes(node.sizeBytes)}</span>
+                )}
+              </button>
+            ))}
+          </div>
         </aside>
 
         <section className="code-editor-pane" aria-label="Selected file">
@@ -352,6 +420,42 @@ export function CodeScreen({ teamId, tasks, actor = DEFAULT_ACTOR }: CodeScreenP
   );
 }
 
+function getInitialExpandedPaths(entries: IdeTreeEntry[], selectedPath: string | null): Set<string> {
+  const expanded = new Set<string>();
+  for (const entry of entries) {
+    if (entry.kind === 'directory' && !entry.path.includes('/')) {
+      expanded.add(entry.path);
+    }
+  }
+  if (selectedPath) {
+    for (const ancestor of ancestorPaths(selectedPath)) expanded.add(ancestor);
+  }
+  return expanded;
+}
+
+function mergeExpandedPaths(current: Set<string>, next: Set<string>): Set<string> {
+  return new Set([...current, ...next]);
+}
+
+function toggleExpandedPath(current: Set<string>, path: string): Set<string> {
+  const next = new Set(current);
+  if (next.has(path)) {
+    next.delete(path);
+  } else {
+    next.add(path);
+  }
+  return next;
+}
+
+function ancestorPaths(filePath: string): string[] {
+  const parts = filePath.split('/');
+  const ancestors: string[] = [];
+  for (let index = 1; index < parts.length; index += 1) {
+    ancestors.push(parts.slice(0, index).join('/'));
+  }
+  return ancestors;
+}
+
 function createIdempotencyKey(relativePath: string): string {
   const suffix =
     typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -381,4 +485,10 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatCompactBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes}b`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}k`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}m`;
 }
