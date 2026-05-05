@@ -229,26 +229,34 @@ CREATE INDEX IF NOT EXISTS idx_foundry_artifacts_session
 
 -- Drift Monitor (slice 1) — see docs/superpowers/specs/2026-05-03-drift-monitor-design.md
 -- Findings are replaced wholesale per run (delete-by-team_id, insert-new).
+-- correction_task_id (Drift Slice 3) stamps a finding as "under remediation" — engine
+-- excludes it from score + skips LLM re-emit until the correction task hits done/rejected
+-- (then engine reaps via SqliteDriftStore.reapResolvedCorrections).
+-- See docs/superpowers/specs/2026-05-04-drift-slice-3-correction-tasks-design.md
 CREATE TABLE IF NOT EXISTS drift_findings (
-  finding_id      TEXT PRIMARY KEY,
-  run_id          TEXT NOT NULL,
-  team_id         TEXT NOT NULL,
-  task_id         TEXT,
-  category        TEXT NOT NULL,
-  severity        TEXT NOT NULL,
-  check_name      TEXT NOT NULL,
-  title           TEXT NOT NULL,
-  evidence_json   TEXT NOT NULL,
-  expected        TEXT NOT NULL,
-  actual          TEXT NOT NULL,
-  recommended     TEXT NOT NULL,
-  auto_fixable    INTEGER NOT NULL DEFAULT 0,
-  created_at      TEXT NOT NULL,
+  finding_id         TEXT PRIMARY KEY,
+  run_id             TEXT NOT NULL,
+  team_id            TEXT NOT NULL,
+  task_id            TEXT,
+  category           TEXT NOT NULL,
+  severity           TEXT NOT NULL,
+  check_name         TEXT NOT NULL,
+  title              TEXT NOT NULL,
+  evidence_json      TEXT NOT NULL,
+  expected           TEXT NOT NULL,
+  actual             TEXT NOT NULL,
+  recommended        TEXT NOT NULL,
+  auto_fixable       INTEGER NOT NULL DEFAULT 0,
+  created_at         TEXT NOT NULL,
+  correction_task_id TEXT,
   FOREIGN KEY (team_id) REFERENCES teams(team_id)
 );
 CREATE INDEX IF NOT EXISTS idx_drift_findings_team ON drift_findings(team_id);
 CREATE INDEX IF NOT EXISTS idx_drift_findings_task ON drift_findings(task_id);
 CREATE INDEX IF NOT EXISTS idx_drift_findings_run  ON drift_findings(run_id);
+-- idx_drift_findings_correction is created by applyMigrations in sqlite.js so it
+-- works on both fresh DBs (column already present) and existing DBs (column added
+-- via ALTER TABLE before the index is created).
 
 -- One row per run; pruned to last 500 per team.
 CREATE TABLE IF NOT EXISTS drift_score_history (
