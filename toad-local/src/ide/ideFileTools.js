@@ -64,14 +64,18 @@ export function listIdeTree({
   maxEntries = 2000,
 }) {
   const root = resolveIdeSourceRoot({ projectCwd, taskBoard, teamId, source });
-  const allEntries = collectTreeEntries(root.rootPath, '');
-  const entries = allEntries.slice(0, maxEntries);
+  const state = {
+    entries: [],
+    maxEntries: Math.max(0, maxEntries),
+    truncated: false,
+  };
+  collectTreeEntries(root.rootPath, '', state);
 
   return {
     source: root.source,
     rootLabel: root.rootLabel,
-    entries,
-    truncated: allEntries.length > entries.length,
+    entries: state.entries,
+    truncated: state.truncated,
   };
 }
 
@@ -117,28 +121,42 @@ export function readIdeFile({
   };
 }
 
-function collectTreeEntries(rootPath, parentRelativePath) {
+function collectTreeEntries(rootPath, parentRelativePath, state) {
   const dirPath = parentRelativePath ? path.join(rootPath, parentRelativePath) : rootPath;
   const children = readdirSync(dirPath, { withFileTypes: true })
     .filter((child) => shouldListChild(parentRelativePath, child))
     .sort(compareDirectoryEntries);
 
-  const entries = [];
-  for (const child of children) {
+  for (let index = 0; index < children.length; index++) {
+    const child = children[index];
+    if (state.entries.length >= state.maxEntries) {
+      state.truncated = children.slice(index).some(isVisibleTreeEntry);
+      return;
+    }
+
     const childRelativePath = parentRelativePath
       ? path.join(parentRelativePath, child.name)
       : child.name;
     const normalizedPath = toPosixPath(childRelativePath);
     const childAbsolutePath = path.join(rootPath, childRelativePath);
+    const hasLaterVisibleSibling = children.slice(index + 1).some(isVisibleTreeEntry);
 
     if (child.isDirectory()) {
-      const descendantEntries = collectTreeEntries(rootPath, childRelativePath);
-      entries.push({
+      const willReachCap = state.entries.length + 1 >= state.maxEntries;
+      const hasVisibleDescendant = willReachCap ? hasVisibleChild(rootPath, childRelativePath) : false;
+      state.entries.push({
         path: normalizedPath,
         name: child.name,
         kind: 'directory',
       });
-      entries.push(...descendantEntries);
+      if (state.entries.length >= state.maxEntries) {
+        state.truncated = hasLaterVisibleSibling || hasVisibleDescendant;
+        return;
+      }
+      collectTreeEntries(rootPath, childRelativePath, state);
+      if (state.truncated) {
+        return;
+      }
       continue;
     }
 
@@ -147,15 +165,17 @@ function collectTreeEntries(rootPath, parentRelativePath) {
     }
 
     const stats = statSync(childAbsolutePath);
-    entries.push({
+    state.entries.push({
       path: normalizedPath,
       name: child.name,
       kind: 'file',
       sizeBytes: stats.size,
     });
+    if (state.entries.length >= state.maxEntries && hasLaterVisibleSibling) {
+      state.truncated = true;
+      return;
+    }
   }
-
-  return entries;
 }
 
 function shouldListChild(parentRelativePath, child) {
@@ -178,6 +198,10 @@ function compareDirectoryEntries(a, b) {
   return a.name.localeCompare(b.name);
 }
 
+function isVisibleTreeEntry(child) {
+  return child.isDirectory() || child.isFile();
+}
+
 function resolveInsideRoot(rootPath, relativePath) {
   if (!relativePath || path.isAbsolute(relativePath)) {
     throw new Error('ide_read_file: path outside source root');
@@ -185,14 +209,14 @@ function resolveInsideRoot(rootPath, relativePath) {
 
   const absolutePath = path.resolve(rootPath, relativePath);
   const relativeToRoot = path.relative(rootPath, absolutePath);
-  if (relativeToRoot.startsWith('..') || path.isAbsolute(relativeToRoot)) {
+  if (isOutsideRoot(relativeToRoot)) {
     throw new Error('ide_read_file: path outside source root');
   }
 
   const realRootPath = withReadFileErrors(() => realpathSync(rootPath));
   const realTargetPath = withReadFileErrors(() => realpathSync(absolutePath));
   const realRelativeToRoot = path.relative(realRootPath, realTargetPath);
-  if (realRelativeToRoot.startsWith('..') || path.isAbsolute(realRelativeToRoot)) {
+  if (isOutsideRoot(realRelativeToRoot)) {
     throw new Error('ide_read_file: path outside source root');
   }
 
@@ -200,6 +224,18 @@ function resolveInsideRoot(rootPath, relativePath) {
     absolutePath: realTargetPath,
     relativePath: toPosixPath(relativeToRoot),
   };
+}
+
+function hasVisibleChild(rootPath, relativePath) {
+  const dirPath = path.join(rootPath, relativePath);
+  return readdirSync(dirPath, { withFileTypes: true })
+    .some((child) => shouldListChild(relativePath, child));
+}
+
+function isOutsideRoot(relativePath) {
+  return relativePath === '..'
+    || relativePath.startsWith(`..${path.sep}`)
+    || path.isAbsolute(relativePath);
 }
 
 function withReadFileErrors(operation) {

@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { mkdtempSync, rmSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -192,6 +194,36 @@ test('listIdeTree caps entries and reports truncated', () => {
   }
 });
 
+test('listIdeTree stops statting once maxEntries is reached', () => {
+  const tmp = makeTmpProject();
+  const originalStatSync = fs.statSync;
+  try {
+    writeProjectFile(tmp.dir, 'a.txt', 'a\n');
+    writeProjectFile(tmp.dir, 'z-late.txt', 'late\n');
+
+    fs.statSync = (target, ...args) => {
+      if (String(target).endsWith('z-late.txt')) {
+        throw new Error('stat after cap');
+      }
+      return originalStatSync.call(fs, target, ...args);
+    };
+    syncBuiltinESMExports();
+
+    const result = listIdeTree({
+      projectCwd: tmp.dir,
+      source: { kind: 'project' },
+      maxEntries: 1,
+    });
+
+    assert.deepEqual(result.entries.map((entry) => entry.path), ['a.txt']);
+    assert.equal(result.truncated, true);
+  } finally {
+    fs.statSync = originalStatSync;
+    syncBuiltinESMExports();
+    tmp.cleanup();
+  }
+});
+
 test('readIdeFile reads utf8 files with a language hint for TypeScript', () => {
   const tmp = makeTmpProject();
   try {
@@ -209,6 +241,24 @@ test('readIdeFile reads utf8 files with a language hint for TypeScript', () => {
     assert.equal(result.encoding, 'utf8');
     assert.equal(result.sizeBytes, Buffer.byteLength(result.content));
     assert.equal(result.languageHint, 'typescript');
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('readIdeFile reads in-root files whose names start with dot dot', () => {
+  const tmp = makeTmpProject();
+  try {
+    writeProjectFile(tmp.dir, '..env', 'KEY=value\n');
+
+    const result = readIdeFile({
+      projectCwd: tmp.dir,
+      source: { kind: 'project' },
+      relativePath: '..env',
+    });
+
+    assert.equal(result.relativePath, '..env');
+    assert.equal(result.content, 'KEY=value\n');
   } finally {
     tmp.cleanup();
   }
