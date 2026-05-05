@@ -92,3 +92,40 @@ export async function railwayProvisionDb({
   });
   return { ...inserted, wasExisting: false };
 }
+
+/**
+ * Pull a single environment variable's value (default DATABASE_URL)
+ * for a Railway service. Returns the plaintext value — agents see it
+ * directly. The audit log + UI raw-event view get the value passed
+ * through redactSecrets so the password never lands in SQLite.
+ *
+ * Slice 1 path-a: plaintext exposure is intentional but loud. Slice 2
+ * adds the substitution pipeline (path-b) so even agents see opaque
+ * references like {$secret: 'railway.svc_x.DATABASE_URL'}.
+ */
+export async function railwayGetConnectionString({
+  teamId,
+  resourceId,
+  varName = 'DATABASE_URL',
+  runRailwayCli,
+} = {}) {
+  if (!teamId) throw new TypeError('railwayGetConnectionString: teamId required');
+  if (!resourceId) throw new TypeError('railwayGetConnectionString: resourceId required');
+
+  const runner = runRailwayCli || (await import('./railwayCli.js')).runRailwayCli;
+
+  // `railway variables get <NAME> --service <id>` prints the raw value.
+  const result = await runner({
+    args: ['variables', 'get', varName, '--service', resourceId],
+  });
+  if (result.exitCode !== 0) {
+    throw new Error(`railway variables get failed (exit ${result.exitCode}): ${result.stderr.trim() || result.stdout.trim()}`);
+  }
+
+  return {
+    teamId,
+    resourceId,
+    varName,
+    value: result.stdout.trim(),
+  };
+}

@@ -112,3 +112,43 @@ test('railwayProvisionDb: surfaces CLI failure', async () => {
     /permission denied|exit 2/,
   );
 });
+
+import { railwayGetConnectionString } from '../../../src/plugins/railway/railwayTools.js';
+
+test('railwayGetConnectionString: returns plaintext URL', async () => {
+  const fakeRunner = async () => ({
+    stdout: 'postgres://user:pw@host:5432/db\n',
+    stderr: '', exitCode: 0,
+  });
+  const result = await railwayGetConnectionString({
+    teamId: 'team-a',
+    resourceId: 'res_x',
+    varName: 'DATABASE_URL',
+    runRailwayCli: fakeRunner,
+  });
+  assert.equal(result.value, 'postgres://user:pw@host:5432/db');
+  // We DO surface plaintext per spec gotcha #2 path-a; redaction is
+  // only for the audit log + UI raw-event surface.
+  assert.doesNotMatch(result.value, /<REDACTED>/);
+});
+
+test('railwayGetConnectionString: defaults varName to DATABASE_URL', async () => {
+  const calls = [];
+  const fakeRunner = async ({ args }) => { calls.push(args); return { stdout: 'x', stderr: '', exitCode: 0 }; };
+  await railwayGetConnectionString({
+    teamId: 'team-a', resourceId: 'res_x',
+    runRailwayCli: fakeRunner,
+  });
+  assert.ok(calls[0].includes('DATABASE_URL'));
+});
+
+test('railwayGetConnectionString: surfaces CLI failure', async () => {
+  const fakeRunner = async () => ({ stdout: '', stderr: 'no service', exitCode: 1 });
+  await assert.rejects(
+    () => railwayGetConnectionString({
+      teamId: 'team-a', resourceId: 'res_x',
+      runRailwayCli: fakeRunner,
+    }),
+    /no service|exit 1/,
+  );
+});
