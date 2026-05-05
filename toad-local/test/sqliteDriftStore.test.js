@@ -18,6 +18,22 @@ function makeStore() {
   return { db, store: new SqliteDriftStore({ db }) };
 }
 
+function makeFinding({ id, taskId }) {
+  return {
+    id,
+    taskId,
+    category: 'lifecycle',
+    severity: 'medium',
+    checkName: 'test_check',
+    title: `Test finding ${id}`,
+    evidence: [],
+    expected: 'expected state',
+    actual: 'actual state',
+    recommendedCorrection: 'fix it',
+    autoFixable: false,
+  };
+}
+
 test('schema.sql defines drift_findings and drift_score_history with required columns', () => {
   const sql = readFileSync(SCHEMA_PATH, 'utf8');
   const db = new DatabaseSync(':memory:');
@@ -130,4 +146,124 @@ test('SqliteDriftStore.pruneHistory keeps the N most recent rows per team', () =
   const hist = store.listScoreHistory({ teamId: 'team-a', limit: 100 });
   assert.equal(hist.length, 5);
   assert.deepEqual(hist.map((h) => h.runId), ['r11', 'r10', 'r9', 'r8', 'r7']);
+});
+
+test('SqliteDriftStore.linkCorrection stamps correction_task_id on matching rows', () => {
+  const { store } = makeStore();
+  store.recordRun({
+    runId: 'r1', teamId: 'team-a', asOf: '2026-05-04T00:00:00Z',
+    teamScore: 50, status: 'warning',
+    categoryScores: {}, perTaskScores: {}, trigger: 'manual',
+    findings: [
+      makeFinding({ id: 'f1', taskId: 't1' }),
+      makeFinding({ id: 'f2', taskId: 't2' }),
+      makeFinding({ id: 'f3', taskId: 't3' }),
+    ],
+  });
+
+  const result = store.linkCorrection({ findingIds: ['f1', 'f3'], correctionTaskId: 'task_x' });
+  assert.equal(result.linked, 2);
+
+  const linkages = store.getCorrectionLinkages({ teamId: 'team-a' });
+  assert.equal(linkages.size, 2);
+  assert.equal(linkages.get('f1'), 'task_x');
+  assert.equal(linkages.get('f3'), 'task_x');
+  assert.equal(linkages.has('f2'), false);
+});
+
+test('SqliteDriftStore.linkCorrection is idempotent', () => {
+  const { store } = makeStore();
+  store.recordRun({
+    runId: 'r1', teamId: 'team-a', asOf: '2026-05-04T00:00:00Z',
+    teamScore: 50, status: 'warning',
+    categoryScores: {}, perTaskScores: {}, trigger: 'manual',
+    findings: [makeFinding({ id: 'f1', taskId: 't1' })],
+  });
+  const a = store.linkCorrection({ findingIds: ['f1'], correctionTaskId: 'task_x' });
+  const b = store.linkCorrection({ findingIds: ['f1'], correctionTaskId: 'task_x' });
+  assert.equal(a.linked, 1);
+  assert.equal(b.linked, 1);
+  const linkages = store.getCorrectionLinkages({ teamId: 'team-a' });
+  assert.equal(linkages.get('f1'), 'task_x');
+});
+
+test('SqliteDriftStore.getCorrectionLinkages returns empty Map when no linkages', () => {
+  const { store } = makeStore();
+  const linkages = store.getCorrectionLinkages({ teamId: 'team-empty' });
+  assert.ok(linkages instanceof Map);
+  assert.equal(linkages.size, 0);
+});
+
+test('SqliteDriftStore.reapResolvedCorrections clears linkage when task is done', () => {
+  const { store } = makeStore();
+  store.recordRun({
+    runId: 'r1', teamId: 'team-a', asOf: '2026-05-04T00:00:00Z',
+    teamScore: 50, status: 'warning',
+    categoryScores: {}, perTaskScores: {}, trigger: 'manual',
+    findings: [makeFinding({ id: 'f1', taskId: 't1' })],
+  });
+  store.linkCorrection({ findingIds: ['f1'], correctionTaskId: 'task_done' });
+
+  const fakeTaskBoard = {
+    get: ({ taskId }) => taskId === 'task_done'
+      ? { taskId: 'task_done', status: 'done' }
+      : null,
+  };
+
+  const result = store.reapResolvedCorrections({ teamId: 'team-a', taskBoard: fakeTaskBoard });
+  assert.equal(result.reaped, 1);
+
+  const linkagesAfter = store.getCorrectionLinkages({ teamId: 'team-a' });
+  assert.equal(linkagesAfter.size, 0);
+});
+
+test('SqliteDriftStore.reapResolvedCorrections leaves in-progress task linkages alone', () => {
+  const { store } = makeStore();
+  store.recordRun({
+    runId: 'r1', teamId: 'team-a', asOf: '2026-05-04T00:00:00Z',
+    teamScore: 50, status: 'warning',
+    categoryScores: {}, perTaskScores: {}, trigger: 'manual',
+    findings: [makeFinding({ id: 'f1', taskId: 't1' })],
+  });
+  store.linkCorrection({ findingIds: ['f1'], correctionTaskId: 'task_inprog' });
+
+  const fakeTaskBoard = {
+    get: ({ taskId }) => ({ taskId, status: 'in_progress' }),
+  };
+
+  const result = store.reapResolvedCorrections({ teamId: 'team-a', taskBoard: fakeTaskBoard });
+  assert.equal(result.reaped, 0);
+  assert.equal(store.getCorrectionLinkages({ teamId: 'team-a' }).size, 1);
+});
+
+test('SqliteDriftStore.reapResolvedCorrections clears linkage when task is rejected', () => {
+  const { store } = makeStore();
+  store.recordRun({
+    runId: 'r1', teamId: 'team-a', asOf: '2026-05-04T00:00:00Z',
+    teamScore: 50, status: 'warning',
+    categoryScores: {}, perTaskScores: {}, trigger: 'manual',
+    findings: [makeFinding({ id: 'f1', taskId: 't1' })],
+  });
+  store.linkCorrection({ findingIds: ['f1'], correctionTaskId: 'task_rejected' });
+
+  const fakeTaskBoard = {
+    get: () => ({ taskId: 'task_rejected', status: 'rejected' }),
+  };
+  const result = store.reapResolvedCorrections({ teamId: 'team-a', taskBoard: fakeTaskBoard });
+  assert.equal(result.reaped, 1);
+});
+
+test('SqliteDriftStore.reapResolvedCorrections clears linkage when task is missing', () => {
+  const { store } = makeStore();
+  store.recordRun({
+    runId: 'r1', teamId: 'team-a', asOf: '2026-05-04T00:00:00Z',
+    teamScore: 50, status: 'warning',
+    categoryScores: {}, perTaskScores: {}, trigger: 'manual',
+    findings: [makeFinding({ id: 'f1', taskId: 't1' })],
+  });
+  store.linkCorrection({ findingIds: ['f1'], correctionTaskId: 'task_gone' });
+
+  const fakeTaskBoard = { get: () => null };
+  const result = store.reapResolvedCorrections({ teamId: 'team-a', taskBoard: fakeTaskBoard });
+  assert.equal(result.reaped, 1);
 });

@@ -106,6 +106,86 @@ export class SqliteDriftStore {
     ).run(teamId, teamId, limit);
     return { deleted: result.changes };
   }
+
+  /**
+   * Stamp correction_task_id onto each finding row whose finding_id is in
+   * findingIds. Idempotent — re-running with the same args is a no-op
+   * (UPDATE just sets the same value).
+   *
+   * Returns { linked: <rows affected> }.
+   */
+  linkCorrection({ findingIds, correctionTaskId } = {}) {
+    if (!Array.isArray(findingIds) || findingIds.length === 0) {
+      throw new TypeError('linkCorrection: findingIds must be a non-empty array');
+    }
+    if (typeof correctionTaskId !== 'string' || correctionTaskId.length === 0) {
+      throw new TypeError('linkCorrection: correctionTaskId is required');
+    }
+    const placeholders = findingIds.map(() => '?').join(',');
+    const stmt = this.db.prepare(
+      `UPDATE drift_findings
+         SET correction_task_id = ?
+       WHERE finding_id IN (${placeholders})`
+    );
+    const result = stmt.run(correctionTaskId, ...findingIds);
+    return { linked: result.changes };
+  }
+
+  /**
+   * Returns Map<findingId, correctionTaskId> for findings in the team
+   * with correction_task_id IS NOT NULL. Engine reads this BEFORE
+   * runChecks so it can re-stamp on the new findings before recordRun
+   * (which deletes-and-replaces) wipes them.
+   */
+  getCorrectionLinkages({ teamId } = {}) {
+    if (!teamId) return new Map();
+    const rows = this.db.prepare(
+      `SELECT finding_id, correction_task_id
+         FROM drift_findings
+        WHERE team_id = ? AND correction_task_id IS NOT NULL`
+    ).all(teamId);
+    const map = new Map();
+    for (const r of rows) {
+      map.set(r.finding_id, r.correction_task_id);
+    }
+    return map;
+  }
+
+  /**
+   * For each finding with correction_task_id set, look up the linked
+   * task's status via the injected taskBoard. If status is 'done',
+   * 'rejected', or the task is missing entirely, clear correction_task_id
+   * on that finding row.
+   *
+   * Returns { reaped: <rows cleared> }.
+   */
+  reapResolvedCorrections({ teamId, taskBoard } = {}) {
+    if (!teamId || !taskBoard || typeof taskBoard.get !== 'function') {
+      return { reaped: 0 };
+    }
+    const linkages = this.getCorrectionLinkages({ teamId });
+    if (linkages.size === 0) return { reaped: 0 };
+
+    const RESOLVED_OR_GONE = (taskId) => {
+      const task = taskBoard.get({ taskId });
+      if (!task) return true;
+      return task.status === 'done' || task.status === 'rejected';
+    };
+
+    const toReap = [];
+    for (const [findingId, taskId] of linkages.entries()) {
+      if (RESOLVED_OR_GONE(taskId)) toReap.push(findingId);
+    }
+    if (toReap.length === 0) return { reaped: 0 };
+
+    const placeholders = toReap.map(() => '?').join(',');
+    const result = this.db.prepare(
+      `UPDATE drift_findings
+         SET correction_task_id = NULL
+       WHERE team_id = ? AND finding_id IN (${placeholders})`
+    ).run(teamId, ...toReap);
+    return { reaped: result.changes };
+  }
 }
 
 function rowToFinding(r) {
