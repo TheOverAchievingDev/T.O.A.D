@@ -224,6 +224,35 @@ test('listIdeTree stops statting once maxEntries is reached', () => {
   }
 });
 
+test('listIdeTree does not open a directory that reaches maxEntries', () => {
+  const tmp = makeTmpProject();
+  const originalReaddirSync = fs.readdirSync;
+  try {
+    writeProjectFile(tmp.dir, 'a-dir/nested.txt', 'nested\n');
+
+    fs.readdirSync = (target, ...args) => {
+      if (String(target).endsWith('a-dir')) {
+        throw new Error('opened capped directory');
+      }
+      return originalReaddirSync.call(fs, target, ...args);
+    };
+    syncBuiltinESMExports();
+
+    const result = listIdeTree({
+      projectCwd: tmp.dir,
+      source: { kind: 'project' },
+      maxEntries: 1,
+    });
+
+    assert.deepEqual(result.entries.map((entry) => entry.path), ['a-dir']);
+    assert.equal(result.truncated, true);
+  } finally {
+    fs.readdirSync = originalReaddirSync;
+    syncBuiltinESMExports();
+    tmp.cleanup();
+  }
+});
+
 test('readIdeFile reads utf8 files with a language hint for TypeScript', () => {
   const tmp = makeTmpProject();
   try {

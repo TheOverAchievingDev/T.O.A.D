@@ -142,15 +142,13 @@ function collectTreeEntries(rootPath, parentRelativePath, state) {
     const hasLaterVisibleSibling = children.slice(index + 1).some(isVisibleTreeEntry);
 
     if (child.isDirectory()) {
-      const willReachCap = state.entries.length + 1 >= state.maxEntries;
-      const hasVisibleDescendant = willReachCap ? hasVisibleChild(rootPath, childRelativePath) : false;
       state.entries.push({
         path: normalizedPath,
         name: child.name,
         kind: 'directory',
       });
       if (state.entries.length >= state.maxEntries) {
-        state.truncated = hasLaterVisibleSibling || hasVisibleDescendant;
+        state.truncated = true;
         return;
       }
       collectTreeEntries(rootPath, childRelativePath, state);
@@ -224,12 +222,6 @@ function resolveInsideRoot(rootPath, relativePath) {
     absolutePath: realTargetPath,
     relativePath: toPosixPath(relativeToRoot),
   };
-}
-
-function hasVisibleChild(rootPath, relativePath) {
-  const dirPath = path.join(rootPath, relativePath);
-  return readdirSync(dirPath, { withFileTypes: true })
-    .some((child) => shouldListChild(relativePath, child));
 }
 
 function isOutsideRoot(relativePath) {
