@@ -5820,6 +5820,7 @@ test('LocalToolFacade plugin_login surfaces manualLogin instructions for railway
   });
   const result = await facade.execute({
     commandName: COMMANDS.PLUGIN_LOGIN,
+    idempotencyKey: 'idem-plugin-login-1',
     actor: { teamId: 't', agentId: 'ui-client', role: 'human' },
     args: { pluginId: 'railway' },
   });
@@ -5839,6 +5840,7 @@ test('LocalToolFacade plugin_logout shells out to railway logout', async () => {
   });
   const result = await facade.execute({
     commandName: COMMANDS.PLUGIN_LOGOUT,
+    idempotencyKey: 'idem-plugin-logout-1',
     actor: { teamId: 't', agentId: 'ui-client', role: 'human' },
     args: { pluginId: 'railway' },
   });
@@ -5879,6 +5881,7 @@ test('LocalToolFacade railway_link delegates to railwayLink', async () => {
   });
   const result = await facade.execute({
     commandName: COMMANDS.RAILWAY_LINK,
+    idempotencyKey: 'idem-railway-link-1',
     actor: { teamId: 'team-a', agentId: 'ui-client', role: 'human' },
     args: { projectId: 'p1' },
   });
@@ -5901,6 +5904,7 @@ test('LocalToolFacade railway_provision_db idempotent + uses pluginResources', a
   });
   const result = await facade.execute({
     commandName: COMMANDS.RAILWAY_PROVISION_DB,
+    idempotencyKey: 'idem-railway-provision-1',
     actor: { teamId: 'team-a', agentId: 'ui-client', role: 'human' },
     args: { type: 'postgres' },
   });
@@ -5933,6 +5937,7 @@ test('LocalToolFacade railway_run_migration delegates to railwayRunMigration', a
   });
   const result = await facade.execute({
     commandName: COMMANDS.RAILWAY_RUN_MIGRATION,
+    idempotencyKey: 'idem-railway-migrate-1',
     actor: { teamId: 'team-a', agentId: 'ui-client', role: 'human' },  // human role required
     args: { resourceId: 'res_1', sql: 'CREATE TABLE x (id INT);' },
   });
