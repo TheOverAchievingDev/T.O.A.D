@@ -276,7 +276,7 @@ CREATE TABLE IF NOT EXISTS plugin_jobs (
   plugin_id       TEXT NOT NULL,
   action          TEXT NOT NULL,
   state           TEXT NOT NULL,
-  args_json       TEXT NOT NULL,
+  args_json       TEXT NOT NULL DEFAULT '{}',
   log_tail        TEXT,
   started_at      TEXT NOT NULL,
   updated_at      TEXT NOT NULL,
@@ -285,7 +285,7 @@ CREATE TABLE IF NOT EXISTS plugin_jobs (
   FOREIGN KEY (team_id) REFERENCES teams(team_id)
 );
 CREATE INDEX IF NOT EXISTS idx_plugin_jobs_team ON plugin_jobs(team_id);
-CREATE INDEX IF NOT EXISTS idx_plugin_jobs_state ON plugin_jobs(state);
+CREATE INDEX IF NOT EXISTS idx_plugin_jobs_team_state ON plugin_jobs(team_id, state);
 
 -- Provisioned-resource tracker. Used immediately by Railway's idempotency
 -- check (the partial index makes "is there a live Postgres for this team?"
