@@ -4,6 +4,7 @@ import { Icon, type IconName } from '../Icon';
 export type SettingsSectionKey =
   | 'general'
   | 'providers'
+  | 'plugins'
   | 'github'
   | 'workspace'
   | 'risk'
@@ -21,6 +22,7 @@ export interface SettingsSection {
 const SECTIONS: SettingsSection[] = [
   { key: 'general', label: 'General', icon: 'settings', description: 'Theme, density, locale.' },
   { key: 'providers', label: 'Providers', icon: 'cpu', description: 'Anthropic, OpenAI, OpenCode.' },
+  { key: 'plugins', label: 'Plugins', icon: 'layers', description: 'Railway, EAS, Vercel — infrastructure plugins.' },
   { key: 'github', label: 'GitHub', icon: 'github', description: 'Connect a GitHub account for branch + PR ops.' },
   { key: 'workspace', label: 'Workspace', icon: 'folder', description: 'Default project path, worktree behaviour.' },
   { key: 'risk', label: 'Risk policies', icon: 'info', description: 'File and command rules for §14.' },

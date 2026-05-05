@@ -7,6 +7,7 @@ import { GitHubSettings } from './GitHubSettings';
 import { RiskPolicySettings } from './RiskPolicySettings';
 import { WorkspaceSettings } from './WorkspaceSettings';
 import { ProvidersSettings } from './ProvidersSettings';
+import { PluginsSettings } from './PluginsSettings';
 import { McpServersSettings } from './McpServersSettings';
 import { NotificationsSettings } from './NotificationsSettings';
 import { AdvancedSettings } from './AdvancedSettings';
@@ -24,6 +25,7 @@ export function SettingsScreen({ tweaks, setTweak, onClose }: SettingsScreenProp
     <SettingsLayout active={active} onSelect={setActive} onClose={onClose}>
       {active === 'general' && <GeneralSettings tweaks={tweaks} setTweak={setTweak} />}
       {active === 'providers' && <ProvidersSettings />}
+      {active === 'plugins' && <PluginsSettings />}
       {active === 'github' && <GitHubSettings />}
       {active === 'workspace' && <WorkspaceSettings />}
       {active === 'risk' && <RiskPolicySettings />}
