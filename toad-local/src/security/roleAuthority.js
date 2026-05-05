@@ -74,6 +74,7 @@ export const ROLE_TOOLS = Object.freeze({
     'railway_link',
     'railway_provision_db',
     'railway_get_connection_string',
+    'drift_correction_create',
   ]),
   developer: Object.freeze([
     ...COMMON_READ_TOOLS,

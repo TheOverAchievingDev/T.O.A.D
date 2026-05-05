@@ -31,6 +31,7 @@ export const COMMANDS = Object.freeze({
   TASK_PLAN_APPROVE: 'task_plan_approve',
   TASK_PLAN_REJECT: 'task_plan_reject',
   DIAGNOSTICS_RUN: 'diagnostics_run',
+  DRIFT_CORRECTION_CREATE: 'drift_correction_create',
   DRIFT_RUN: 'drift_run',
   TASK_HISTORY_EXPORT: 'task_history_export',
   TASK_HUMAN_APPROVE: 'task_human_approve',
@@ -120,6 +121,7 @@ export const MUTATING_COMMANDS = Object.freeze([
   COMMANDS.GIT_INIT_LOCAL,
   COMMANDS.GIT_SET_REMOTE,
   COMMANDS.GITHUB_CREATE_REPOSITORY,
+  COMMANDS.DRIFT_CORRECTION_CREATE,
 ]);
 
 export function commandRequiresIdempotency(commandName) {

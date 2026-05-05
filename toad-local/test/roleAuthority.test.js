@@ -185,3 +185,19 @@ test('roleAuthority: railway_run_migration allowed only for lead/human', () => {
 test('roleAuthority: railway_get_connection_string allowed for developer (read for config)', () => {
   assert.doesNotThrow(() => assertRoleCanCallTool({ role: 'developer', toolName: 'railway_get_connection_string' }));
 });
+
+test('roleAuthority: drift_correction_create allowed for architect/lead/human, denied for developer/reviewer/tester', () => {
+  for (const role of ['architect', 'lead', 'human']) {
+    assert.doesNotThrow(
+      () => assertRoleCanCallTool({ role, toolName: 'drift_correction_create' }),
+      `${role} should be allowed drift_correction_create`,
+    );
+  }
+  for (const role of ['developer', 'reviewer', 'tester']) {
+    assert.throws(
+      () => assertRoleCanCallTool({ role, toolName: 'drift_correction_create' }),
+      /cannot call|not allowed/i,
+      `${role} should be denied drift_correction_create`,
+    );
+  }
+});
