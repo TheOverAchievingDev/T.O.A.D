@@ -10,6 +10,9 @@ const isTauri = process.env.TAURI_ENV_PLATFORM != null;
 
 export default defineConfig({
   plugins: [react()],
+  optimizeDeps: {
+    include: ['monaco-editor', '@monaco-editor/react'],
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
