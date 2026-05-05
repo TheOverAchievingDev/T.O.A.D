@@ -8,6 +8,7 @@ import htmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker';
 import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker';
 import { callTool, type Actor } from '@/api/client';
 import type { UiTask } from '@/types';
+import type { ProjectEntry } from '@/hooks/useProjects';
 import { Icon } from './Icon';
 import {
   buildCodeTree,
@@ -78,11 +79,23 @@ interface CodeScreenProps {
   teamId: string | null;
   tasks: CodeTask[];
   actor?: Actor;
+  projects?: ProjectEntry[];
+  activeProject?: ProjectEntry | null;
+  onSelectProject?: (projectId: string) => void;
+  onSelectFolder?: () => void;
 }
 
 const DEFAULT_ACTOR: Actor = { teamId: 'system', agentId: 'ui-client', agentName: 'ui', role: 'human' };
 
-export function CodeScreen({ teamId, tasks, actor = DEFAULT_ACTOR }: CodeScreenProps) {
+export function CodeScreen({
+  teamId,
+  tasks,
+  actor = DEFAULT_ACTOR,
+  projects = [],
+  activeProject = null,
+  onSelectProject,
+  onSelectFolder,
+}: CodeScreenProps) {
   const [sourceKey, setSourceKey] = useState('project');
   const [tree, setTree] = useState<IdeTreeResult | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -109,12 +122,18 @@ export function CodeScreen({ teamId, tasks, actor = DEFAULT_ACTOR }: CodeScreenP
     return { kind: 'project' };
   }, [sourceKey]);
 
+  const effectiveTeamId = teamId ?? actor.teamId;
+  const rootLabel =
+    source.kind === 'task_worktree'
+      ? (tree?.rootLabel ?? 'Task worktree')
+      : (activeProject?.path ?? tree?.rootLabel ?? 'Project root');
+
   const toolActor = useMemo<Actor>(() => ({
-    teamId: teamId ?? actor.teamId,
+    teamId: effectiveTeamId,
     agentId: actor.agentId,
     agentName: actor.agentName,
     role: actor.role,
-  }), [actor.agentId, actor.agentName, actor.role, actor.teamId, teamId]);
+  }), [actor.agentId, actor.agentName, actor.role, effectiveTeamId]);
 
   const isDirty = file !== null && draftContent !== file.content;
   const codeTree = useMemo(() => buildCodeTree(tree?.entries ?? []), [tree?.entries]);
@@ -134,7 +153,7 @@ export function CodeScreen({ teamId, tasks, actor = DEFAULT_ACTOR }: CodeScreenP
   }
 
   async function openFile(relativePath: string) {
-    if (!teamId) return;
+    if (!effectiveTeamId) return;
     if (relativePath !== selectedPath && !confirmDiscardDirty()) return;
     setSelectedPath(relativePath);
     setLoadingFile(true);
@@ -158,7 +177,7 @@ export function CodeScreen({ teamId, tasks, actor = DEFAULT_ACTOR }: CodeScreenP
   }
 
   async function refreshTree(pathToReopen = selectedPath, skipDirtyCheck = false) {
-    if (!teamId) return;
+    if (!effectiveTeamId) return;
     if (!skipDirtyCheck && isDirty && !confirmDiscardDirty()) return;
     setLoadingTree(true);
     setTreeError(null);
@@ -189,7 +208,7 @@ export function CodeScreen({ teamId, tasks, actor = DEFAULT_ACTOR }: CodeScreenP
   }
 
   async function saveFile() {
-    if (!teamId || !file || !isDirty) return;
+    if (!effectiveTeamId || !file || !isDirty) return;
     setSavingFile(true);
     setSaveError(null);
     try {
@@ -237,7 +256,7 @@ export function CodeScreen({ teamId, tasks, actor = DEFAULT_ACTOR }: CodeScreenP
     setSaveError(null);
     void refreshTree(null, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [teamId, sourceKey]);
+  }, [effectiveTeamId, sourceKey]);
 
   useEffect(() => {
     function handleBeforeUnload(event: BeforeUnloadEvent) {
@@ -249,10 +268,10 @@ export function CodeScreen({ teamId, tasks, actor = DEFAULT_ACTOR }: CodeScreenP
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [isDirty]);
 
-  if (!teamId) {
+  if (!effectiveTeamId) {
     return (
       <div className="code-empty">
-        Select a team to browse project files.
+        Select a project to browse files.
       </div>
     );
   }
@@ -265,9 +284,40 @@ export function CodeScreen({ teamId, tasks, actor = DEFAULT_ACTOR }: CodeScreenP
         <div>
           <div className="eyebrow">Orchestrator IDE</div>
           <h1>Code</h1>
-          <p>{tree?.rootLabel ?? 'Project root'}</p>
+          <p title={rootLabel}>{rootLabel}</p>
         </div>
         <div className="code-actions">
+          {projects.length > 0 && (
+            <select
+              className="field-input mono code-project-select"
+              value={activeProject?.id ?? ''}
+              aria-label="Active project"
+              onChange={(event) => {
+                if (!confirmDiscardDirty()) return;
+                if (!event.target.value) return;
+                onSelectProject?.(event.target.value);
+              }}
+            >
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+          )}
+          {onSelectFolder && (
+            <button
+              className="btn btn-sm"
+              type="button"
+              onClick={() => {
+                if (!confirmDiscardDirty()) return;
+                onSelectFolder();
+              }}
+            >
+              <Icon name="folder" size={12} />
+              Open folder
+            </button>
+          )}
           <select
             className="field-input mono code-source-select"
             value={sourceKey}

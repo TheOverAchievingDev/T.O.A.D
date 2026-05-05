@@ -19,6 +19,24 @@ export interface PickedProject {
 }
 
 /**
+ * Switch the running desktop sidecar to an explicit project path. In browser
+ * dev mode there is no sidecar to restart, so this only normalizes the same
+ * metadata shape the UI registry expects.
+ */
+export async function switchToProjectPath(projectPath: string): Promise<PickedProject | null> {
+  const trimmed = projectPath.trim();
+  if (!trimmed) return null;
+
+  if (!isTauri()) {
+    return { path: trimmed, name: deriveName(trimmed) };
+  }
+
+  const switched = await invoke<string>('switch_project', { projectPath: trimmed });
+  const path = typeof switched === 'string' && switched.length > 0 ? switched : trimmed;
+  return { path, name: deriveName(path) };
+}
+
+/**
  * Open a native folder picker and tell the Rust shell to swap the
  * orchestrator over to the selected directory. Returns the picked folder
  * info on success, null when the user cancels or we're not in Tauri.
@@ -32,7 +50,7 @@ export async function pickAndSwitchProjectFolder(): Promise<PickedProject | null
       '',
     );
     if (!path || !path.trim()) return null;
-    return { path: path.trim(), name: deriveName(path.trim()) };
+    return switchToProjectPath(path);
   }
 
   const selected = await open({
@@ -42,8 +60,7 @@ export async function pickAndSwitchProjectFolder(): Promise<PickedProject | null
   });
   if (!selected || typeof selected !== 'string') return null;
 
-  await invoke<string>('switch_project', { projectPath: selected });
-  return { path: selected, name: deriveName(selected) };
+  return switchToProjectPath(selected);
 }
 
 /** Read the saved active-project path from the Tauri shell, if any. */
