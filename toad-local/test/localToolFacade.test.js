@@ -5868,3 +5868,73 @@ test('LocalToolFacade plugin_resource_list returns rows from pluginResources', a
   assert.equal(result.resources.length, 1);
   assert.equal(result.resources[0].kind, 'postgres');
 });
+
+test('LocalToolFacade railway_link delegates to railwayLink', async () => {
+  const calls = [];
+  const fakeRailwayLink = async (args) => { calls.push(args); return { linked: true, projectId: 'p1' }; };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    railwayToolImpls: { link: fakeRailwayLink },
+  });
+  const result = await facade.execute({
+    commandName: COMMANDS.RAILWAY_LINK,
+    actor: { teamId: 'team-a', agentId: 'ui-client', role: 'human' },
+    args: { projectId: 'p1' },
+  });
+  assert.equal(result.linked, true);
+  assert.equal(calls[0].teamId, 'team-a');
+});
+
+test('LocalToolFacade railway_provision_db idempotent + uses pluginResources', async () => {
+  const calls = [];
+  const fakeProvision = async (args) => {
+    calls.push(args);
+    return { resourceId: 'res_1', externalId: 'svc_x', kind: 'postgres', wasExisting: false };
+  };
+  const fakeResources = { findLive: () => null, insert: () => ({ resourceId: 'res_1' }), listForTeam: () => [] };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    pluginResources: fakeResources,
+    railwayToolImpls: { provisionDb: fakeProvision },
+  });
+  const result = await facade.execute({
+    commandName: COMMANDS.RAILWAY_PROVISION_DB,
+    actor: { teamId: 'team-a', agentId: 'ui-client', role: 'human' },
+    args: { type: 'postgres' },
+  });
+  assert.equal(result.kind, 'postgres');
+  assert.equal(calls[0].pluginResources, fakeResources, 'facade should pass pluginResources to the tool');
+});
+
+test('LocalToolFacade railway_get_connection_string returns plaintext (path-a)', async () => {
+  const fakeGet = async () => ({ value: 'postgres://u:pw@h:5432/d', resourceId: 'res_1' });
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    railwayToolImpls: { getConnectionString: fakeGet },
+  });
+  const result = await facade.execute({
+    commandName: COMMANDS.RAILWAY_GET_CONNECTION_STRING,
+    actor: { teamId: 'team-a', agentId: 'ui-client', role: 'human' },
+    args: { resourceId: 'res_1' },
+  });
+  // Plaintext returned to caller (path-a per spec gotcha #2)
+  assert.equal(result.value, 'postgres://u:pw@h:5432/d');
+});
+
+test('LocalToolFacade railway_run_migration delegates to railwayRunMigration', async () => {
+  const fakeMigrate = async (args) => ({ executed: true, output: 'ok' });
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    railwayToolImpls: { runMigration: fakeMigrate },
+  });
+  const result = await facade.execute({
+    commandName: COMMANDS.RAILWAY_RUN_MIGRATION,
+    actor: { teamId: 'team-a', agentId: 'ui-client', role: 'human' },  // human role required
+    args: { resourceId: 'res_1', sql: 'CREATE TABLE x (id INT);' },
+  });
+  assert.equal(result.executed, true);
+});

@@ -43,6 +43,12 @@ import {
   triggerAuthLogin as pluginTriggerLogin,
   triggerAuthLogout as pluginTriggerLogout,
 } from '../plugins/pluginAuth.js';
+import {
+  railwayLink as defaultRailwayLink,
+  railwayProvisionDb as defaultRailwayProvisionDb,
+  railwayGetConnectionString as defaultRailwayGetConnectionString,
+  railwayRunMigration as defaultRailwayRunMigration,
+} from '../plugins/railway/railwayTools.js';
 
 // §17: review-feedback severity scale, ordered low → high blocking weight.
 export const REVIEW_FEEDBACK_SEVERITIES = Object.freeze(['nit', 'minor', 'major', 'blocking']);
@@ -55,7 +61,7 @@ export class LocalToolFacade {
   #claudeQuotaCache = null;
   #claudeQuotaInflight = null;
 
-  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, foundryStore = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null, mergeIntegrator = null, remoteMergePolicy = null, riskPolicy = null, settingsStore = null, riskPolicyStore = null, githubFetch = null, githubClientId = null, providerAuthSpawn = null, providerAuthSpawnSync = null, providerAuthReadFile = null, providerAuthStat = null, claudeUsageProbe = null, driftEngine = null, runGit = null, openaiFetch = null, deliveryWorker = null, pluginAuthReadFile = null, pluginAuthStat = null, pluginAuthSpawnSync = null, pluginResources = null, pluginJobs = null }) {
+  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, foundryStore = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null, mergeIntegrator = null, remoteMergePolicy = null, riskPolicy = null, settingsStore = null, riskPolicyStore = null, githubFetch = null, githubClientId = null, providerAuthSpawn = null, providerAuthSpawnSync = null, providerAuthReadFile = null, providerAuthStat = null, claudeUsageProbe = null, driftEngine = null, runGit = null, openaiFetch = null, deliveryWorker = null, pluginAuthReadFile = null, pluginAuthStat = null, pluginAuthSpawnSync = null, pluginResources = null, pluginJobs = null, railwayToolImpls = null }) {
     if (!broker) throw new TypeError('broker is required');
     if (!taskBoard) throw new TypeError('taskBoard is required');
     this.broker = broker;
@@ -128,6 +134,8 @@ export class LocalToolFacade {
       ? pluginResources : null;
     this.pluginJobs = pluginJobs && typeof pluginJobs.create === 'function'
       ? pluginJobs : null;
+    this.railwayToolImpls = railwayToolImpls && typeof railwayToolImpls === 'object'
+      ? railwayToolImpls : null;
     this.driftEngine = driftEngine && typeof driftEngine.runDrift === 'function' ? driftEngine : null;
     // git invoker for tools that need to read the project's git state
     // (e.g. github_origin_remote). Injectable so tests don't shell out.
@@ -277,6 +285,14 @@ export class LocalToolFacade {
         return this.#pluginLogout(actor, args);
       case COMMANDS.PLUGIN_RESOURCE_LIST:
         return this.#pluginResourceList(actor, args);
+      case COMMANDS.RAILWAY_LINK:
+        return this.#railwayLink(actor, args);
+      case COMMANDS.RAILWAY_PROVISION_DB:
+        return this.#railwayProvisionDb(actor, args);
+      case COMMANDS.RAILWAY_GET_CONNECTION_STRING:
+        return this.#railwayGetConnectionString(actor, args);
+      case COMMANDS.RAILWAY_RUN_MIGRATION:
+        return this.#railwayRunMigration(actor, args);
       case COMMANDS.AUDIT_LOG_QUERY:
         return this.#auditLogQuery(actor, args);
       case COMMANDS.FOUNDRY_SESSION_CREATE:
@@ -2143,6 +2159,54 @@ export class LocalToolFacade {
       : actor.teamId;
     const resources = this.pluginResources.listForTeam({ teamId });
     return { resources };
+  }
+
+  // ---- Railway tools -------------------------------------------------------
+
+  async #railwayLink(actor, args) {
+    const impl = this.railwayToolImpls?.link || defaultRailwayLink;
+    const teamId = (typeof args?.teamId === 'string' && args.teamId.length > 0)
+      ? args.teamId : actor.teamId;
+    return impl({
+      teamId,
+      projectId: args?.projectId,
+    });
+  }
+
+  async #railwayProvisionDb(actor, args) {
+    if (!this.pluginResources) {
+      throw new Error('railway_provision_db: pluginResources not configured for this facade');
+    }
+    const impl = this.railwayToolImpls?.provisionDb || defaultRailwayProvisionDb;
+    const teamId = (typeof args?.teamId === 'string' && args.teamId.length > 0)
+      ? args.teamId : actor.teamId;
+    return impl({
+      teamId,
+      type: args?.type ?? 'postgres',
+      pluginResources: this.pluginResources,
+    });
+  }
+
+  async #railwayGetConnectionString(actor, args) {
+    const impl = this.railwayToolImpls?.getConnectionString || defaultRailwayGetConnectionString;
+    const teamId = (typeof args?.teamId === 'string' && args.teamId.length > 0)
+      ? args.teamId : actor.teamId;
+    return impl({
+      teamId,
+      resourceId: requireString(args?.resourceId, 'args.resourceId'),
+      varName: args?.varName,
+    });
+  }
+
+  async #railwayRunMigration(actor, args) {
+    const impl = this.railwayToolImpls?.runMigration || defaultRailwayRunMigration;
+    const teamId = (typeof args?.teamId === 'string' && args.teamId.length > 0)
+      ? args.teamId : actor.teamId;
+    return impl({
+      teamId,
+      resourceId: requireString(args?.resourceId, 'args.resourceId'),
+      sql: requireString(args?.sql, 'args.sql'),
+    });
   }
 
   // ---- Foundry -------------------------------------------------------------
