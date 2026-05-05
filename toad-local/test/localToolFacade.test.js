@@ -5794,3 +5794,77 @@ test('LocalToolFacade drift_run rejects when no driftEngine is configured', asyn
     /drift engine not configured/i
   );
 });
+
+test('LocalToolFacade plugin_list_available returns SUPPORTED_PLUGINS shape', async () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    pluginAuthReadFile: () => '{"token":"x"}',  // pretend railway is signed in
+    pluginAuthStat: () => ({ size: 50 }),
+  });
+  const result = await facade.execute({
+    commandName: COMMANDS.PLUGIN_LIST_AVAILABLE,
+    actor: { teamId: 't', agentId: 'ui-client', role: 'human' },
+    args: {},
+  });
+  assert.ok(Array.isArray(result.plugins));
+  const railway = result.plugins.find((p) => p.pluginId === 'railway');
+  assert.ok(railway);
+  assert.equal(railway.signedIn, true);
+});
+
+test('LocalToolFacade plugin_login surfaces manualLogin instructions for railway', async () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  const result = await facade.execute({
+    commandName: COMMANDS.PLUGIN_LOGIN,
+    actor: { teamId: 't', agentId: 'ui-client', role: 'human' },
+    args: { pluginId: 'railway' },
+  });
+  assert.equal(result.manualLogin, true);
+  assert.match(result.reason, /railway login/);
+});
+
+test('LocalToolFacade plugin_logout shells out to railway logout', async () => {
+  const calls = [];
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    pluginAuthSpawnSync: (cmd, args) => {
+      calls.push({ cmd, args });
+      return { status: 0, stdout: '', stderr: '' };
+    },
+  });
+  const result = await facade.execute({
+    commandName: COMMANDS.PLUGIN_LOGOUT,
+    actor: { teamId: 't', agentId: 'ui-client', role: 'human' },
+    args: { pluginId: 'railway' },
+  });
+  assert.equal(result.loggedOut, true);
+  assert.equal(calls[0].cmd, 'railway');
+});
+
+test('LocalToolFacade plugin_resource_list returns rows from pluginResources', async () => {
+  let listed = null;
+  const fakeResources = {
+    listForTeam: ({ teamId }) => {
+      listed = teamId;
+      return [{ resourceId: 'r1', teamId, pluginId: 'railway', kind: 'postgres', externalId: 'svc_x' }];
+    },
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    pluginResources: fakeResources,
+  });
+  const result = await facade.execute({
+    commandName: COMMANDS.PLUGIN_RESOURCE_LIST,
+    actor: { teamId: 'team-a', agentId: 'ui-client', role: 'human' },
+    args: {},
+  });
+  assert.equal(listed, 'team-a');
+  assert.equal(result.resources.length, 1);
+  assert.equal(result.resources[0].kind, 'postgres');
+});

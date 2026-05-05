@@ -37,6 +37,12 @@ import {
   triggerAuthLogout as providerTriggerAuthLogout,
   SUPPORTED_PROVIDERS,
 } from '../providers/providerAuth.js';
+import { PLUGIN_COMMANDS, SUPPORTED_PLUGINS } from '../plugins/pluginRegistry.js';
+import {
+  getAuthStatus as pluginGetAuthStatus,
+  triggerAuthLogin as pluginTriggerLogin,
+  triggerAuthLogout as pluginTriggerLogout,
+} from '../plugins/pluginAuth.js';
 
 // §17: review-feedback severity scale, ordered low → high blocking weight.
 export const REVIEW_FEEDBACK_SEVERITIES = Object.freeze(['nit', 'minor', 'major', 'blocking']);
@@ -49,7 +55,7 @@ export class LocalToolFacade {
   #claudeQuotaCache = null;
   #claudeQuotaInflight = null;
 
-  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, foundryStore = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null, mergeIntegrator = null, remoteMergePolicy = null, riskPolicy = null, settingsStore = null, riskPolicyStore = null, githubFetch = null, githubClientId = null, providerAuthSpawn = null, providerAuthSpawnSync = null, providerAuthReadFile = null, providerAuthStat = null, claudeUsageProbe = null, driftEngine = null, runGit = null, openaiFetch = null, deliveryWorker = null }) {
+  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, foundryStore = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null, mergeIntegrator = null, remoteMergePolicy = null, riskPolicy = null, settingsStore = null, riskPolicyStore = null, githubFetch = null, githubClientId = null, providerAuthSpawn = null, providerAuthSpawnSync = null, providerAuthReadFile = null, providerAuthStat = null, claudeUsageProbe = null, driftEngine = null, runGit = null, openaiFetch = null, deliveryWorker = null, pluginAuthReadFile = null, pluginAuthStat = null, pluginAuthSpawnSync = null, pluginResources = null, pluginJobs = null }) {
     if (!broker) throw new TypeError('broker is required');
     if (!taskBoard) throw new TypeError('taskBoard is required');
     this.broker = broker;
@@ -114,6 +120,14 @@ export class LocalToolFacade {
     // Override the live claude /usage pty probe in tests. Production
     // leaves this null and we fall back to the imported probeClaudeUsage.
     this.claudeUsageProbe = typeof claudeUsageProbe === 'function' ? claudeUsageProbe : null;
+    // Plugin auth / resource injectable overrides (same pattern as providerAuth).
+    this.pluginAuthReadFile = typeof pluginAuthReadFile === 'function' ? pluginAuthReadFile : null;
+    this.pluginAuthStat = typeof pluginAuthStat === 'function' ? pluginAuthStat : null;
+    this.pluginAuthSpawnSync = typeof pluginAuthSpawnSync === 'function' ? pluginAuthSpawnSync : null;
+    this.pluginResources = pluginResources && typeof pluginResources.listForTeam === 'function'
+      ? pluginResources : null;
+    this.pluginJobs = pluginJobs && typeof pluginJobs.create === 'function'
+      ? pluginJobs : null;
     this.driftEngine = driftEngine && typeof driftEngine.runDrift === 'function' ? driftEngine : null;
     // git invoker for tools that need to read the project's git state
     // (e.g. github_origin_remote). Injectable so tests don't shell out.
@@ -255,6 +269,14 @@ export class LocalToolFacade {
         return this.#providerAuthLogin(args);
       case COMMANDS.PROVIDER_AUTH_LOGOUT:
         return this.#providerAuthLogout(args);
+      case COMMANDS.PLUGIN_LIST_AVAILABLE:
+        return this.#pluginListAvailable(actor, args);
+      case COMMANDS.PLUGIN_LOGIN:
+        return this.#pluginLogin(actor, args);
+      case COMMANDS.PLUGIN_LOGOUT:
+        return this.#pluginLogout(actor, args);
+      case COMMANDS.PLUGIN_RESOURCE_LIST:
+        return this.#pluginResourceList(actor, args);
       case COMMANDS.AUDIT_LOG_QUERY:
         return this.#auditLogQuery(actor, args);
       case COMMANDS.FOUNDRY_SESSION_CREATE:
@@ -2075,6 +2097,52 @@ export class LocalToolFacade {
       providerId,
       spawnSyncImpl: this.providerAuthSpawnSync,
     });
+  }
+
+  // ---- Plugins -------------------------------------------------------------
+
+  async #pluginListAvailable(_actor, _args) {
+    const plugins = SUPPORTED_PLUGINS.map((pluginId) => {
+      const cfg = PLUGIN_COMMANDS[pluginId];
+      const status = pluginGetAuthStatus({
+        pluginId,
+        readFileImpl: this.pluginAuthReadFile,
+        statImpl: this.pluginAuthStat,
+      });
+      return {
+        pluginId,
+        label: cfg?.label ?? pluginId,
+        supported: cfg?.supported === true,
+        signedIn: status.signedIn === true,
+        reason: status.reason ?? null,
+        user: status.user ?? null,
+      };
+    });
+    return { plugins };
+  }
+
+  #pluginLogin(_actor, args) {
+    const pluginId = requireString(args?.pluginId, 'args.pluginId');
+    return pluginTriggerLogin({ pluginId });
+  }
+
+  #pluginLogout(_actor, args) {
+    const pluginId = requireString(args?.pluginId, 'args.pluginId');
+    return pluginTriggerLogout({
+      pluginId,
+      spawnSyncImpl: this.pluginAuthSpawnSync,
+    });
+  }
+
+  #pluginResourceList(actor, args) {
+    if (!this.pluginResources) {
+      return { resources: [] };
+    }
+    const teamId = (typeof args?.teamId === 'string' && args.teamId.length > 0)
+      ? args.teamId
+      : actor.teamId;
+    const resources = this.pluginResources.listForTeam({ teamId });
+    return { resources };
   }
 
   // ---- Foundry -------------------------------------------------------------
