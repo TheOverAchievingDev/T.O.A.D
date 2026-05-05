@@ -10,13 +10,15 @@ Tick items off as they ship. New items get appended in the relevant section.
 
 The drift engine surfaces findings; slice 3 makes them actionable. From the slice-1 spec §2 ("Future Actions"):
 
-- [ ] **Add a "Create correction task" button on each finding card.** Click → opens the task-creation modal pre-filled from the finding (`subject` from `title`, `description` joining `expected`/`actual`/`recommendedCorrection`, `riskLevel` derived from severity, optional `dependencyTaskIds` set to the offending `taskId`).
-- [ ] **`drift_correction_create` command in `LocalToolFacade`.** Server-side equivalent so MCP-mode agents (e.g. an architect role) can spawn correction tasks from findings without UI mediation.
-- [ ] **Track which findings spawned correction tasks.** New optional field on `DriftFinding`: `correctionTaskId`. Pre-fill the UI button as "View correction task" when present.
-- [ ] **Auto-resolve findings when their correction task hits `done`.** The deterministic checks already do this implicitly (re-running snapshot finds nothing), but LLM findings with stable IDs need explicit "this got addressed" semantics.
-- [ ] **Slice-3 brainstorming round** — open questions: should corrections route through `task_plan_propose`? Should the drift engine treat findings differently once a correction is in flight? How do we prevent a "correction storm" of one task per finding when several findings are really one root cause?
+- [x] ~~**Add a "Create correction task" button on each finding card.**~~ Shipped — multi-select checkboxes + action bar + editable modal pre-filled from selected findings.
+- [x] ~~**`drift_correction_create` command in `LocalToolFacade`.**~~ Shipped — registered as MCP tool + role-gated to architect/lead/human.
+- [x] ~~**Track which findings spawned correction tasks.**~~ Shipped — `correction_task_id` column on `drift_findings` + `correctionTaskId` field on `DriftFinding` type.
+- [x] ~~**Auto-resolve findings when their correction task hits `done`.**~~ Shipped — `reapResolvedCorrections` clears linkage on done/rejected; engine re-runs from scratch (deterministic re-emit if drift truly persists, silence if it doesn't).
+- [x] ~~**Slice-3 brainstorming round.**~~ Shipped — see `2026-05-04-drift-slice-3-correction-tasks-design.md`. Decisions: manual creation primary (auto deferred to 3.5); editable modal (not task_plan_propose); multi-select checkboxes for storm prevention; visually distinguished + filtered from score + skip-re-emit.
 
-Spec is at `2026-05-03-drift-monitor-design.md` §2 ("Future Actions"); brainstorm before implementing.
+Spec is at `2026-05-04-drift-slice-3-correction-tasks-design.md`.
+
+**Slice 3 shipped 2026-05-04.** Slice 3.5 candidates: auto-creation of corrections (with default policy keyed on `severity:high`), correction templates per check type, root-cause clustering heuristics ("these 3 findings share a `taskId` — collapse into one suggested task"), bulk-resolve UI, correction-task analytics.
 
 ---
 
