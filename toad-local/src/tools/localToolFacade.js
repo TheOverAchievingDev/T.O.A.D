@@ -55,6 +55,7 @@ import {
 export const REVIEW_FEEDBACK_SEVERITIES = Object.freeze(['nit', 'minor', 'major', 'blocking']);
 import { computeDiff as defaultComputeDiff } from '../task/diffComputer.js';
 import { createDriftCorrection } from '../drift/driftCorrection.js';
+import { listIdeTree, readIdeFile } from '../ide/ideFileTools.js';
 
 export class LocalToolFacade {
   // 90s TTL cache for the claude /usage pty probe. We don't store this
@@ -203,6 +204,10 @@ export class LocalToolFacade {
         return this.#toolActivity(actor, args);
       case COMMANDS.HEALTH_STATUS:
         return this.#healthStatus(actor, args);
+      case COMMANDS.IDE_TREE_LIST:
+        return this.#ideTreeList(actor, args);
+      case COMMANDS.IDE_READ_FILE:
+        return this.#ideReadFile(actor, args);
       case COMMANDS.RUNTIME_LIST:
         return this.#runtimeList(actor, args);
       case COMMANDS.USAGE_SUMMARY:
@@ -394,6 +399,26 @@ export class LocalToolFacade {
         })
       : all;
     return { messages };
+  }
+
+  #ideTreeList(actor, args) {
+    return listIdeTree({
+      projectCwd: this.projectCwd,
+      taskBoard: this.taskBoard,
+      teamId: actor.teamId,
+      source: args.source,
+      maxEntries: typeof args.maxEntries === 'number' ? args.maxEntries : undefined,
+    });
+  }
+
+  #ideReadFile(actor, args) {
+    return readIdeFile({
+      projectCwd: this.projectCwd,
+      taskBoard: this.taskBoard,
+      teamId: actor.teamId,
+      source: args.source,
+      relativePath: requireString(args.relativePath, 'args.relativePath'),
+    });
   }
 
   #taskCreate(actor, idempotencyKey, args) {

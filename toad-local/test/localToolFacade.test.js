@@ -148,6 +148,84 @@ test('LocalToolFacade task_list returns { tasks: [...] } so MCP clients accept t
   assert.equal(result.tasks[0].taskId, 'wrap-1');
 });
 
+test('LocalToolFacade ide_tree_list returns project files through the facade', async (t) => {
+  const projectCwd = await fs.mkdtemp(path.join(os.tmpdir(), 'toad-facade-ide-'));
+  t.after(() => fs.rm(projectCwd, { recursive: true, force: true }));
+  await fs.writeFile(path.join(projectCwd, 'README.md'), '# Project\n', 'utf8');
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    projectCwd,
+  });
+
+  const result = facade.execute({
+    commandName: COMMANDS.IDE_TREE_LIST,
+    actor: { teamId: 'team-a', agentId: 'ui', role: 'human' },
+    args: { source: { kind: 'project' } },
+  });
+
+  assert.equal(result.rootLabel, 'Project root');
+  assert.ok(result.entries.some((entry) => entry.path === 'README.md' && entry.kind === 'file'));
+});
+
+test('LocalToolFacade ide_read_file reads project files through the facade', async (t) => {
+  const projectCwd = await fs.mkdtemp(path.join(os.tmpdir(), 'toad-facade-ide-'));
+  t.after(() => fs.rm(projectCwd, { recursive: true, force: true }));
+  await fs.writeFile(path.join(projectCwd, 'README.md'), '# Project\n', 'utf8');
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    projectCwd,
+  });
+
+  const result = facade.execute({
+    commandName: COMMANDS.IDE_READ_FILE,
+    actor: { teamId: 'team-a', agentId: 'ui', role: 'human' },
+    args: { source: { kind: 'project' }, relativePath: 'README.md' },
+  });
+
+  assert.equal(result.content, '# Project\n');
+  assert.equal(result.relativePath, 'README.md');
+  assert.equal(result.encoding, 'utf8');
+});
+
+test('LocalToolFacade ide_tree_list can resolve created task worktrees', async (t) => {
+  const worktreePath = await fs.mkdtemp(path.join(os.tmpdir(), 'toad-facade-ide-worktree-'));
+  t.after(() => fs.rm(worktreePath, { recursive: true, force: true }));
+  await fs.writeFile(path.join(worktreePath, 'TASK.md'), '# Task\n', 'utf8');
+  const taskBoard = new InMemoryTaskBoard();
+  taskBoard.appendEvent({
+    teamId: 'team-a',
+    taskId: 'task-1',
+    idempotencyKey: 'task-create-ide-worktree',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'lead',
+    payload: { subject: 'Build Code view' },
+  });
+  taskBoard.appendEvent({
+    teamId: 'team-a',
+    taskId: 'task-1',
+    idempotencyKey: 'task-worktree-ide',
+    eventType: TASK_EVENT_TYPES.WORKTREE_CREATED,
+    actorId: 'lead',
+    payload: { status: 'created', path: worktreePath, branch: 'toad/task-1' },
+  });
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard,
+    projectCwd: 'unused-for-task-worktree',
+  });
+
+  const result = facade.execute({
+    commandName: COMMANDS.IDE_TREE_LIST,
+    actor: { teamId: 'team-a', agentId: 'ui', role: 'human' },
+    args: { source: { kind: 'task_worktree', taskId: 'task-1' } },
+  });
+
+  assert.match(result.rootLabel, /task-1/);
+  assert.ok(result.entries.some((entry) => entry.path === 'TASK.md' && entry.kind === 'file'));
+});
+
 test('LocalToolFacade message_send fires the DeliveryWorker so the recipient actually receives it', async () => {
   // Without this, the lead can call message_send all day and the messages
   // sit in the broker forever — DeliveryWorker is what writes the payload

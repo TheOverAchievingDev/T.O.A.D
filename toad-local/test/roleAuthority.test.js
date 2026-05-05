@@ -201,3 +201,20 @@ test('roleAuthority: drift_correction_create allowed for architect/lead/human, d
     );
   }
 });
+
+test('roleAuthority: ide read tools are operator-only for Slice A', () => {
+  for (const role of ['lead', 'human']) {
+    assert.doesNotThrow(() => assertRoleCanCallTool({ role, toolName: 'ide_tree_list' }));
+    assert.doesNotThrow(() => assertRoleCanCallTool({ role, toolName: 'ide_read_file' }));
+  }
+  for (const role of ['architect', 'developer', 'reviewer', 'tester']) {
+    assert.throws(
+      () => assertRoleCanCallTool({ role, toolName: 'ide_tree_list' }),
+      new RegExp(`${role} cannot call ide_tree_list`),
+    );
+    assert.throws(
+      () => assertRoleCanCallTool({ role, toolName: 'ide_read_file' }),
+      new RegExp(`${role} cannot call ide_read_file`),
+    );
+  }
+});

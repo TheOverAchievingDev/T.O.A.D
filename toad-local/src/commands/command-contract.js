@@ -16,6 +16,8 @@ export const COMMANDS = Object.freeze({
   USAGE_SUMMARY: 'usage_summary',
   TOOL_ACTIVITY: 'tool_activity',
   HEALTH_STATUS: 'health_status',
+  IDE_TREE_LIST: 'ide_tree_list',
+  IDE_READ_FILE: 'ide_read_file',
   CROSS_TEAM_MESSAGES: 'cross_team_messages',
   CROSS_TEAM_SEND: 'cross_team_send',
   AGENT_LAUNCH: 'agent_launch',
