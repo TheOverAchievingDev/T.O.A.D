@@ -37,15 +37,23 @@ import {
   TweakSelect,
   TweakToggle,
 } from '@/components/TweaksPanel';
+import type { Tweaks } from '@/types';
 import { useTweaks } from '@/hooks/useTweaks';
 import { useToadData } from '@/hooks/useToadData';
 import { useSettings } from '@/hooks/useSettings';
 import { useCommandActions } from '@/hooks/useCommandActions';
 import { useCommandPaletteHotkey } from '@/hooks/useCommandPaletteHotkey';
 import { useEventToasts, type NotificationsConfig } from '@/hooks/useEventToasts';
-import { pickAndSwitchProjectFolder, getSavedProjectPath, clearSavedProjectPath } from '@/integrations/tauri';
+import {
+  pickAndSwitchProjectFolder,
+  getSavedProjectPath,
+  clearSavedProjectPath,
+  switchToProjectPath,
+} from '@/integrations/tauri';
 import { callTool as callToadApi } from '@/api/client';
 import { useDrift } from '@/hooks/useDrift';
+
+type ProjectOpenScreen = Extract<Tweaks['screen'], 'workspace' | 'code'>;
 
 export default function App() {
   return (
@@ -91,7 +99,27 @@ function AppInner() {
   const drift = useDrift({ teamId: team.name || activeTeamId });
   const perTaskDrift = drift.data?.perTaskScores ?? {};
 
-  const pickProjectFolder = useCallback(async () => {
+  const refreshAfterProjectSwitch = useCallback(() => {
+    refresh();
+    window.setTimeout(refresh, 800);
+  }, [refresh]);
+
+  const openRegisteredProject = useCallback(async (projectId: string, nextScreen: ProjectOpenScreen = 'workspace') => {
+    const project = projectRegistry.projects.find((p) => p.id === projectId);
+    if (!project) return;
+    try {
+      const switched = await switchToProjectPath(project.path);
+      if (!switched) return;
+      projectRegistry.setActive(project.id);
+      setTweak('screen', nextScreen);
+      refreshAfterProjectSwitch();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('switch_project failed:', err);
+    }
+  }, [projectRegistry, refreshAfterProjectSwitch, setTweak]);
+
+  const pickProjectFolder = useCallback(async (nextScreen: ProjectOpenScreen = 'workspace') => {
     const picked = await pickAndSwitchProjectFolder();
     if (!picked) return;
     // Reuse an existing entry that points at the same path (case-insensitive
@@ -103,9 +131,9 @@ function AppInner() {
       const created = projectRegistry.addProject({ name: picked.name, path: picked.path });
       projectRegistry.setActive(created.id);
     }
-    setTweak('screen', 'workspace');
-    refresh();
-  }, [projectRegistry, refresh, setTweak]);
+    setTweak('screen', nextScreen);
+    refreshAfterProjectSwitch();
+  }, [projectRegistry, refreshAfterProjectSwitch, setTweak]);
 
   // Team-control handlers wired into the Workspace's Pause/End buttons.
   // Both end with refresh() so the UI immediately reflects the new state
@@ -391,7 +419,9 @@ function AppInner() {
         runtimes={runtimes}
         projects={projectRegistry.projects}
         activeProjectId={projectRegistry.activeId}
-        onSelectProject={projectRegistry.setActive}
+        onSelectProject={(id) => {
+          void openRegisteredProject(id);
+        }}
         onAddProject={() => setAddProjectOpen(true)}
         onCloseProject={projectRegistry.removeProject}
         onToggleTheme={() => setTweak('theme', tweaks.theme === 'dark' ? 'light' : 'dark')}
@@ -449,8 +479,7 @@ function AppInner() {
               projects={projectRegistry.projects}
               activeId={projectRegistry.activeId}
               onOpenProject={(id) => {
-                projectRegistry.setActive(id);
-                setTweak('screen', 'workspace');
+                void openRegisteredProject(id, 'workspace');
               }}
               onCreateTeam={() => setTweak('screen', 'create')}
               onSelectFolder={pickProjectFolder}
@@ -524,6 +553,14 @@ function AppInner() {
             <CodeScreen
               teamId={team.name || activeTeamId}
               tasks={tasks}
+              projects={projectRegistry.projects}
+              activeProject={projectRegistry.active}
+              onSelectProject={(id) => {
+                void openRegisteredProject(id, 'code');
+              }}
+              onSelectFolder={() => {
+                void pickProjectFolder('code');
+              }}
               actor={{
                 teamId: team.name || activeTeamId || 'system',
                 agentId: 'ui-client',
@@ -702,9 +739,17 @@ function AppInner() {
         <AddProjectModal
           onClose={() => setAddProjectOpen(false)}
           onAdd={(input) => {
-            const created = projectRegistry.addProject(input);
-            projectRegistry.setActive(created.id);
-            refresh();
+            void (async () => {
+              try {
+                await switchToProjectPath(input.path);
+                const created = projectRegistry.addProject(input);
+                projectRegistry.setActive(created.id);
+                refreshAfterProjectSwitch();
+              } catch (err) {
+                // eslint-disable-next-line no-console
+                console.error('switch_project failed:', err);
+              }
+            })();
           }}
         />
       )}

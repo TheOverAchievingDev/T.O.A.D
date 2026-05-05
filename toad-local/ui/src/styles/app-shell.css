@@ -493,10 +493,17 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .code-source-select {
   width: min(360px, 38vw);
+  font-size: 12px;
+}
+
+.code-project-select {
+  width: min(280px, 28vw);
   font-size: 12px;
 }
 
@@ -754,7 +761,8 @@
   }
 
   .code-actions,
-  .code-source-select {
+  .code-source-select,
+  .code-project-select {
     width: 100%;
   }
 
