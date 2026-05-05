@@ -4,6 +4,7 @@ import { Icon, type IconName } from './Icon';
 export type SidebarKey =
   | 'workspace'
   | 'foundry'
+  | 'code'
   | 'tasks'
   | 'runtimes'
   | 'approvals'
@@ -32,6 +33,7 @@ interface SidebarNavProps {
 const DEFAULT_TOP: SidebarNavItem[] = [
   { key: 'workspace', label: 'Workspace', icon: 'layers' },
   { key: 'foundry', label: 'Foundry', icon: 'sparkle' },
+  { key: 'code', label: 'Code', icon: 'code' },
   { key: 'tasks', label: 'Tasks', icon: 'kanban' },
   { key: 'runtimes', label: 'Runtimes', icon: 'cpu' },
   { key: 'approvals', label: 'Approvals', icon: 'check' },

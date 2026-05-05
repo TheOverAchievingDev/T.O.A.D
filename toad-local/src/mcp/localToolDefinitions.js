@@ -37,6 +37,15 @@ const STRING_LIST_SCHEMA = Object.freeze({
   items: { type: 'string', minLength: 1 },
 });
 
+const IDE_SOURCE_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    kind: { type: 'string', enum: ['project', 'task_worktree'] },
+    taskId: { type: 'string', minLength: 1 },
+  },
+});
+
 const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
   makeTool({
     name: COMMANDS.AGENT_STATUS,
@@ -216,6 +225,38 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
     required: [],
     properties: {
       runtimeId: { type: 'string', minLength: 1 },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.IDE_TREE_LIST,
+    title: 'IDE Tree List',
+    description: 'Read-only. Lists files under the selected project root or task worktree for the Code view.',
+    required: [],
+    properties: {
+      source: IDE_SOURCE_SCHEMA,
+      maxEntries: { type: 'integer', minimum: 1, maximum: 10000 },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.IDE_READ_FILE,
+    title: 'IDE Read File',
+    description: 'Read-only. Reads a UTF-8 text file from the selected project root or task worktree for the Code view.',
+    required: ['relativePath'],
+    properties: {
+      source: IDE_SOURCE_SCHEMA,
+      relativePath: { type: 'string', minLength: 1 },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.IDE_WRITE_FILE,
+    title: 'IDE Write File',
+    description: 'Mutating. Writes a UTF-8 text file under the selected project root or task worktree for the Code view.',
+    required: ['relativePath', 'content'],
+    properties: {
+      source: IDE_SOURCE_SCHEMA,
+      relativePath: { type: 'string', minLength: 1 },
+      content: { type: 'string' },
+      expectedSha256: { type: 'string', minLength: 1 },
     },
   }),
   makeTool({

@@ -51,6 +51,11 @@ interface BackendTask {
   // task_human_approve fires. Older fixtures used a flat boolean — accept both.
   humanApproval?: { approved?: boolean; approvedBy?: string; approvedAt?: string; reason?: string };
   humanApproved?: boolean;
+  worktree?: {
+    status?: string;
+    path?: string;
+    branch?: string | null;
+  } | null;
 }
 
 interface BackendTeamMember {
@@ -235,6 +240,13 @@ function normalizeTask(raw: BackendTask, fallbackProject: string): UiTask {
     // Read from either shape — backend writes the nested object after
     // task_human_approve, but legacy/test fixtures use the flat bool.
     humanApproved: raw.humanApproval?.approved === true || raw.humanApproved === true,
+    worktree: raw.worktree && typeof raw.worktree === 'object'
+      ? {
+          status: raw.worktree.status,
+          path: raw.worktree.path,
+          branch: raw.worktree.branch ?? null,
+        }
+      : null,
   };
 }
 

@@ -27,6 +27,7 @@ import { CostsScreen } from '@/components/CostsScreen';
 import { AuditLogScreen } from '@/components/AuditLogScreen';
 import { DriftScreen } from '@/components/DriftScreen';
 import { FoundryScreen } from '@/components/FoundryScreen';
+import { CodeScreen } from '@/components/CodeScreen';
 import { ShortcutsModal } from '@/components/ShortcutsModal';
 import { useShortcutsHotkey } from '@/hooks/useShortcutsHotkey';
 import {
@@ -225,7 +226,7 @@ function AppInner() {
   // screen. Without this the user lands on the workspace with no real
   // data and no obvious "where do I start" affordance.
   useEffect(() => {
-    if (projectRegistry.projects.length === 0 && tweaks.screen !== 'picker' && tweaks.screen !== 'create' && tweaks.screen !== 'settings' && tweaks.screen !== 'foundry' && tweaks.screen !== 'drift') {
+    if (projectRegistry.projects.length === 0 && tweaks.screen !== 'picker' && tweaks.screen !== 'create' && tweaks.screen !== 'settings' && tweaks.screen !== 'foundry' && tweaks.screen !== 'code' && tweaks.screen !== 'drift') {
       setTweak('screen', 'picker');
     }
   }, [projectRegistry.projects.length, tweaks.screen, setTweak]);
@@ -336,6 +337,7 @@ function AppInner() {
     if (tweaks.showRuntimes) return 'runtimes';
     if (tweaks.screen === 'settings') return 'settings';
     if (tweaks.screen === 'foundry') return 'foundry';
+    if (tweaks.screen === 'code') return 'code';
     if (tweaks.screen === 'costs') return 'costs';
     if (tweaks.screen === 'drift') return 'drift';
     if (tweaks.screen === 'tasks') return 'tasks';
@@ -352,6 +354,9 @@ function AppInner() {
         return;
       case 'foundry':
         setTweak('screen', 'foundry');
+        return;
+      case 'code':
+        setTweak('screen', 'code');
         return;
       case 'runtimes':
         setTweak('showRuntimes', true);
@@ -512,6 +517,18 @@ function AppInner() {
                 setActiveTeamId(teamId);
                 refresh();
                 setTweak('screen', 'workspace');
+              }}
+            />
+          )}
+          {tweaks.screen === 'code' && (
+            <CodeScreen
+              teamId={team.name || activeTeamId}
+              tasks={tasks}
+              actor={{
+                teamId: team.name || activeTeamId || 'system',
+                agentId: 'ui-client',
+                agentName: 'ui',
+                role: 'human',
               }}
             />
           )}
@@ -806,6 +823,7 @@ function AppInner() {
                 { value: 'workspace', label: 'Workspace' },
                 { value: 'tasks', label: 'Tasks' },
                 { value: 'foundry', label: 'Foundry' },
+                { value: 'code', label: 'Code' },
                 { value: 'settings', label: 'Settings' },
                 { value: 'costs', label: 'Cost dashboard' },
                 { value: 'audit', label: 'Audit log' },

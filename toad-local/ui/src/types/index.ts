@@ -102,6 +102,11 @@ export interface UiTask {
   matchedRules?: MatchedRiskRule[];
   /** True after a human has responded to the §14 gate. */
   humanApproved?: boolean;
+  worktree?: {
+    status?: string;
+    path?: string;
+    branch?: string | null;
+  } | null;
 }
 
 export interface Provider {
@@ -137,6 +142,7 @@ export interface Tweaks {
     | 'tasks'
     | 'settings'
     | 'foundry'
+    | 'code'
     | 'costs'
     | 'audit'
     | 'drift'

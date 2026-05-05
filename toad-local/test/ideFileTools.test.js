@@ -1,0 +1,650 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import {
+  listIdeTree,
+  readIdeFile,
+  resolveIdeSourceRoot,
+  writeIdeFile,
+} from '../src/ide/ideFileTools.js';
+
+function makeTmpProject() {
+  const dir = mkdtempSync(join(tmpdir(), 'toad-ide-files-test-'));
+  return {
+    dir,
+    cleanup() { try { rmSync(dir, { recursive: true, force: true }); } catch {} },
+  };
+}
+
+function writeProjectFile(root, relativePath, content) {
+  const fullPath = join(root, relativePath);
+  mkdirSync(resolve(fullPath, '..'), { recursive: true });
+  writeFileSync(fullPath, content);
+}
+
+test('resolveIdeSourceRoot resolves project source from projectCwd', () => {
+  const tmp = makeTmpProject();
+  try {
+    const result = resolveIdeSourceRoot({
+      projectCwd: tmp.dir,
+      source: { kind: 'project' },
+    });
+
+    assert.equal(result.rootPath, resolve(tmp.dir));
+    assert.equal(result.rootLabel, 'Project root');
+    assert.deepEqual(result.source, { kind: 'project' });
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('resolveIdeSourceRoot resolves task worktree source when created', () => {
+  const tmp = makeTmpProject();
+  try {
+    const taskBoard = {
+      getTask({ teamId, taskId }) {
+        assert.equal(teamId, 'team-a');
+        assert.equal(taskId, 'task-1');
+        return {
+          taskId: 'task-1',
+          subject: 'Add editor',
+          worktree: { status: 'created', path: tmp.dir },
+        };
+      },
+    };
+
+    const result = resolveIdeSourceRoot({
+      projectCwd: 'ignored-for-task',
+      taskBoard,
+      teamId: 'team-a',
+      source: { kind: 'task_worktree', taskId: 'task-1' },
+    });
+
+    assert.equal(result.rootPath, resolve(tmp.dir));
+    assert.equal(result.rootLabel, 'Task task-1: Add editor');
+    assert.deepEqual(result.source, { kind: 'task_worktree', taskId: 'task-1' });
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('resolveIdeSourceRoot rejects missing projectCwd', () => {
+  assert.throws(
+    () => resolveIdeSourceRoot({ source: { kind: 'project' } }),
+    /ide_tree_list: no projectCwd configured/,
+  );
+});
+
+test('resolveIdeSourceRoot rejects missing or uncreated task worktree', () => {
+  const taskBoard = {
+    getTask() {
+      return { taskId: 'task-1', worktree: { status: 'skipped' } };
+    },
+  };
+
+  assert.throws(
+    () => resolveIdeSourceRoot({
+      projectCwd: 'ignored-for-task',
+      taskBoard,
+      teamId: 'team-a',
+      source: { kind: 'task_worktree', taskId: 'task-1' },
+    }),
+    /ide_tree_list: task worktree not found/,
+  );
+});
+
+test('listIdeTree returns text project files and skips ignored directories including node_modules', () => {
+  const tmp = makeTmpProject();
+  try {
+    mkdirSync(join(tmp.dir, 'src'), { recursive: true });
+    writeProjectFile(tmp.dir, 'src/app.ts', 'export const app = true;\n');
+    writeProjectFile(tmp.dir, 'README.md', '# TOAD\n');
+    writeProjectFile(tmp.dir, 'node_modules/pkg/index.js', 'module.exports = {};\n');
+    writeProjectFile(tmp.dir, '.git/config', '[core]\n');
+    writeProjectFile(tmp.dir, '.toad/mcp-configs/server.json', '{}\n');
+    writeProjectFile(tmp.dir, 'dist/bundle.js', 'bundle\n');
+    writeProjectFile(tmp.dir, 'build/output.js', 'output\n');
+    writeProjectFile(tmp.dir, '.vite/cache.js', 'cache\n');
+    writeProjectFile(tmp.dir, 'coverage/lcov.info', 'coverage\n');
+
+    const result = listIdeTree({
+      projectCwd: tmp.dir,
+      source: { kind: 'project' },
+    });
+
+    assert.equal(result.rootLabel, 'Project root');
+    assert.equal(result.truncated, false);
+    assert.ok(result.entries.some((entry) => entry.path === 'README.md'));
+    assert.ok(result.entries.some((entry) => entry.path === 'src'));
+    assert.ok(result.entries.some((entry) => entry.path === 'src/app.ts'));
+    assert.equal(result.entries.some((entry) => entry.path.startsWith('node_modules/')), false);
+    assert.equal(result.entries.some((entry) => entry.path.startsWith('.git/')), false);
+    assert.equal(result.entries.some((entry) => entry.path.startsWith('.toad/mcp-configs/')), false);
+    assert.equal(result.entries.some((entry) => entry.path.startsWith('dist/')), false);
+    assert.equal(result.entries.some((entry) => entry.path.startsWith('build/')), false);
+    assert.equal(result.entries.some((entry) => entry.path.startsWith('.vite/')), false);
+    assert.equal(result.entries.some((entry) => entry.path.startsWith('coverage/')), false);
+    assert.equal(result.entries.find((entry) => entry.path === 'src').kind, 'directory');
+    assert.equal(result.entries.find((entry) => entry.path === 'README.md').kind, 'file');
+    assert.equal(typeof result.entries.find((entry) => entry.path === 'README.md').sizeBytes, 'number');
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('listIdeTree includes binary files as file entries', () => {
+  const tmp = makeTmpProject();
+  try {
+    writeFileSync(join(tmp.dir, 'binary.dat'), Buffer.from([0, 1, 2, 3]));
+
+    const result = listIdeTree({
+      projectCwd: tmp.dir,
+      source: { kind: 'project' },
+    });
+
+    const binaryEntry = result.entries.find((entry) => entry.path === 'binary.dat');
+    assert.ok(binaryEntry);
+    assert.equal(binaryEntry.kind, 'file');
+    assert.equal(binaryEntry.name, 'binary.dat');
+    assert.equal(binaryEntry.sizeBytes, 4);
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('listIdeTree includes empty non-ignored directories', () => {
+  const tmp = makeTmpProject();
+  try {
+    mkdirSync(join(tmp.dir, 'empty-dir'), { recursive: true });
+
+    const result = listIdeTree({
+      projectCwd: tmp.dir,
+      source: { kind: 'project' },
+    });
+
+    const emptyEntry = result.entries.find((entry) => entry.path === 'empty-dir');
+    assert.ok(emptyEntry);
+    assert.equal(emptyEntry.kind, 'directory');
+    assert.equal(emptyEntry.name, 'empty-dir');
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('listIdeTree caps entries and reports truncated', () => {
+  const tmp = makeTmpProject();
+  try {
+    writeProjectFile(tmp.dir, 'a.txt', 'a\n');
+    writeProjectFile(tmp.dir, 'b.txt', 'b\n');
+    writeProjectFile(tmp.dir, 'c.txt', 'c\n');
+
+    const result = listIdeTree({
+      projectCwd: tmp.dir,
+      source: { kind: 'project' },
+      maxEntries: 2,
+    });
+
+    assert.equal(result.entries.length, 2);
+    assert.equal(result.truncated, true);
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('listIdeTree stops statting once maxEntries is reached', () => {
+  const tmp = makeTmpProject();
+  const originalStatSync = fs.statSync;
+  try {
+    writeProjectFile(tmp.dir, 'a.txt', 'a\n');
+    writeProjectFile(tmp.dir, 'z-late.txt', 'late\n');
+
+    fs.statSync = (target, ...args) => {
+      if (String(target).endsWith('z-late.txt')) {
+        throw new Error('stat after cap');
+      }
+      return originalStatSync.call(fs, target, ...args);
+    };
+    syncBuiltinESMExports();
+
+    const result = listIdeTree({
+      projectCwd: tmp.dir,
+      source: { kind: 'project' },
+      maxEntries: 1,
+    });
+
+    assert.deepEqual(result.entries.map((entry) => entry.path), ['a.txt']);
+    assert.equal(result.truncated, true);
+  } finally {
+    fs.statSync = originalStatSync;
+    syncBuiltinESMExports();
+    tmp.cleanup();
+  }
+});
+
+test('listIdeTree does not open a directory that reaches maxEntries', () => {
+  const tmp = makeTmpProject();
+  const originalReaddirSync = fs.readdirSync;
+  try {
+    writeProjectFile(tmp.dir, 'a-dir/nested.txt', 'nested\n');
+
+    fs.readdirSync = (target, ...args) => {
+      if (String(target).endsWith('a-dir')) {
+        throw new Error('opened capped directory');
+      }
+      return originalReaddirSync.call(fs, target, ...args);
+    };
+    syncBuiltinESMExports();
+
+    const result = listIdeTree({
+      projectCwd: tmp.dir,
+      source: { kind: 'project' },
+      maxEntries: 1,
+    });
+
+    assert.deepEqual(result.entries.map((entry) => entry.path), ['a-dir']);
+    assert.equal(result.truncated, true);
+  } finally {
+    fs.readdirSync = originalReaddirSync;
+    syncBuiltinESMExports();
+    tmp.cleanup();
+  }
+});
+
+test('readIdeFile reads utf8 files with a language hint for TypeScript', () => {
+  const tmp = makeTmpProject();
+  try {
+    writeProjectFile(tmp.dir, 'src/app.ts', 'const answer: number = 42;\n');
+
+    const result = readIdeFile({
+      projectCwd: tmp.dir,
+      source: { kind: 'project' },
+      relativePath: 'src/app.ts',
+    });
+
+    assert.deepEqual(result.source, { kind: 'project' });
+    assert.equal(result.relativePath, 'src/app.ts');
+    assert.equal(result.content, 'const answer: number = 42;\n');
+    assert.equal(result.encoding, 'utf8');
+    assert.equal(result.sizeBytes, Buffer.byteLength(result.content));
+    assert.equal(result.languageHint, 'typescript');
+    assert.match(result.sha256, /^[a-f0-9]{64}$/);
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('readIdeFile reads in-root files whose names start with dot dot', () => {
+  const tmp = makeTmpProject();
+  try {
+    writeProjectFile(tmp.dir, '..env', 'KEY=value\n');
+
+    const result = readIdeFile({
+      projectCwd: tmp.dir,
+      source: { kind: 'project' },
+      relativePath: '..env',
+    });
+
+    assert.equal(result.relativePath, '..env');
+    assert.equal(result.content, 'KEY=value\n');
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('readIdeFile returns required language hints by extension', () => {
+  const tmp = makeTmpProject();
+  try {
+    const cases = [
+      ['file.js', 'javascript'],
+      ['file.jsx', 'javascriptreact'],
+      ['file.ts', 'typescript'],
+      ['file.tsx', 'typescriptreact'],
+      ['file.json', 'json'],
+      ['file.md', 'markdown'],
+      ['file.css', 'css'],
+      ['file.html', 'html'],
+      ['file.rs', 'rust'],
+      ['file.sql', 'sql'],
+      ['file.yml', 'yaml'],
+      ['file.yaml', 'yaml'],
+    ];
+
+    for (const [relativePath, languageHint] of cases) {
+      writeProjectFile(tmp.dir, relativePath, 'content\n');
+      const result = readIdeFile({
+        projectCwd: tmp.dir,
+        source: { kind: 'project' },
+        relativePath,
+      });
+      assert.equal(result.languageHint, languageHint, relativePath);
+    }
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('readIdeFile rejects traversal outside source root', () => {
+  const tmp = makeTmpProject();
+  try {
+    assert.throws(
+      () => readIdeFile({
+        projectCwd: tmp.dir,
+        source: { kind: 'project' },
+        relativePath: '../outside.txt',
+      }),
+      /ide_read_file: path outside source root/,
+    );
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('readIdeFile rejects absolute paths', () => {
+  const tmp = makeTmpProject();
+  try {
+    const absolutePath = join(tmp.dir, 'inside.txt');
+    writeFileSync(absolutePath, 'inside\n');
+
+    assert.throws(
+      () => readIdeFile({
+        projectCwd: tmp.dir,
+        source: { kind: 'project' },
+        relativePath: absolutePath,
+      }),
+      /ide_read_file: path outside source root/,
+    );
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('readIdeFile rejects symlinks that resolve outside source root', (t) => {
+  const tmp = makeTmpProject();
+  const outside = makeTmpProject();
+  try {
+    writeProjectFile(outside.dir, 'secret.txt', 'outside\n');
+    try {
+      symlinkSync(join(outside.dir, 'secret.txt'), join(tmp.dir, 'linked-secret.txt'), 'file');
+    } catch (error) {
+      if (['EPERM', 'EACCES', 'ENOTSUP'].includes(error?.code)) {
+        t.skip(`symlink creation unavailable: ${error.code}`);
+        return;
+      }
+      throw error;
+    }
+
+    assert.throws(
+      () => readIdeFile({
+        projectCwd: tmp.dir,
+        source: { kind: 'project' },
+        relativePath: 'linked-secret.txt',
+      }),
+      /ide_read_file: path outside source root/,
+    );
+  } finally {
+    outside.cleanup();
+    tmp.cleanup();
+  }
+});
+
+test('readIdeFile rejects directories', () => {
+  const tmp = makeTmpProject();
+  try {
+    mkdirSync(join(tmp.dir, 'src'), { recursive: true });
+
+    assert.throws(
+      () => readIdeFile({
+        projectCwd: tmp.dir,
+        source: { kind: 'project' },
+        relativePath: 'src',
+      }),
+      /ide_read_file: cannot read directory/,
+    );
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('readIdeFile wraps missing file errors with command prefix', () => {
+  const tmp = makeTmpProject();
+  try {
+    assert.throws(
+      () => readIdeFile({
+        projectCwd: tmp.dir,
+        source: { kind: 'project' },
+        relativePath: 'missing.txt',
+      }),
+      /ide_read_file: .*missing\.txt/,
+    );
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('readIdeFile rejects binary files', () => {
+  const tmp = makeTmpProject();
+  try {
+    writeFileSync(join(tmp.dir, 'data.bin'), Buffer.from([65, 0, 66, 67]));
+
+    assert.throws(
+      () => readIdeFile({
+        projectCwd: tmp.dir,
+        source: { kind: 'project' },
+        relativePath: 'data.bin',
+      }),
+      /ide_read_file: binary file/,
+    );
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('readIdeFile rejects files over maxBytes', () => {
+  const tmp = makeTmpProject();
+  try {
+    writeProjectFile(tmp.dir, 'big.txt', '1234567890');
+
+    assert.throws(
+      () => readIdeFile({
+        projectCwd: tmp.dir,
+        source: { kind: 'project' },
+        relativePath: 'big.txt',
+        maxBytes: 5,
+      }),
+      /ide_read_file: file too large/,
+    );
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('writeIdeFile updates an existing utf8 file and returns updated metadata', () => {
+  const tmp = makeTmpProject();
+  try {
+    writeProjectFile(tmp.dir, 'src/app.ts', 'const oldValue = true;\n');
+    const before = readIdeFile({
+      projectCwd: tmp.dir,
+      source: { kind: 'project' },
+      relativePath: 'src/app.ts',
+    });
+
+    const result = writeIdeFile({
+      projectCwd: tmp.dir,
+      source: { kind: 'project' },
+      relativePath: 'src/app.ts',
+      content: 'const newValue = true;\n',
+      expectedSha256: before.sha256,
+    });
+
+    assert.equal(result.relativePath, 'src/app.ts');
+    assert.equal(result.content, 'const newValue = true;\n');
+    assert.equal(result.sizeBytes, Buffer.byteLength(result.content));
+    assert.equal(result.languageHint, 'typescript');
+    assert.match(result.sha256, /^[a-f0-9]{64}$/);
+    assert.notEqual(result.sha256, before.sha256);
+    assert.equal(readIdeFile({
+      projectCwd: tmp.dir,
+      source: { kind: 'project' },
+      relativePath: 'src/app.ts',
+    }).content, 'const newValue = true;\n');
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('writeIdeFile creates a missing file when parent directory exists', () => {
+  const tmp = makeTmpProject();
+  try {
+    mkdirSync(join(tmp.dir, 'docs'), { recursive: true });
+
+    const result = writeIdeFile({
+      projectCwd: tmp.dir,
+      source: { kind: 'project' },
+      relativePath: 'docs/new.md',
+      content: '# New\n',
+    });
+
+    assert.equal(result.relativePath, 'docs/new.md');
+    assert.equal(result.content, '# New\n');
+    assert.equal(readIdeFile({
+      projectCwd: tmp.dir,
+      source: { kind: 'project' },
+      relativePath: 'docs/new.md',
+    }).content, '# New\n');
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('writeIdeFile rejects stale expectedSha256 for existing files', () => {
+  const tmp = makeTmpProject();
+  try {
+    writeProjectFile(tmp.dir, 'README.md', '# One\n');
+    const before = readIdeFile({
+      projectCwd: tmp.dir,
+      source: { kind: 'project' },
+      relativePath: 'README.md',
+    });
+    writeProjectFile(tmp.dir, 'README.md', '# Two\n');
+
+    assert.throws(
+      () => writeIdeFile({
+        projectCwd: tmp.dir,
+        source: { kind: 'project' },
+        relativePath: 'README.md',
+        content: '# Three\n',
+        expectedSha256: before.sha256,
+      }),
+      /ide_write_file: file changed on disk/,
+    );
+    assert.equal(readIdeFile({
+      projectCwd: tmp.dir,
+      source: { kind: 'project' },
+      relativePath: 'README.md',
+    }).content, '# Two\n');
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('writeIdeFile rejects expectedSha256 when creating a missing file', () => {
+  const tmp = makeTmpProject();
+  try {
+    assert.throws(
+      () => writeIdeFile({
+        projectCwd: tmp.dir,
+        source: { kind: 'project' },
+        relativePath: 'missing.txt',
+        content: 'new\n',
+        expectedSha256: '0'.repeat(64),
+      }),
+      /ide_write_file: file changed on disk/,
+    );
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('writeIdeFile rejects traversal and absolute paths', () => {
+  const tmp = makeTmpProject();
+  try {
+    assert.throws(
+      () => writeIdeFile({
+        projectCwd: tmp.dir,
+        source: { kind: 'project' },
+        relativePath: '../outside.txt',
+        content: 'outside\n',
+      }),
+      /ide_write_file: path outside source root/,
+    );
+    assert.throws(
+      () => writeIdeFile({
+        projectCwd: tmp.dir,
+        source: { kind: 'project' },
+        relativePath: join(tmp.dir, 'absolute.txt'),
+        content: 'absolute\n',
+      }),
+      /ide_write_file: path outside source root/,
+    );
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('writeIdeFile rejects binary and oversized content', () => {
+  const tmp = makeTmpProject();
+  try {
+    assert.throws(
+      () => writeIdeFile({
+        projectCwd: tmp.dir,
+        source: { kind: 'project' },
+        relativePath: 'binary.txt',
+        content: 'a\u0000b',
+      }),
+      /ide_write_file: binary content/,
+    );
+    assert.throws(
+      () => writeIdeFile({
+        projectCwd: tmp.dir,
+        source: { kind: 'project' },
+        relativePath: 'big.txt',
+        content: '123456',
+        maxBytes: 5,
+      }),
+      /ide_write_file: content too large/,
+    );
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('writeIdeFile rejects directory targets and missing parent directories', () => {
+  const tmp = makeTmpProject();
+  try {
+    mkdirSync(join(tmp.dir, 'src'), { recursive: true });
+    assert.throws(
+      () => writeIdeFile({
+        projectCwd: tmp.dir,
+        source: { kind: 'project' },
+        relativePath: 'src',
+        content: 'no\n',
+      }),
+      /ide_write_file: cannot write directory/,
+    );
+    assert.throws(
+      () => writeIdeFile({
+        projectCwd: tmp.dir,
+        source: { kind: 'project' },
+        relativePath: 'missing-dir/file.txt',
+        content: 'no\n',
+      }),
+      /ide_write_file: parent directory not found/,
+    );
+  } finally {
+    tmp.cleanup();
+  }
+});
