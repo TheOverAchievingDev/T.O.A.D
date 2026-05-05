@@ -1,9 +1,13 @@
 import {
   readdirSync,
+  renameSync,
   realpathSync,
   readFileSync,
   statSync,
+  unlinkSync,
+  writeFileSync,
 } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 
 const IGNORED_DIR_NAMES = new Set([
@@ -117,8 +121,82 @@ export function readIdeFile({
     content,
     encoding: 'utf8',
     sizeBytes: stats.size,
+    sha256: sha256(bytes),
     languageHint: getLanguageHint(resolved.relativePath),
   };
+}
+
+export function writeIdeFile({
+  projectCwd,
+  taskBoard,
+  teamId,
+  source = { kind: 'project' },
+  relativePath,
+  content,
+  expectedSha256,
+  maxBytes = 1024 * 1024,
+}) {
+  if (typeof content !== 'string') {
+    throw new Error('ide_write_file: content must be a string');
+  }
+  if (content.includes('\u0000')) {
+    throw new Error('ide_write_file: binary content');
+  }
+
+  const bytes = Buffer.from(content, 'utf8');
+  if (bytes.length > maxBytes) {
+    throw new Error('ide_write_file: content too large');
+  }
+
+  const root = withWriteFileErrors(() => resolveIdeSourceRoot({ projectCwd, taskBoard, teamId, source }));
+  const target = resolveWritableInsideRoot(root.rootPath, relativePath);
+
+  let existingBytes = null;
+  if (target.exists) {
+    const stats = withWriteFileErrors(() => statSync(target.absolutePath));
+    if (stats.isDirectory()) {
+      throw new Error('ide_write_file: cannot write directory');
+    }
+    if (!stats.isFile()) {
+      throw new Error('ide_write_file: not a file');
+    }
+    existingBytes = withWriteFileErrors(() => readFileSync(target.absolutePath));
+  } else if (typeof expectedSha256 === 'string' && expectedSha256.length > 0) {
+    throw new Error('ide_write_file: file changed on disk');
+  }
+
+  if (existingBytes && typeof expectedSha256 === 'string' && expectedSha256.length > 0) {
+    const currentSha256 = sha256(existingBytes);
+    if (currentSha256 !== expectedSha256) {
+      throw new Error('ide_write_file: file changed on disk');
+    }
+  }
+
+  const temporaryPath = path.join(
+    target.parentPath,
+    `.${path.basename(target.absolutePath)}.toad-tmp-${process.pid}-${Date.now()}`,
+  );
+  try {
+    writeFileSync(temporaryPath, bytes);
+    renameSync(temporaryPath, target.absolutePath);
+  } catch (error) {
+    try {
+      unlinkSync(temporaryPath);
+    } catch {}
+    if (error?.message?.startsWith('ide_write_file:')) {
+      throw error;
+    }
+    throw new Error(`ide_write_file: ${error?.message || 'filesystem error'}`);
+  }
+
+  return readIdeFile({
+    projectCwd,
+    taskBoard,
+    teamId,
+    source,
+    relativePath: target.relativePath,
+    maxBytes,
+  });
 }
 
 function collectTreeEntries(rootPath, parentRelativePath, state) {
@@ -224,6 +302,60 @@ function resolveInsideRoot(rootPath, relativePath) {
   };
 }
 
+function resolveWritableInsideRoot(rootPath, relativePath) {
+  if (!relativePath || path.isAbsolute(relativePath)) {
+    throw new Error('ide_write_file: path outside source root');
+  }
+
+  const absolutePath = path.resolve(rootPath, relativePath);
+  const relativeToRoot = path.relative(rootPath, absolutePath);
+  if (isOutsideRoot(relativeToRoot)) {
+    throw new Error('ide_write_file: path outside source root');
+  }
+
+  const parentPath = path.dirname(absolutePath);
+  const realRootPath = withWriteFileErrors(() => realpathSync(rootPath));
+  const realParentPath = withWriteFileErrors(() => {
+    try {
+      return realpathSync(parentPath);
+    } catch (error) {
+      if (error?.code === 'ENOENT') {
+        throw new Error('ide_write_file: parent directory not found');
+      }
+      throw error;
+    }
+  });
+  const realParentRelativeToRoot = path.relative(realRootPath, realParentPath);
+  if (isOutsideRoot(realParentRelativeToRoot)) {
+    throw new Error('ide_write_file: path outside source root');
+  }
+
+  let exists = false;
+  let realTargetPath = absolutePath;
+  try {
+    realTargetPath = realpathSync(absolutePath);
+    exists = true;
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      throw new Error(`ide_write_file: ${error?.message || 'filesystem error'}`);
+    }
+  }
+
+  if (exists) {
+    const realTargetRelativeToRoot = path.relative(realRootPath, realTargetPath);
+    if (isOutsideRoot(realTargetRelativeToRoot)) {
+      throw new Error('ide_write_file: path outside source root');
+    }
+  }
+
+  return {
+    absolutePath: realTargetPath,
+    parentPath: realParentPath,
+    relativePath: toPosixPath(relativeToRoot),
+    exists,
+  };
+}
+
 function isOutsideRoot(relativePath) {
   return relativePath === '..'
     || relativePath.startsWith(`..${path.sep}`)
@@ -241,12 +373,30 @@ function withReadFileErrors(operation) {
   }
 }
 
+function withWriteFileErrors(operation) {
+  try {
+    return operation();
+  } catch (error) {
+    if (error?.message?.startsWith('ide_write_file:')) {
+      throw error;
+    }
+    if (error?.message?.startsWith('ide_tree_list:')) {
+      throw new Error(error.message.replace('ide_tree_list:', 'ide_write_file:'));
+    }
+    throw new Error(`ide_write_file: ${error?.message || 'filesystem error'}`);
+  }
+}
+
 function isBinaryBuffer(bytes) {
   return bytes.includes(0);
 }
 
 function getLanguageHint(relativePath) {
   return LANGUAGE_HINTS.get(path.extname(relativePath).toLowerCase());
+}
+
+function sha256(bytes) {
+  return createHash('sha256').update(bytes).digest('hex');
 }
 
 function toPosixPath(filePath) {
