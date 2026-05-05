@@ -44,6 +44,8 @@ const COMMON_READ_TOOLS = Object.freeze([
   'audit_log_query',
   'foundry_session_list',
   'foundry_session_get',
+  'plugin_list_available',
+  'plugin_resource_list',
 ]);
 
 export const ROLE_TOOLS = Object.freeze({
@@ -67,6 +69,11 @@ export const ROLE_TOOLS = Object.freeze({
     'foundry_artifact_export',
     'foundry_project_materialize',
     'foundry_project_seed_tasks',
+    'plugin_login',
+    'plugin_logout',
+    'railway_link',
+    'railway_provision_db',
+    'railway_get_connection_string',
   ]),
   developer: Object.freeze([
     ...COMMON_READ_TOOLS,
@@ -75,6 +82,7 @@ export const ROLE_TOOLS = Object.freeze({
     'runtime_send_input',
     'validation_run',
     'task_plan_propose',
+    'railway_get_connection_string',
   ]),
   reviewer: Object.freeze([
     ...COMMON_READ_TOOLS,

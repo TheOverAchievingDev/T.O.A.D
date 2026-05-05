@@ -141,3 +141,47 @@ test('roleAuthority allows drift_run for lead, architect, human, but denies deve
     'developer should be denied'
   );
 });
+
+test('roleAuthority: plugin_* tools allowed for lead/architect/human, denied for developer', () => {
+  for (const tool of ['plugin_list_available', 'plugin_login', 'plugin_logout', 'plugin_resource_list']) {
+    for (const role of ['lead', 'architect', 'human']) {
+      assert.doesNotThrow(
+        () => assertRoleCanCallTool({ role, toolName: tool }),
+        `${role} should be allowed ${tool}`,
+      );
+    }
+    if (tool === 'plugin_login' || tool === 'plugin_logout') {
+      // Mutating plugin tools are NOT allowed for developer
+      assert.throws(
+        () => assertRoleCanCallTool({ role: 'developer', toolName: tool }),
+        /cannot call|not allowed/i,
+        `developer should be denied ${tool}`,
+      );
+    }
+  }
+});
+
+test('roleAuthority: plugin_list_available + plugin_resource_list are read-only — allowed for developer too', () => {
+  for (const tool of ['plugin_list_available', 'plugin_resource_list']) {
+    assert.doesNotThrow(
+      () => assertRoleCanCallTool({ role: 'developer', toolName: tool }),
+      `developer should be allowed read-only ${tool}`,
+    );
+  }
+});
+
+test('roleAuthority: railway_run_migration allowed only for lead/human', () => {
+  for (const role of ['lead', 'human']) {
+    assert.doesNotThrow(() => assertRoleCanCallTool({ role, toolName: 'railway_run_migration' }));
+  }
+  for (const role of ['architect', 'developer', 'reviewer', 'tester']) {
+    assert.throws(
+      () => assertRoleCanCallTool({ role, toolName: 'railway_run_migration' }),
+      /cannot call|not allowed/i,
+    );
+  }
+});
+
+test('roleAuthority: railway_get_connection_string allowed for developer (read for config)', () => {
+  assert.doesNotThrow(() => assertRoleCanCallTool({ role: 'developer', toolName: 'railway_get_connection_string' }));
+});
