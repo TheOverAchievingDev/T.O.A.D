@@ -15,6 +15,9 @@ import type {
   RuntimeStatus,
   TaskRiskLevel,
   MatchedRiskRule,
+  UiValidationRun,
+  ValidationKind,
+  ValidationVerdict,
 } from '@/types';
 
 // No-data baseline used until the API returns. We deliberately do NOT render
@@ -56,6 +59,23 @@ interface BackendTask {
     path?: string;
     branch?: string | null;
   } | null;
+  testCommands?: string[];
+  validations?: BackendValidationRun[];
+  latestValidation?: Partial<Record<string, BackendValidationRun>>;
+}
+
+interface BackendValidationRun {
+  kind?: string;
+  command?: string | null;
+  exitCode?: number | null;
+  durationMs?: number | null;
+  verdict?: string;
+  stdout?: string;
+  stderr?: string;
+  stdoutTruncated?: boolean;
+  stderrTruncated?: boolean;
+  actorId?: string;
+  createdAt?: string;
 }
 
 interface BackendTeamMember {
@@ -143,6 +163,8 @@ interface ToadData {
 
 const RISK_LEVELS: TaskRiskLevel[] = ['low', 'medium', 'high', 'critical'];
 const ROLE_IDS: RoleId[] = ['lead', 'developer', 'reviewer', 'researcher', 'debugger', 'qa', 'architect', 'designer'];
+const VALIDATION_KINDS: ValidationKind[] = ['install', 'lint', 'typecheck', 'test', 'build', 'security'];
+const VALIDATION_VERDICTS: ValidationVerdict[] = ['passed', 'failed', 'not_run'];
 
 function normalizeRole(role: string | null | undefined, fallback: RoleId): RoleId {
   if (role === 'tester') return 'qa';
@@ -228,6 +250,9 @@ function normalizeTask(raw: BackendTask, fallbackProject: string): UiTask {
   // agent shows role=qa while the task shows assignee=tester.
   const rawAssignee = (raw.assignee ?? raw.assignedRole ?? '') as string;
   const assignee = rawAssignee === 'tester' ? 'qa' : rawAssignee;
+  const validations = Array.isArray(raw.validations)
+    ? raw.validations.map(normalizeValidationRun).filter((run): run is UiValidationRun => run !== null)
+    : [];
   return {
     id,
     title,
@@ -240,6 +265,11 @@ function normalizeTask(raw: BackendTask, fallbackProject: string): UiTask {
     // Read from either shape — backend writes the nested object after
     // task_human_approve, but legacy/test fixtures use the flat bool.
     humanApproved: raw.humanApproval?.approved === true || raw.humanApproved === true,
+    testCommands: Array.isArray(raw.testCommands)
+      ? raw.testCommands.filter((command) => typeof command === 'string')
+      : undefined,
+    validations,
+    latestValidation: normalizeLatestValidation(raw.latestValidation),
     worktree: raw.worktree && typeof raw.worktree === 'object'
       ? {
           status: raw.worktree.status,
@@ -248,6 +278,38 @@ function normalizeTask(raw: BackendTask, fallbackProject: string): UiTask {
         }
       : null,
   };
+}
+
+function normalizeValidationRun(raw: BackendValidationRun): UiValidationRun | null {
+  const kind = VALIDATION_KINDS.includes(raw.kind as ValidationKind) ? (raw.kind as ValidationKind) : null;
+  if (!kind) return null;
+  const verdict = VALIDATION_VERDICTS.includes(raw.verdict as ValidationVerdict)
+    ? (raw.verdict as ValidationVerdict)
+    : 'not_run';
+  return {
+    kind,
+    command: typeof raw.command === 'string' ? raw.command : null,
+    exitCode: typeof raw.exitCode === 'number' && Number.isFinite(raw.exitCode) ? raw.exitCode : null,
+    durationMs: typeof raw.durationMs === 'number' && Number.isFinite(raw.durationMs) ? raw.durationMs : null,
+    verdict,
+    stdout: typeof raw.stdout === 'string' ? raw.stdout : '',
+    stderr: typeof raw.stderr === 'string' ? raw.stderr : '',
+    stdoutTruncated: raw.stdoutTruncated === true,
+    stderrTruncated: raw.stderrTruncated === true,
+    actorId: typeof raw.actorId === 'string' ? raw.actorId : undefined,
+    createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : undefined,
+  };
+}
+
+function normalizeLatestValidation(raw: BackendTask['latestValidation']): UiTask['latestValidation'] {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const latest: UiTask['latestValidation'] = {};
+  for (const [kind, value] of Object.entries(raw)) {
+    if (!VALIDATION_KINDS.includes(kind as ValidationKind)) continue;
+    const normalized = normalizeValidationRun(value ?? {});
+    if (normalized) latest[kind as ValidationKind] = normalized;
+  }
+  return Object.keys(latest).length > 0 ? latest : undefined;
 }
 
 function normalizeRuntime(raw: BackendRuntime): Runtime {

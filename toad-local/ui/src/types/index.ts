@@ -107,6 +107,26 @@ export interface UiTask {
     path?: string;
     branch?: string | null;
   } | null;
+  testCommands?: string[];
+  validations?: UiValidationRun[];
+  latestValidation?: Partial<Record<ValidationKind, UiValidationRun>>;
+}
+
+export type ValidationKind = 'install' | 'lint' | 'typecheck' | 'test' | 'build' | 'security';
+export type ValidationVerdict = 'passed' | 'failed' | 'not_run';
+
+export interface UiValidationRun {
+  kind: ValidationKind;
+  command: string | null;
+  exitCode: number | null;
+  durationMs: number | null;
+  verdict: ValidationVerdict;
+  stdout: string;
+  stderr: string;
+  stdoutTruncated?: boolean;
+  stderrTruncated?: boolean;
+  actorId?: string;
+  createdAt?: string;
 }
 
 export interface Provider {
