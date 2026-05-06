@@ -80,10 +80,16 @@ export function PluginsSettings() {
       const result = await callToadApi({
         actor: { teamId: 'default', agentId: 'ui-client', role: 'human' },
         method: 'plugin_login', args: { pluginId },
-      }) as { manualLogin?: boolean; reason?: string };
-      if (result.manualLogin) {
-        // Show the manual instructions in an alert for now.
-        // Slice 1.5 can build a dedicated modal.
+        idempotencyKey: crypto.randomUUID(),
+      }) as { manualLogin?: boolean; terminalStarted?: boolean; reason?: string };
+      
+      if (result.terminalStarted) {
+        // Subtle feedback is better than an alert if it actually worked.
+        // We could use a toast system here, but for now just log or do nothing
+        // as the terminal window itself is the feedback.
+        console.log(`[plugins] ${result.reason}`);
+      } else if (result.manualLogin) {
+        // Fallback for when terminal couldn't be spawned.
         window.alert(result.reason ?? `Run the ${pluginId} CLI's login command in a terminal.`);
       }
     } finally {
@@ -98,6 +104,7 @@ export function PluginsSettings() {
       await callToadApi({
         actor: { teamId: 'default', agentId: 'ui-client', role: 'human' },
         method: 'plugin_logout', args: { pluginId },
+        idempotencyKey: crypto.randomUUID(),
       });
     } catch (err) {
       window.alert(`Logout failed: ${String(err)}`);

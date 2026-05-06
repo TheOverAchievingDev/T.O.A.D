@@ -4,6 +4,7 @@ import {
   SUPPORTED_PLUGINS,
   PLUGIN_COMMANDS,
   parseRailwayFileStatus,
+  parseVercelFileStatus,
 } from '../../src/plugins/pluginRegistry.js';
 
 test('SUPPORTED_PLUGINS contains railway, eas, vercel', () => {
@@ -24,9 +25,13 @@ test('PLUGIN_COMMANDS.railway is supported with the right shape', () => {
   assert.equal(r.riskProfile.provision_db, 'medium');
 });
 
-test('PLUGIN_COMMANDS.eas + .vercel are recognized but vercel is unsupported in slice 2', () => {
+test('PLUGIN_COMMANDS.eas + .vercel are supported with risk profiles', () => {
   assert.equal(PLUGIN_COMMANDS.eas.supported, true);
-  assert.equal(PLUGIN_COMMANDS.vercel.supported, false);
+  assert.equal(PLUGIN_COMMANDS.vercel.supported, true);
+  assert.equal(PLUGIN_COMMANDS.vercel.label, 'Vercel');
+  assert.equal(PLUGIN_COMMANDS.vercel.cli, 'vercel');
+  assert.equal(PLUGIN_COMMANDS.vercel.riskProfile.deploy, 'high');
+  assert.equal(PLUGIN_COMMANDS.vercel.riskProfile.env_pull, 'low');
 });
 
 test('parseRailwayFileStatus: token present → signedIn:true', () => {
@@ -50,4 +55,16 @@ test('parseRailwayFileStatus: malformed JSON → signedIn:false with reason', ()
   const result = parseRailwayFileStatus(null, null, 'railway');
   assert.equal(result.signedIn, false);
   assert.match(result.reason, /not an object|empty/i);
+});
+
+test('parseVercelFileStatus: token present means signed in', () => {
+  const result = parseVercelFileStatus({ token: 'vercel-token' }, null, 'vercel');
+  assert.equal(result.signedIn, true);
+  assert.equal(result.raw.tokenLength, 'vercel-token'.length);
+});
+
+test('parseVercelFileStatus: missing token means signed out', () => {
+  const result = parseVercelFileStatus({}, null, 'vercel');
+  assert.equal(result.signedIn, false);
+  assert.match(result.reason, /token is missing/i);
 });

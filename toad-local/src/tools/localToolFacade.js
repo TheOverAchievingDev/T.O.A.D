@@ -55,6 +55,12 @@ import {
   easBuild as defaultEasBuild,
   easUpdate as defaultEasUpdate,
 } from '../plugins/eas/easTools.js';
+import {
+  vercelLink as defaultVercelLink,
+  vercelEnvPull as defaultVercelEnvPull,
+  vercelDeploy as defaultVercelDeploy,
+  vercelList as defaultVercelList,
+} from '../plugins/vercel/vercelTools.js';
 
 // §17: review-feedback severity scale, ordered low → high blocking weight.
 export const REVIEW_FEEDBACK_SEVERITIES = Object.freeze(['nit', 'minor', 'major', 'blocking']);
@@ -76,7 +82,7 @@ export class LocalToolFacade {
   #claudeQuotaCache = null;
   #claudeQuotaInflight = null;
 
-  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, foundryStore = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null, mergeIntegrator = null, remoteMergePolicy = null, riskPolicy = null, settingsStore = null, riskPolicyStore = null, githubFetch = null, githubClientId = null, providerAuthSpawn = null, providerAuthSpawnSync = null, providerAuthReadFile = null, providerAuthStat = null, claudeUsageProbe = null, driftEngine = null, runGit = null, openaiFetch = null, deliveryWorker = null, pluginAuthReadFile = null, pluginAuthStat = null, pluginAuthSpawnSync = null, pluginResources = null, pluginJobs = null, railwayToolImpls = null }) {
+  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, foundryStore = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null, mergeIntegrator = null, remoteMergePolicy = null, riskPolicy = null, settingsStore = null, riskPolicyStore = null, githubFetch = null, githubClientId = null, providerAuthSpawn = null, providerAuthSpawnSync = null, providerAuthReadFile = null, providerAuthStat = null, claudeUsageProbe = null, driftEngine = null, runGit = null, openaiFetch = null, deliveryWorker = null, pluginAuthReadFile = null, pluginAuthStat = null, pluginAuthSpawn = null, pluginAuthSpawnSync = null, pluginResources = null, pluginJobs = null, railwayToolImpls = null, easToolImpls = null, vercelToolImpls = null }) {
     if (!broker) throw new TypeError('broker is required');
     if (!taskBoard) throw new TypeError('taskBoard is required');
     this.broker = broker;
@@ -144,6 +150,7 @@ export class LocalToolFacade {
     // Plugin auth / resource injectable overrides (same pattern as providerAuth).
     this.pluginAuthReadFile = typeof pluginAuthReadFile === 'function' ? pluginAuthReadFile : null;
     this.pluginAuthStat = typeof pluginAuthStat === 'function' ? pluginAuthStat : null;
+    this.pluginAuthSpawn = typeof pluginAuthSpawn === 'function' ? pluginAuthSpawn : null;
     this.pluginAuthSpawnSync = typeof pluginAuthSpawnSync === 'function' ? pluginAuthSpawnSync : null;
     this.pluginResources = pluginResources && typeof pluginResources.listForTeam === 'function'
       ? pluginResources : null;
@@ -151,6 +158,10 @@ export class LocalToolFacade {
       ? pluginJobs : null;
     this.railwayToolImpls = railwayToolImpls && typeof railwayToolImpls === 'object'
       ? railwayToolImpls : null;
+    this.easToolImpls = easToolImpls && typeof easToolImpls === 'object'
+      ? easToolImpls : null;
+    this.vercelToolImpls = vercelToolImpls && typeof vercelToolImpls === 'object'
+      ? vercelToolImpls : null;
     this.driftEngine = driftEngine && typeof driftEngine.runDrift === 'function' ? driftEngine : null;
     // git invoker for tools that need to read the project's git state
     // (e.g. github_origin_remote). Injectable so tests don't shell out.
@@ -332,6 +343,14 @@ export class LocalToolFacade {
         return this.#easBuild(actor, args);
       case COMMANDS.EAS_UPDATE:
         return this.#easUpdate(actor, args);
+      case COMMANDS.VERCEL_LINK:
+        return this.#vercelLink(actor, args);
+      case COMMANDS.VERCEL_ENV_PULL:
+        return this.#vercelEnvPull(actor, args);
+      case COMMANDS.VERCEL_DEPLOY:
+        return this.#vercelDeploy(actor, args);
+      case COMMANDS.VERCEL_LS:
+        return this.#vercelList(actor, args);
       case COMMANDS.PLUGIN_JOB_GET:
         return this.#pluginJobGet(actor, args);
       case COMMANDS.PLUGIN_JOB_LIST:
@@ -2305,7 +2324,10 @@ export class LocalToolFacade {
 
   #pluginLogin(_actor, args) {
     const pluginId = requireString(args?.pluginId, 'args.pluginId');
-    return pluginTriggerLogin({ pluginId });
+    return pluginTriggerLogin({
+      pluginId,
+      spawnImpl: this.pluginAuthSpawn,
+    });
   }
 
   #pluginLogout(_actor, args) {
@@ -2441,6 +2463,48 @@ export class LocalToolFacade {
     const limit = Number.isInteger(args?.limit) ? args.limit : 100;
     const jobs = this.pluginJobs.list({ teamId, state, limit });
     return { jobs };
+  }
+
+  // ---- Vercel tools --------------------------------------------------------
+
+  async #vercelLink(_actor, args) {
+    const impl = this.vercelToolImpls?.link || defaultVercelLink;
+    return impl({
+      cwd: args?.cwd || this.projectCwd || process.cwd(),
+      runVercelCli: this.vercelToolImpls?.runVercelCli,
+    });
+  }
+
+  async #vercelEnvPull(_actor, args) {
+    const impl = this.vercelToolImpls?.envPull || defaultVercelEnvPull;
+    return impl({
+      cwd: args?.cwd || this.projectCwd || process.cwd(),
+      runVercelCli: this.vercelToolImpls?.runVercelCli,
+    });
+  }
+
+  async #vercelDeploy(actor, args) {
+    if (!this.pluginJobs) {
+      throw new Error('vercel_deploy: pluginJobs not configured for this facade');
+    }
+    const impl = this.vercelToolImpls?.deploy || defaultVercelDeploy;
+    const teamId = (typeof args?.teamId === 'string' && args.teamId.length > 0)
+      ? args.teamId : actor.teamId;
+    return impl({
+      teamId,
+      prod: args?.prod === true,
+      cwd: args?.cwd || this.projectCwd || process.cwd(),
+      runVercelCli: this.vercelToolImpls?.runVercelCli,
+      pluginJobs: this.pluginJobs,
+    });
+  }
+
+  async #vercelList(_actor, args) {
+    const impl = this.vercelToolImpls?.ls || defaultVercelList;
+    return impl({
+      cwd: args?.cwd || this.projectCwd || process.cwd(),
+      runVercelCli: this.vercelToolImpls?.runVercelCli,
+    });
   }
 
   // ---- Foundry -------------------------------------------------------------

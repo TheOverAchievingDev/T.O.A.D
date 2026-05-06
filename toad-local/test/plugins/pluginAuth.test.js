@@ -28,17 +28,66 @@ test('getAuthStatus: railway signed in (file has token)', () => {
   assert.equal(result.user.email, 'a@b.c');
 });
 
-test('getAuthStatus: eas marked unsupported in slice 1', () => {
+test('getAuthStatus: eas is now supported in slice 2', () => {
   const result = getAuthStatus({ pluginId: 'eas' });
-  assert.equal(result.supported, false);
-  assert.match(result.reason, /slice 2/i);
+  assert.equal(result.supported, true);
 });
 
-test('triggerAuthLogin returns manualLogin instructions for railway', () => {
-  const result = triggerAuthLogin({ pluginId: 'railway' });
-  assert.equal(result.started, false);
-  assert.equal(result.manualLogin, true);
-  assert.match(result.reason, /railway login/);
+test('getAuthStatus: vercel reads auth token through configured file path', () => {
+  const statPaths = [];
+  const result = getAuthStatus({
+    pluginId: 'vercel',
+    statImpl: (p) => {
+      statPaths.push(p);
+      return { size: 50 };
+    },
+    readFileImpl: () => JSON.stringify({ token: 'vercel-token' }),
+  });
+  assert.equal(result.signedIn, true);
+  assert.equal(result.raw.tokenLength, 'vercel-token'.length);
+  assert.ok(statPaths[0]);
+  assert.equal(statPaths[0].includes('%APPDATA%'), false);
+});
+
+test('getAuthStatus: vercel checks fallback auth paths', () => {
+  let attempts = 0;
+  const result = getAuthStatus({
+    pluginId: 'vercel',
+    statImpl: () => {
+      attempts += 1;
+      if (attempts === 1) {
+        const err = new Error('missing');
+        err.code = 'ENOENT';
+        throw err;
+      }
+      return { size: 50 };
+    },
+    readFileImpl: () => JSON.stringify({ token: 'fallback-token' }),
+  });
+  assert.equal(result.signedIn, true);
+  assert.equal(result.raw.tokenLength, 'fallback-token'.length);
+  assert.equal(attempts, 2);
+});
+
+test('triggerAuthLogin spawns terminal for railway when on supported platform', () => {
+  let terminalSpawned = false;
+  const result = triggerAuthLogin({
+    pluginId: 'railway',
+    spawnImpl: () => {
+      terminalSpawned = true;
+      return { unref: () => {} };
+    },
+  });
+
+  if (process.platform === 'win32' || process.platform === 'darwin') {
+    assert.equal(result.started, true);
+    assert.equal(result.terminalStarted, true);
+    assert.ok(terminalSpawned);
+  } else {
+    assert.equal(result.started, false);
+    assert.equal(result.manualLogin, true);
+  }
+  assert.match(result.reason, /railway login/i);
 });
 
 test('triggerAuthLogout shells out to railway logout', () => {

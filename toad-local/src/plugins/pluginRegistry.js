@@ -21,6 +21,7 @@ export const PLUGIN_COMMANDS = Object.freeze({
     parseFileStatus: parseRailwayFileStatus,
     manualLogin: true,
     loginInstructions: 'Run `railway login` in a terminal. Symphony will detect the auth file once you complete the browser flow.',
+    loginArgs: ['login'],
     logoutArgs: ['logout'],
     supported: true,
     riskProfile: Object.freeze({
@@ -38,6 +39,7 @@ export const PLUGIN_COMMANDS = Object.freeze({
     parseFileStatus: parseEasFileStatus,
     manualLogin: true,
     loginInstructions: 'Run `eas login` in a terminal. Symphony will detect the auth file once you complete the browser flow.',
+    loginArgs: ['login'],
     supported: true,
     riskProfile: Object.freeze({
       project_info: 'low',
@@ -51,14 +53,37 @@ export const PLUGIN_COMMANDS = Object.freeze({
     label: 'Vercel',
     cli: 'vercel',
     statusMode: 'file',
-    statusFile: path.join('~', '.config', 'vercel', 'auth.json'),
-    parseFileStatus: () => ({ signedIn: false, reason: 'Vercel plugin not implemented in slice 1' }),
+    statusFile: process.platform === 'win32'
+      ? path.join('%APPDATA%', 'xdg.data', 'com.vercel.cli', 'auth.json')
+      : process.platform === 'darwin'
+        ? path.join('~', 'Library', 'Application Support', 'com.vercel.cli', 'auth.json')
+        : path.join('~', '.local', 'share', 'com.vercel.cli', 'auth.json'),
+    statusFiles: Object.freeze([
+      process.platform === 'win32'
+        ? path.join('%APPDATA%', 'xdg.data', 'com.vercel.cli', 'auth.json')
+        : process.platform === 'darwin'
+          ? path.join('~', 'Library', 'Application Support', 'com.vercel.cli', 'auth.json')
+          : path.join('~', '.local', 'share', 'com.vercel.cli', 'auth.json'),
+      process.platform === 'win32'
+        ? path.join('%APPDATA%', 'Roaming', 'xdg.data', 'com.vercel.cli', 'auth.json')
+        : path.join('~', '.vercel', 'auth.json'),
+      process.platform === 'win32'
+        ? path.join('%APPDATA%', 'com.vercel.cli', 'Data', 'auth.json')
+        : path.join('~', '.config', 'vercel', 'auth.json'),
+    ]),
+    parseFileStatus: parseVercelFileStatus,
     manualLogin: true,
-    loginInstructions: 'Vercel plugin lands in slice 3.',
-    supported: false,
-    unsupportedReason: 'Vercel plugin lands in slice 3 (after EAS validates the long-running-job pattern).',
-    riskProfile: Object.freeze({}),
+    loginInstructions: 'Run `vercel login` in a terminal. Symphony will detect the auth file once you complete the browser flow.',
+    loginArgs: ['login'],
+    supported: true,
+    riskProfile: Object.freeze({
+      link:     'low',
+      env_pull: 'low',
+      deploy:   'high',
+      ls:       'low',
+    }),
   }),
+
 });
 
 /**
@@ -128,6 +153,35 @@ export function parseEasFileStatus(authJson, _infoJson, providerId) {
     supported: true,
     signedIn: true,
     user: authJson.auth?.username ? { login: authJson.auth.username } : null,
+    raw: { tokenLength: token.length },
+  };
+}
+
+/**
+ * Verify Vercel auth file. Vercel stores token in auth.json.
+ */
+export function parseVercelFileStatus(authJson, _infoJson, providerId) {
+  if (!authJson || typeof authJson !== 'object' || Array.isArray(authJson)) {
+    return {
+      providerId,
+      supported: true,
+      signedIn: false,
+      reason: 'Vercel auth file is empty or not an object.',
+    };
+  }
+  const token = authJson.token;
+  if (!token) {
+    return {
+      providerId,
+      supported: true,
+      signedIn: false,
+      reason: 'Vercel auth file present but token is missing.',
+    };
+  }
+  return {
+    providerId,
+    supported: true,
+    signedIn: true,
     raw: { tokenLength: token.length },
   };
 }

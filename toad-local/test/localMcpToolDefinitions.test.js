@@ -89,6 +89,10 @@ test('listLocalMcpTools exposes MCP-shaped local command tools', () => {
     'team_stop',
     'tool_activity',
     'validation_run',
+    'vercel_deploy',
+    'vercel_env_pull',
+    'vercel_link',
+    'vercel_ls',
   ]);
   for (const tool of tools) {
     assert.equal(typeof tool.title, 'string');
@@ -109,11 +113,17 @@ test('mutating MCP tools require idempotencyKey in their schemas', () => {
     'ide_write_file',
     'ide_checkpoint_task',
     'ide_apply_patch',
+    'eas_build',
+    'eas_update',
+    'vercel_link',
+    'vercel_env_pull',
+    'vercel_deploy',
   ]) {
     const tool = getLocalMcpTool(name);
     assert.ok(tool.inputSchema.required.includes('idempotencyKey'), name);
     assert.equal(tool.annotations.destructiveHint, false);
   }
+
   assert.ok(getLocalMcpTool('approval_respond').inputSchema.required.includes('idempotencyKey'));
   assert.equal(getLocalMcpTool('approval_respond').annotations.destructiveHint, false);
   assert.ok(getLocalMcpTool('cross_team_send').inputSchema.required.includes('idempotencyKey'));

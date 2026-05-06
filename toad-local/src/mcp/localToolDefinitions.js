@@ -412,6 +412,43 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
     },
   }),
   makeTool({
+    name: COMMANDS.VERCEL_LINK,
+    title: 'Vercel Link',
+    description: 'Sync local development with Vercel (vercel link --yes). Connects a directory to a project.',
+    required: [],
+    properties: {
+      cwd: { type: 'string', description: 'Directory to link.' },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.VERCEL_ENV_PULL,
+    title: 'Vercel Env Pull',
+    description: 'Pull environment variables from Vercel (vercel env pull .env.local --yes).',
+    required: [],
+    properties: {
+      cwd: { type: 'string', description: 'Directory containing .env.local.' },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.VERCEL_DEPLOY,
+    title: 'Vercel Deploy',
+    description: 'Trigger a Vercel deployment. Returns a jobId immediately; deployment runs in background.',
+    required: [],
+    properties: {
+      prod: { type: 'boolean', description: 'Deploy to production.' },
+      cwd: { type: 'string', description: 'Project directory.' },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.VERCEL_LS,
+    title: 'Vercel List Deployments',
+    description: 'List recent Vercel deployments.',
+    required: [],
+    properties: {
+      cwd: { type: 'string', description: 'Project directory.' },
+    },
+  }),
+  makeTool({
     name: COMMANDS.TEAM_CREATE,
     title: 'Create / Update Team Config',
     description: 'Persist a team configuration (lead + teammates with their launch parameters). Upserts on teamId. Optional `validation` block sets the team\'s default install/lint/typecheck/test/build/security commands — new tasks pre-fill from these unless overridden per-task.',
