@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 
-REM TOAD dev launcher: starts the backend API server and the Vite UI dev server,
+REM Symphony dev launcher: starts the backend API server and the Vite UI dev server,
 REM then opens the dashboard in the default browser.
 
 set "PROJECT_ROOT=%~dp0"
@@ -15,7 +15,7 @@ if exist "%TOKEN_FILE%" (
 )
 
 echo.
-echo  TOAD dev environment
+echo  Symphony dev environment
 echo  --------------------
 echo    Project: %PROJECT_ROOT%
 echo    API:     http://127.0.0.1:3001
@@ -30,10 +30,10 @@ echo  Two new console windows will open. Close them to stop the servers.
 echo.
 
 REM Backend (HTTP+SSE bridge, persistent SQLite at toad-local\.toad\toad.db)
-start "TOAD API" cmd /k "cd /d "%TOAD_LOCAL%" && npm run api:dev"
+start "Symphony API" cmd /k "cd /d "%TOAD_LOCAL%" && npm run api:dev"
 
 REM UI (Vite dev server). Inherit VITE_TOAD_API_TOKEN if present.
-start "TOAD UI" cmd /k "cd /d "%TOAD_LOCAL%\ui" && set "VITE_TOAD_API_TOKEN=!VITE_TOAD_API_TOKEN!" && npm run dev"
+start "Symphony UI" cmd /k "cd /d "%TOAD_LOCAL%\ui" && set "VITE_TOAD_API_TOKEN=!VITE_TOAD_API_TOKEN!" && npm run dev"
 
 REM Give Vite a moment to bind, then open the browser
 timeout /t 4 /nobreak >nul

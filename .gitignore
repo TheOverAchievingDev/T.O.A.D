@@ -30,7 +30,6 @@ Thumbs.db
 .env.local
 *.env
 
-# Local
- build notes
+# Local build notes
 claude_agent_teams_ui-main/
 Local Notes/

@@ -1,151 +1,105 @@
-# TOAD Local
+# Symphony Engine
 
-Local-first prototype for a reliable multi-agent CLI orchestration system.
+This directory contains the local engine behind Symphony AI.
 
-The project is now a working backend core plus a lightweight browser dashboard. SQLite/event storage is the durable source of truth; CLI processes, HTTP/SSE transport, and UI views are adapters/projections.
+The product is now branded as **Symphony AI**. The `toad-local` directory name, `TOAD_*` environment variables, and several internal class names remain for compatibility while the project is renamed in stages.
 
-## Current Scope
+## What Lives Here
 
-- Durable message broker with idempotent append, inbox reads, delivery attempts, and SQLite persistence.
-- Task event stream with in-memory and SQLite projections.
-- Durable approval broker, approval response delivery tracking, and Claude permission/control response support.
-- Runtime supervisor, runtime registry, runtime event log, and Claude stream-json adapter.
-- Runtime event ingestion for assistant text, tool calls, approval requests, compaction lifecycle, API retry diagnostics, and live event publication.
-- Local MCP/facade command surface for messages, tasks, reviews, runtime status, approvals, tool activity, health, and cross-team send.
-- Server-Sent Events plus `/api/call` HTTP bridge in `src/transport/apiServer.js`.
-- Vite React dashboard under `ui/` for runtime, task, health, and live-event visibility.
+- `src/app/LocalToadRuntime.js` composes the local runtime.
+- `src/transport/apiServer.js` exposes the HTTP API and SSE event stream used by the UI.
+- `src/mcp/stdioServer.js` exposes the agent-facing MCP tool server.
+- `src/tools/localToolFacade.js` is the shared enforcement point for UI calls and agent tool calls.
+- `src/task/` owns tasks, lifecycle transitions, worktrees, diff capture, and merge gates.
+- `src/runtime/` owns CLI process supervision and runtime event ingestion.
+- `src/foundry/` owns Foundry planning sessions and generated project docs.
+- `src/drift/` owns deterministic and semantic drift detection.
+- `src/plugins/` owns infrastructure plugin registration, auth, resources, jobs, and provider-specific tools.
+- `ui/` contains the React + Tauri desktop workspace.
 
 ## Design Rules
 
-- Durable event state is the truth.
+- Durable event state is the source of truth.
 - CLI process state is temporary.
 - UI state is a projection.
-- Tool calls create durable state; free-form model text is diagnostic unless explicitly captured as a message event.
-- All mutating commands require stable identity and idempotency.
+- Agent tools and UI calls go through the same facade.
+- Mutating commands require stable identity and idempotency.
+- Risky changes are controlled by policy and human approval gates.
 
 ## Backend Verification
 
 ```powershell
-cd C:\Project-TOAD\toad-local
+cd C:\path\to\symphony-ai\toad-local
 npm.cmd test
 ```
 
 ## UI Verification
 
 ```powershell
-cd C:\Project-TOAD\toad-local\ui
-npm.cmd run lint
+cd C:\path\to\symphony-ai\toad-local\ui
+npm.cmd run typecheck
 npm.cmd run build
 ```
 
-## Local Dashboard
+## Local Development
 
 Start the backend API:
 
 ```powershell
-cd C:\Project-TOAD\toad-local
+cd C:\path\to\symphony-ai\toad-local
 npm.cmd run api:dev
+```
+
+Start the UI in a second terminal:
+
+```powershell
+cd C:\path\to\symphony-ai\toad-local\ui
+npm.cmd run dev
+```
+
+For the full desktop shell:
+
+```powershell
+cd C:\path\to\symphony-ai\toad-local\ui
+npm.cmd run tauri:dev
 ```
 
 The default API port is `3001`; override with `TOAD_API_PORT`.
 
-By default the orchestrator persists state to `<projectCwd>/.toad/toad.db`. Override with `TOAD_DB_PATH`:
+By default Symphony persists project state to `<projectCwd>/.toad/toad.db`. Override with `TOAD_DB_PATH`:
 
 ```powershell
-$env:TOAD_DB_PATH='C:\path\to\toad.db'           # any file path
-$env:TOAD_DB_PATH=':memory:'                     # disable persistence
+$env:TOAD_DB_PATH='C:\path\to\toad.db'
+$env:TOAD_DB_PATH=':memory:'
 ```
 
-The persisted surfaces include all five SQLite stores: messages (`broker`), tasks (`taskBoard`), approvals (`approvalBroker`), runtime registry, runtime event log, plus the side-effect delivery log. Across an orchestrator restart, prior state is visible to the new process — pending approvals are still pending, in-progress tasks still in progress, message history intact.
+`.toad/` is git-ignored. Stop the runtime before deleting or backing up the SQLite file.
 
-`.toad/` is git-ignored. The directory is auto-created on first run. Stop the orchestrator before deleting or backing up the file (SQLite holds open connections while running).
+## API Token
 
-The dashboard expects:
-
-- SSE: `http://127.0.0.1:3001/events`
-- API calls: `http://127.0.0.1:3001/api/call`
-
-If the API runs somewhere else, set the Vite base URL before starting the UI:
-
-```powershell
-$env:VITE_TOAD_API_BASE_URL='http://127.0.0.1:3001'
-```
-
-### API Token (Optional)
-
-By default the local API has no authentication — anything that can reach the loopback port can drive the runtime. To require a shared-secret bearer token, you have two options:
-
-**Option A — Generate and persist (recommended):**
+Generate and persist a local API token:
 
 ```powershell
 npm.cmd run token:generate
-# Token written to <projectCwd>/.toad/api-token (user-only on Unix, user-owned dir on Windows).
-# The script also prints the matching VITE_TOAD_API_TOKEN export for the UI side.
 ```
 
-The orchestrator picks up `<projectCwd>/.toad/api-token` automatically on every `api:dev` run.
-
-**Option B — Per-shell environment:**
+Or set it per shell:
 
 ```powershell
-$env:TOAD_API_TOKEN='<your-secret>'           # backend (api:dev / LocalToadRuntime)
-$env:VITE_TOAD_API_TOKEN='<your-secret>'      # UI (Vite dev/build)
+$env:TOAD_API_TOKEN='<your-secret>'
+$env:VITE_TOAD_API_TOKEN='<your-secret>'
 ```
 
-`TOAD_API_TOKEN` env wins over the on-disk file when both are set. With neither set and no on-disk token, the server runs in the existing no-auth mode.
-
-When set:
-
-- `POST /api/call` requires `Authorization: Bearer <token>`.
-- `GET /events` accepts the token via either `Authorization: Bearer <token>` (curl/tests) or `?token=<token>` (browser `EventSource`).
-- The dashboard's `useToadApi` and `useToadEvents` hooks read `VITE_TOAD_API_TOKEN` and attach the token automatically.
-
-### Side-Effect Log Retention
-
-Every runtime tool result and post-compaction reinjection writes a durable receipt to the `side_effect_deliveries` table. On every `LocalToadRuntime.start()`:
-
-1. `replayPendingSideEffects()` marks any orphaned `'pending'` rows as `'failed'` (they outlived their originating runtime session).
-2. `pruneSideEffectLog()` deletes terminal (`'delivered'` / `'failed'`) rows older than the retention window.
-
-The default window is **7 days**. Override with `TOAD_SIDE_EFFECT_RETENTION_DAYS`:
-
-```powershell
-$env:TOAD_SIDE_EFFECT_RETENTION_DAYS='30'
-```
-
-Pending rows are never deleted by retention — they are still potentially-replayable receipts.
-
-### CORS Origin Allow-List
-
-The API server echoes a specific `Access-Control-Allow-Origin` header rather than `*`. By default it accepts the Vite dev origins:
-
-- `http://localhost:5173`
-- `http://127.0.0.1:5173`
-
-Override with `TOAD_API_ALLOWED_ORIGINS` (comma-separated). Set it to `*` to echo any origin (matches the legacy wildcard behavior):
-
-```powershell
-$env:TOAD_API_ALLOWED_ORIGINS='http://localhost:5173,http://localhost:4173'
-$env:TOAD_API_ALLOWED_ORIGINS='*'   # echo any origin
-```
-
-Requests without an `Origin` header (curl, server-to-server) are unaffected — no ACAO is set, which is correct for non-browser clients.
-
-Run the UI dev server:
-
-```powershell
-cd C:\Project-TOAD\toad-local\ui
-npm.cmd run dev
-```
+When set, `POST /api/call` and `GET /events` require the token.
 
 ## Claude Smoke
 
-The smoke harness is present but depends on local Claude authentication:
+The live Claude smoke test depends on local Claude authentication:
 
 ```powershell
-cd C:\Project-TOAD\toad-local
+cd C:\path\to\symphony-ai\toad-local
 $env:TOAD_CLAUDE_SMOKE='1'
 npm.cmd run smoke:claude
 ```
 
-If Claude is not authenticated, the smoke test reaches the CLI boundary and reports the auth/rate-limit status rather than proving a full live turn.
+If Claude is not authenticated, the smoke test reaches the CLI boundary and reports the auth or rate-limit status instead of proving a full live turn.

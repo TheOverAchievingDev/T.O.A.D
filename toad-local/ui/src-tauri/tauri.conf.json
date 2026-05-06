@@ -41,8 +41,8 @@
       "icons/icon.ico"
     ],
     "category": "DeveloperTool",
-    "shortDescription": "Local-first multi-agent CLI orchestrator.",
-    "longDescription": "TOAD spawns and coordinates multiple coding-agent CLIs (Claude, Codex, Gemini) into structured teams with risk-policy gates, durable event sourcing, and a desktop dashboard.",
+    "shortDescription": "Local AI software foundry and agent workspace.",
+    "longDescription": "Symphony AI turns project ideas into durable specs, launches role-based coding-agent teams, tracks real git work, monitors drift, and gates risky changes through a local-first desktop workspace.",
     "resources": [],
     "externalBin": [],
     "copyright": "Copyright (c) 2026"

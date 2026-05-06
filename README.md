@@ -4,53 +4,80 @@
 
 # Symphony AI
 
-**A local-first multi-agent CLI orchestrator for real coding work.**
+**A local AI software foundry for turning ideas into specs, teams, tasks, code, and reviewed changes.**
 
-Real CLI agents — Anthropic Claude, OpenAI Codex, Google Gemini — coordinated into structured teams that survive bad behavior, ship real diffs, and never leave your machine.
+Symphony combines a project-planning Foundry, real coding-agent teams, a local IDE, drift monitoring, risk gates, git worktrees, and infrastructure plugins into one desktop workspace. It is built for developers who want AI help without giving up project control, auditability, or local ownership.
 
-[![Node 20+](https://img.shields.io/badge/node-%E2%89%A520-blue)](https://nodejs.org/)
+[![Node 20+](https://img.shields.io/badge/node-%3E%3D20-blue)](https://nodejs.org/)
 [![Tauri 2](https://img.shields.io/badge/tauri-2-FFC131)](https://tauri.app/)
 [![SQLite Event Sourced](https://img.shields.io/badge/sqlite-event--sourced-003B57)](https://sqlite.org/)
-[![TDD](https://img.shields.io/badge/tdd-disciplined-4ade80)]()
-[![License](https://img.shields.io/badge/license-private-lightgrey)]()
+[![MCP](https://img.shields.io/badge/mcp-agent%20tools-7c3aed)](https://modelcontextprotocol.io/)
 [![Tests](https://img.shields.io/badge/tests-600%2B%20passing-success)]()
+[![Status](https://img.shields.io/badge/status-local--first%20prototype-d97757)]()
 
 <br/>
 
 <img src="toad-local/docs/screenshots/workspace.png" alt="Symphony AI workspace" width="900" />
 
-<sub><i>Hero shot — multi-agent team in flight. Run <code>npm run screenshots</code> to regenerate from your local app.</i></sub>
+<sub><i>Workspace view with a Symphony agent team in flight. Run <code>npm run screenshots</code> from <code>toad-local</code> to regenerate screenshots from the local app.</i></sub>
 
 </div>
 
 ---
 
-## The 30-second pitch
+## The Short Version
 
-- 🎼 **Real CLI agents, not chatbot pretenders.** Symphony AI spawns and coordinates the actual `claude`, `codex`, and `gemini` CLI binaries, captures their tool calls and diffs, and gates risky operations through a real human-approval workflow.
-- 🗄️ **Local-first.** SQLite event log on disk is the source of truth. CLI processes are an adapter; the UI is a projection. No cloud control plane, no shared SaaS, your code never leaves your machine.
-- 🛡️ **Built to survive bad agent behavior.** Risk-classified file rules, role authority, per-task git worktrees, drift monitoring, stuck-runtime detection, side-effect logging — every gate exists because some agent, somewhere, did the wrong thing.
+Symphony AI started as a small agent-team prototype. It has grown into a local software foundry:
+
+- **Foundry** helps you shape a project through a chat-driven planning loop and turns that discussion into product briefs, technical specs, roadmaps, schemas, and task breakdowns.
+- **Agent teams** launch real coding agents such as Claude, Codex, and Gemini into role-based workflows with durable tasks, reviews, validations, and audit logs.
+- **The IDE surface** lets a human browse, edit, save, and review project files from inside the same workspace the team uses.
+- **Drift monitoring** compares what the team is doing against task scope, lifecycle rules, tests, reviews, and project expectations.
+- **Risk gates** keep sensitive files, destructive commands, and merge operations under explicit policy and human approval.
+- **Infrastructure plugins** let agents work with services such as Railway, EAS, Vercel, and related deployment surfaces through the same audited tool layer.
+
+The important distinction: Symphony is not just a chat box and not just a process launcher. It is a local operating layer for planning software, assigning work, watching agents act, and deciding what lands.
 
 ---
 
-## What it does
+## What Symphony Does
 
 <table>
 <tr>
 <td width="50%" valign="top">
 
-### 👥 Multi-agent teams
+### Foundry
 
-A **lead** agent decomposes work into tasks and delegates to specialists (developer, reviewer, researcher, architect). The orchestrator pins each agent to a task, captures their tool calls in real time, and surfaces the activity stream in the UI.
+Foundry is the planning front door. You chat through the idea, constraints, data model, architecture, product decisions, roadmap, and acceptance criteria. Symphony then materializes real project documents and starter tasks that an agent team can use.
 
-<img src="toad-local/docs/screenshots/workspace.png" alt="Workspace" width="100%"/>
+<img src="toad-local/docs/screenshots/foundry.png" alt="Foundry" width="100%"/>
 
 </td>
 <td width="50%" valign="top">
 
-### 📊 Drift Monitor
+### Agent Teams
 
-Seven deterministic checks score the team's drift from spec — illegal lifecycle transitions, out-of-scope file changes, missing test artifacts, role-permission denials, rubber-stamped reviews, provider-logic leakage, "done" tasks without merge evidence. Color-coded per task and aggregated team-wide.
+Create a lead plus specialist teammates, assign providers and roles, and let the team work through a structured task lifecycle. Agents communicate through Symphony's MCP tools, not through hidden side channels.
+
+<img src="toad-local/docs/screenshots/workspace.png" alt="Workspace" width="100%"/>
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### Tasks, Reviews, And Approvals
+
+Tasks move through a deterministic lifecycle: backlog, ready, planned, in progress, review, testing, merge ready, done. Reviews capture real git diffs, validations capture real command output, and high-risk work can require human approval before merge.
+
+<img src="toad-local/docs/screenshots/tasks.png" alt="Tasks" width="100%"/>
+
+</td>
+<td width="50%" valign="top">
+
+### Drift Monitor
+
+The drift monitor scores whether work is staying aligned: invalid transitions, out-of-scope files, missing tests, role violations, rubber-stamped reviews, provider leakage, semantic drift, and done-without-merge evidence.
 
 <img src="toad-local/docs/screenshots/drift-screen.png" alt="Drift Monitor" width="100%"/>
 
@@ -59,70 +86,39 @@ Seven deterministic checks score the team's drift from spec — illegal lifecycl
 <tr>
 <td width="50%" valign="top">
 
-### 📋 Foundry (kiro-style spec docs)
+### Local IDE
 
-Before a team launches, Foundry captures the project's product brief, tech spec, architecture, steering rules, design decisions (ADRs), definition of done, and roadmap. The lead agent reads these at boot — no more "what is this project even" thrashing.
-
-<img src="toad-local/docs/screenshots/foundry.png" alt="Foundry" width="100%"/>
+Browse a project, switch repositories, inspect task worktrees, edit files, and save through the orchestrator. The IDE is tied to the same project state, drift findings, task worktrees, and agent activity.
 
 </td>
 <td width="50%" valign="top">
 
-### ✅ Risk-classified human approvals
+### Provider And Plan Awareness
 
-The §14 risk classifier auto-elevates tasks that touch sensitive paths (`.env`, `secrets/`, `package.json`) or run destructive commands. The orchestrator blocks `merge_ready → done` until a human signs off in the Approvals drawer. Every rule is editable in the UI with a live preview.
+Symphony tracks provider auth and plan state where possible, including subscription-style CLI auth. The goal is to make model assignment and team launch decisions with visible context instead of guesswork.
 
-<img src="toad-local/docs/screenshots/tasks.png" alt="Tasks board with risk + drift badges" width="100%"/>
-
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-
-### 🌳 Per-task git worktrees
-
-Every task gets its own `git worktree` so agents work in isolation without stepping on each other or your editor. Diff capture uses real `git diff baseRef..HEAD` — not agent-reported file lists. The §19 merge integrator advances the base branch non-destructively (`merge-tree --write-tree` + `commit-tree` + `update-ref`) — never touches HEAD or your working directory.
-
-</td>
-<td width="50%" valign="top">
-
-### 📈 Plan & quota usage
-
-Live signed-in status and remaining plan quota for each subscription provider. Anthropic's `/usage` panel is scraped via a pty probe; Codex and Gemini show sign-in state from their auth files. Rendered in Settings → Providers and inside the new-team modal so you can see headroom before assigning roles.
-
-<img src="toad-local/docs/screenshots/settings-providers.png" alt="Plan usage" width="100%"/>
-
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-
-### 📱 EAS Plugin (Slice 2)
-
-Trigger Expo Application Services (EAS) builds and Over-The-Air (OTA) updates directly from the orchestrator. Agents can check project info and trigger remote builds while ensuring cost and platform constraints are respected.
-
-</td>
-<td width="50%" valign="top">
-
-### ⚙️ Background Job Poller
-
-The first implementation of the `plugin_jobs` infrastructure. Long-running builds and updates run in the background with persistent log streaming to SQLite. Humans can monitor progress and log tails in real-time through the Plugins dashboard.
-
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-
-### 🎨 Drift & Agent Overlays
-
-Visual intelligence inside the code editor. Real-time drift findings are annotated with squigglies and gutter markers, including severity and context on hover. A non-blocking banner alerts humans when an agent is actively mutating the worktree they are viewing.
-
-</td>
-<td width="50%" valign="top">
+<img src="toad-local/docs/screenshots/settings-providers.png" alt="Provider settings" width="100%"/>
 
 </td>
 </tr>
 </table>
+
+---
+
+## Why This Exists
+
+AI coding tools are powerful, but serious projects need more than prompts:
+
+- A durable project memory.
+- Clear specs before code starts.
+- Real task ownership.
+- Real git diffs, not agent-reported summaries.
+- Review and validation gates.
+- Human approval for risky operations.
+- Local control over code, settings, logs, and secrets.
+- Visibility when an agent drifts from the plan.
+
+Symphony treats agents like teammates in a controlled local workspace. They can work, but their work is structured, observable, and reversible.
 
 ---
 
@@ -132,288 +128,219 @@ Visual intelligence inside the code editor. Real-time drift findings are annotat
 
 ```mermaid
 graph TB
-  User[👤 Operator]
-  Tauri[🖥️ Tauri Shell<br/>Rust + WebView2]
-  UI[⚛️ React UI<br/>TypeScript + Vite]
-  API[🔌 Sidecar API<br/>Node + Express + SSE]
-  DB[(💾 SQLite<br/>Event Log)]
-  Claude[🟧 claude.exe]
-  Codex[🟦 codex]
-  Gemini[🟨 gemini]
+  Operator["Operator"]
+  Shell["Tauri Desktop Shell"]
+  UI["React Workspace"]
+  API["Node Sidecar API"]
+  DB[("SQLite Event Store")]
+  Foundry["Foundry Docs And Plans"]
+  MCP["MCP Tool Surface"]
+  Git["Git Worktrees And Merges"]
+  Drift["Drift Engine"]
+  Plugins["Infrastructure Plugins"]
+  Agents["Claude / Codex / Gemini / Other CLIs"]
 
-  User --> Tauri
-  Tauri --> UI
+  Operator --> Shell
+  Shell --> UI
   UI <-->|HTTP + SSE| API
-  API <-->|reads + appends| DB
-  API -->|spawn + pty| Claude
-  API -->|spawn| Codex
-  API -->|spawn| Gemini
+  API <-->|append + project| DB
+  API --> Foundry
+  API --> MCP
+  API --> Git
+  API --> Drift
+  API --> Plugins
+  MCP --> Agents
+  Agents --> MCP
 
   classDef store fill:#003B57,color:#fff,stroke:#003B57
-  classDef cli fill:#1e1e1e,color:#fff,stroke:#444
+  classDef core fill:#d97757,color:#fff,stroke:#a44d3a
   class DB store
-  class Claude,Codex,Gemini cli
+  class API,MCP core
 ```
 
 </div>
 
-**Durable events, transient processes.** SQLite at `<project>/.toad/toad.db` is the source of truth. Every meaningful state change — task created, status moved, plan proposed, review decided, runtime launched, tool invoked, approval requested — is an event row. CLI processes are an adapter; the UI is a projection. Killing both leaves the system in a known state. Restart, re-attach, replay.
+SQLite at `<project>/.toad/toad.db` is the durable source of truth. The desktop shell, React UI, sidecar API, CLI agents, MCP server, and plugin tools are adapters around that evented core.
 
-**Layered tool surface.** Agents call MCP tools (`task_comment`, `review_request`, `task_human_approve`, `validation_run`, `drift_run`, …) which dispatch through [`LocalToolFacade`](toad-local/src/tools/localToolFacade.js). The same facade backs the HTTP `/api/call` endpoint the UI uses, so there is exactly one authority point for permission checks, idempotency, role authority, and the risk-policy gate. There is no separate UI API layer.
+Agents call Symphony MCP tools such as `task_comment`, `validation_run`, `review_request`, `task_human_approve`, and `drift_run`. Those tools dispatch through [`LocalToolFacade`](toad-local/src/tools/localToolFacade.js), the same enforcement layer used by the UI's HTTP API. That gives Symphony one place for idempotency, role authority, task gates, risk policy, and audit logging.
 
-**Roles and authority.** Each agent carries a role (`lead`, `architect`, `developer`, `reviewer`, `tester`, plus `human` for operators). The [role-authority module](toad-local/src/security/roleAuthority.js) gates which tools each role can call. Read-only tools are common; mutations are scoped narrowly. Lead and human have full access; everyone else is on an explicit allowlist.
+---
 
-### The drift engine pipeline
+## Core Capabilities
 
-<div align="center">
+### Foundry To Team Launch
 
-```mermaid
-graph LR
-  T[task_event<br/>or 60s tick] --> S[buildSnapshot]
-  S --> C[7 deterministic<br/>checks]
-  C --> SC[scoreFindings]
-  SC --> ST[(drift_findings<br/>+ history)]
-  ST --> UI[DriftScreen]
+Foundry can turn project discovery into repository files and project artifacts:
 
-  classDef proc fill:#d97757,color:#fff,stroke:#a44d3a
-  class S,SC proc
-```
+- Product brief.
+- Technical specification.
+- Roadmap.
+- Task breakdown.
+- Prisma schema draft.
+- Starter task set.
+- Suggested team shape.
 
-</div>
+Those outputs can seed a real team so the lead agent starts with context instead of improvising.
 
-Each check is a pure function `({snapshot}) => DriftFinding[]` in `src/drift/checks/`. New checks (and the slice-2 LLM-semantic tier) drop in alongside without touching the engine.
+### Agent Runtime Control
 
-### Task lifecycle state machine
+Symphony launches and supervises local CLI processes, records their runtime events, links runtime instances to tasks, and streams activity back to the UI. Runtime output is not treated as truth by itself; durable tool calls and task events are.
 
-<div align="center">
+### Git Work And Merge Safety
 
-```mermaid
-stateDiagram-v2
-    [*] --> backlog
-    backlog --> ready
-    backlog --> rejected
-    ready --> planned
-    ready --> blocked
-    planned --> in_progress
-    planned --> blocked
-    in_progress --> review
-    in_progress --> blocked
-    review --> testing
-    review --> in_progress
-    review --> rejected
-    testing --> merge_ready
-    testing --> in_progress
-    testing --> blocked
-    merge_ready --> done
-    merge_ready --> in_progress
-    blocked --> ready
-    blocked --> planned
-    blocked --> in_progress
-    rejected --> backlog
-    done --> [*]
-```
+Each task can receive an isolated git worktree. Reviews compute real diffs from `baseRef..HEAD`, scope drift is detected against allowed files, validations are recorded as task evidence, and merge gates run through non-destructive git checks before a task can land.
 
-</div>
+### Drift And Correction
 
-Defined deterministically in [`src/task/taskLifecycle.js`](toad-local/src/task/taskLifecycle.js) — every transition the orchestrator allows is enumerated, role-guarded, and replayable. The drift engine's `checkInvalidTransitions` flags any historical move outside this graph.
+The drift engine builds snapshots from task, runtime, review, and validation state. It runs deterministic checks plus an optional LLM semantic tier, then lets humans create correction tasks from selected findings.
+
+### Infrastructure Plugins
+
+The plugin system gives agents controlled access to external infrastructure through explicit tool definitions, auth helpers, resource tracking, job logs, and secret redaction. Railway, EAS, and Vercel work is being built through this layer.
 
 ---
 
 ## Quickstart
 
 ```bash
-# 1. Clone & install
-git clone <this-repo> Project-TOAD
-cd Project-TOAD/toad-local
+# 1. Clone
+git clone https://github.com/TheOverAchievingDev/T.O.A.D.git symphony-ai
+cd symphony-ai/toad-local
+
+# 2. Install backend dependencies
 npm install
-cd ui && npm install && cd ..
 
-# 2. Run the desktop app (one icon, one window)
+# 3. Install UI dependencies
 cd ui
+npm install
+
+# 4. Run the desktop app
 npm run tauri:dev
+```
 
-# 3. ...or run web-mode (two terminals)
-# terminal 1: API at http://127.0.0.1:3001
+Web-mode development is also supported:
+
+```bash
+# Terminal 1
+cd toad-local
 npm run api:dev
-# terminal 2: UI at http://localhost:5173
-cd ui && npm run dev
+
+# Terminal 2
+cd toad-local/ui
+npm run dev
 ```
 
-On first launch, click **+** in the titlebar to create a team, or open **Foundry** to draft project specs first. The lead agent picks them up automatically once you launch.
-
-> **Demo recording placeholder.** A full walkthrough GIF will live at `docs/screenshots/demo.gif` once recorded.
+The desktop app is the intended experience because it can switch project folders and restart the sidecar against the selected repository.
 
 ---
 
-## Repo layout
+## Repository Layout
 
-```
-Project-TOAD/
-├─ README.md                              ← you are here
-├─ HANDOFF-NEXT-AGENT.md                  rolling handoff doc — what was just done, what's next
-├─ start-dev.bat                          boots backend + UI together
-└─ toad-local/                            the actual codebase (TOAD = Symphony AI's engine codename)
-   ├─ src/
-   │  ├─ app/LocalToadRuntime.js          composes everything
-   │  ├─ broker/                          durable message broker (SQLite)
-   │  ├─ task/                            task board + worktree manager + merge integrator
-   │  ├─ runtime/                         supervisor, registry, event log, ingestor
-   │  ├─ tools/localToolFacade.js         the MCP/HTTP tool surface
-   │  ├─ mcp/stdioServer.js               MCP server agents talk to
-   │  ├─ transport/apiServer.js           HTTP + SSE bridge for the UI
-   │  ├─ policy/                          §14 risk classifier + risk-policy store
-   │  ├─ security/                        role authority gates
-   │  ├─ settings/                        §3 two-tier settings store
-   │  ├─ github/                          §3c GitHub Device Flow + PAT auth + REST client
-   │  ├─ providers/                       §3c.2 plan-auth helpers + claude /usage probe
-   │  ├─ foundry/                         kiro-style spec docs (architecture, steering, DoD, ADRs)
-   │  ├─ drift/                           drift monitor (engine, checks, store, monitor)
-   │  └─ diagnostics/                     §13 stuck-runtime detector + diagnostic checks
-   ├─ test/                               600+ tests, pure node:test
-   ├─ ui/                                 React 18 + TypeScript + Vite + Tauri 2 desktop UI
-   ├─ scripts/
-   │  ├─ dev-api-server.mjs               sidecar entry point
-   │  └─ capture-screenshots.mjs          Playwright UI screenshot regen
-   └─ docs/
-      ├─ AGENT_TEAMS_HARDENING_CHECKLIST.md   the §-numbered spec
-      ├─ ARCHITECTURE.md
-      ├─ CHECKLIST_GAP_MATRIX.md              which §s are real vs partial vs todo
-      ├─ screenshots/                         (see docs/screenshots/README.md to regen)
-      └─ superpowers/specs/                   per-feature design docs (drift, etc.)
+```text
+symphony-ai/
+|-- README.md
+|-- start-dev.bat
+|-- toad-local/
+|   |-- src/
+|   |   |-- app/                 Runtime composition
+|   |   |-- foundry/             Planning sessions and generated docs
+|   |   |-- task/                Task board, worktrees, diffs, merge gates
+|   |   |-- runtime/             CLI process supervision and event ingestion
+|   |   |-- mcp/                 Agent-facing MCP server
+|   |   |-- tools/               Shared tool facade for UI and agents
+|   |   |-- drift/               Drift engine, checks, LLM tier, corrections
+|   |   |-- plugins/             Infrastructure plugin system
+|   |   |-- policy/              Risk policy and human approval rules
+|   |   |-- settings/            Global and project settings
+|   |   |-- github/              GitHub auth and API helpers
+|   |   `-- transport/           HTTP API and SSE
+|   |-- test/                    Node test suite
+|   |-- ui/                      React, TypeScript, Vite, Tauri desktop app
+|   |-- docs/                    Architecture, hardening matrix, screenshots
+|   `-- scripts/                 Dev server, token generation, screenshots
 ```
 
----
-
-## The §-numbered hardening checklist
-
-The checklist is the contract for "what does it mean for Symphony AI to be production-ish". Current state mirrored in [`CHECKLIST_GAP_MATRIX.md`](toad-local/docs/CHECKLIST_GAP_MATRIX.md). Highlights:
-
-| § | Topic | Status |
-|---|---|---|
-| 1  | Task schema (priority/role/files/acceptance/risk/deps) | **Real** |
-| 8  | Worktree per task with explicit `baseRef`/`baseBranch` | **Real** |
-| 10 | Task dependency enforcement (ready ← deps done) | **Real** |
-| 11 | Runtime instances pin `task_id` from `agent_launch` | **Real** |
-| 13 | Stuck-runtime detector (silent past threshold) | **Real** |
-| 14 | Risk-policy classifier + human-approval gate | **Real** + UI editor |
-| 17 | Review feedback severity (nit/minor/major/blocking) | **Real** |
-| 19 | Non-destructive merge integrator | **Real** |
-| 20 | `task_history_export` joins task + runtime events | **Real** |
-| 3  | Two-tier settings store + UI editors | **Real** |
-| 3c | GitHub Device Flow + PAT auth | **Real** |
-| 3c.2 | Provider plan-auth (Anthropic + Codex + Gemini wired) | **Real** |
-| 3d | Risk-policy editor with live preview | **Real** |
-| — | Foundry kiro-style spec docs (steering, ADRs, DoD) | **Real** |
-| — | Drift monitor (slice 1: deterministic engine + dashboard) | **Real** |
-
-Run `npm test` from `toad-local/` to verify — at the time of this commit, **600+ tests pass, 0 fail across 60+ test files**, including 49 new drift tests.
+The `toad-local` directory name is a historical engine codename. Public product naming is Symphony AI; internal `TOAD_*` environment variables are retained for compatibility while the project is renamed.
 
 ---
 
-## Settings storage
+## Settings And Local Data
 
-Two-tier, JSON files. Writers validate; UI re-validates on read.
+Symphony is local-first:
 
-| Tier | Path | What lives here |
-|---|---|---|
-| Global | `%APPDATA%\toad\settings.json` (Windows) / `~/.config/toad/settings.json` (Unix) | Provider keys, GitHub token, theme defaults |
-| Project | `<projectCwd>/.toad/settings.json` | Project-specific overrides |
-| Risk policy | `<projectCwd>/.toad/risk-policy.json` | §14 file + command rules |
+| Surface | Default location |
+|---|---|
+| Project database | `<project>/.toad/toad.db` |
+| Project settings | `<project>/.toad/settings.json` |
+| Risk policy | `<project>/.toad/risk-policy.json` |
+| Global settings | `%APPDATA%/toad/settings.json` on Windows, `~/.config/toad/settings.json` on Unix |
 
-Project values shallow-merge over global values per top-level section. Each section is one of: `general`, `providers`, `github`, `workspace`, `risk`, `mcp`, `notifications`, `advanced`. The merged result includes a `_sources` field telling the UI which file each section came from.
-
----
-
-## Risk policy & §14 human-approval gate
-
-When an agent calls `review_request`, the orchestrator runs the [risk classifier](toad-local/src/policy/riskClassifier.js) against:
-
-1. The files in the task's diff (matched against `rules` glob patterns).
-2. The bash commands from the task's `runtime_events` stream (matched against `commandRules` substring/prefix patterns).
-
-If a rule fires, the task's `riskLevel` may be auto-elevated and `requiresHumanApproval` may be set to `true`. The task is then blocked from `merge_ready → done` until a human (or the lead role) calls `task_human_approve`.
-
-Edit the policy in **Settings → Risk policies** — paste sample files / commands in the live preview pane and see what the classifier would decide.
-
----
-
-## GitHub auth
-
-Two flows in [`src/github/githubAuth.js`](toad-local/src/github/githubAuth.js):
-
-- **Device Flow (preferred).** Click "Sign in with GitHub" → modal shows a user code → enter it in the browser → authorize → the UI auto-polls until the token is granted. Requires `TOAD_GITHUB_CLIENT_ID`.
-- **PAT fallback.** Paste a Personal Access Token, the orchestrator verifies via `/user`, captures user + scopes, persists. Works fully offline.
-
-Tokens persist under `settings.github`. Click **Disconnect** any time to clear them (the OAuth client_id is preserved).
-
----
-
-## Provider plan-auth
-
-Each provider has its own subscription/plan auth managed by its CLI:
-
-- **Anthropic** — `claude auth status --json` / interactive `/login` slash command. Plan-quota usage scraped via a pty probe of `/usage` and surfaced in **Settings → Providers**.
-- **OpenAI Codex** — wired via filesystem detection of `~/.codex/auth.json`.
-- **Gemini** — wired via filesystem detection of `~/.gemini/oauth_creds.json` and `~/.gemini/google_accounts.json`.
-- **OpenCode** — API-only by design. The Providers tab hides the plan-auth toggle for it accordingly.
-
-In **Settings → Providers**, switch a provider's "Auth method" segmented control to **Plan / subscription** to see the per-provider auth panel and live quota bars.
-
----
-
-## Environment variables
+Important environment variables:
 
 | Variable | Purpose |
 |---|---|
-| `TOAD_DB_PATH` | Path to the SQLite file (default `<projectCwd>/.toad/toad.db`) |
-| `TOAD_API_PORT` | API server port (default 3001) |
-| `TOAD_API_TOKEN` | Bearer token required by `/api/call` and `/events` |
-| `TOAD_API_ALLOWED_ORIGINS` | CORS origin allowlist for the SPA |
-| `TOAD_UI_STATIC_DIR` | When set, ApiServer serves the built UI at `/` |
-| `TOAD_GITHUB_CLIENT_ID` | OAuth client_id for the GitHub Device Flow |
-| `TOAD_SETTINGS_PATH` | Override the global settings file path |
-| `TOAD_SIDE_EFFECT_RETENTION_DAYS` | Side-effect log pruning window |
-| `TOAD_USAGE_PROBE_DEBUG` | Verbose logging for the claude `/usage` pty probe |
-| `VITE_TOAD_API_BASE_URL` | UI: API base URL (default `http://127.0.0.1:3001`) |
-| `VITE_TOAD_API_TOKEN` | UI: bearer token sent with each request |
+| `TOAD_DB_PATH` | Override the SQLite database path |
+| `TOAD_API_PORT` | Sidecar API port, defaults to `3001` |
+| `TOAD_API_TOKEN` | Bearer token for `/api/call` and `/events` |
+| `TOAD_API_ALLOWED_ORIGINS` | CORS allowlist for browser development |
+| `TOAD_GITHUB_CLIENT_ID` | GitHub Device Flow client id |
+| `TOAD_SETTINGS_PATH` | Override global settings path |
+| `VITE_TOAD_API_BASE_URL` | UI API base URL |
+| `VITE_TOAD_API_TOKEN` | UI bearer token |
 
 ---
 
 ## Verification
 
 ```bash
-# Backend — full suite, 600+ tests across 60+ files
+# Backend
 cd toad-local
 npm test
 
-# UI — typecheck + production build
+# UI
 cd toad-local/ui
 npm run typecheck
 npm run build
-
-# Regenerate README screenshots from the live app
-cd toad-local
-npm install --save-dev playwright   # one-time
-npx playwright install chromium      # one-time
-npm run screenshots                  # writes docs/screenshots/*.png
 ```
 
-Tests use Node's built-in `node:test` runner — no Jest, Vitest, or other harness. Both `npm test` and `npm run build` should exit 0 on every commit.
+Screenshot regeneration:
+
+```bash
+cd toad-local
+npm run screenshots
+```
 
 ---
 
-## What's deferred
+## Current Status
 
-Tracked on the roadmap; flagged here so nothing is hidden:
+Symphony is an active local-first prototype with substantial working foundations:
 
-- **Drift monitor — slices 1 + 2 + 3 shipped.** Slice 1 (deterministic 7-check engine), slice 2 (LLM-semantic tier — Haiku/Mini/Flash always-on, Opus 4.7 / GPT-5 / Gemini 2.5 Pro escalation when score crosses Warning), and slice 3 (correction-task generation — multi-select findings → editable modal → task lands in backlog with offending evidence; in-flight findings excluded from score + skip LLM re-emit until correction hits done/rejected). See `toad-local/docs/superpowers/specs/2026-05-04-drift-slice-3-correction-tasks-design.md`. Engine/UI/settings/provider polish + slice 3.5 candidates (auto-creation, root-cause clustering) catalogued in `toad-local/docs/superpowers/specs/2026-05-04-drift-followups-tracker.md`.
-- **Infrastructure plugin system — slice 0+1 shipped.** Slice 0 (plugin infrastructure: registry, auth helpers, jobs/resources stores, secret redactor) + slice 1 (Railway plugin, Postgres-only). Agents can provision Postgres DBs, pull connection strings, and run SQL migrations through the Railway CLI — the same role-gated, risk-classified, audit-trailed surface as everything else. See `toad-local/docs/superpowers/specs/2026-05-04-plugin-slice-0-1-railway-design.md`. Slice 1.5 (other Railway DB types, auto-deprovision), slice 2 (EAS), slice 3 (Vercel) tracked as follow-ups in `toad-local/docs/superpowers/specs/2026-05-04-infrastructure-plugin-system-idea.md`.
-- **OpenCode plan-auth.** Not wired — OpenCode is API-only by design. The Providers tab hides the plan-auth toggle accordingly.
-- **GUI launcher.** Standalone "Symphony AI launcher" that boots all servers + the app, shows server status, captures error reports — separate sub-project, brainstorming pending.
-- **Demo recording.** A full walkthrough GIF for `docs/screenshots/demo.gif` — the screenshot pipeline handles stills today; motion captures land when convenient.
-- **Tauri custom branding.** Real Symphony AI app icon (drop a 1024×1024 PNG over `toad-local/ui/src-tauri/toad-source.png` and run `npm run tauri:icon ../toad-source.png`).
+- Event-sourced task and runtime state.
+- MCP tool access for agents.
+- Real agent launches and runtime event ingestion.
+- Foundry planning and document generation.
+- Team launch from Foundry outputs.
+- Task lifecycle gates.
+- Human approval and risk policy.
+- Drift monitoring and correction task flow.
+- IDE browse and save surfaces.
+- Project folder switching in the desktop shell.
+- Infrastructure plugin groundwork.
 
-The `HANDOFF-NEXT-AGENT.md` at the repo root tracks rolling state between sessions — read that first if you're picking up cold.
+The project is still changing quickly. Public naming is being moved to Symphony AI, while some internal filenames, package names, environment variables, and docs may still use the older TOAD codename until compatibility-safe renames are completed.
+
+---
+
+## Roadmap Themes
+
+- Complete public branding cleanup and installer identity.
+- Finish infrastructure plugin slices and resource lifecycle handling.
+- Tighten IDE project navigation, diff review, and agent overlay UX.
+- Expand Foundry output quality and project-file generation.
+- Improve semantic drift detection and root-cause grouping.
+- Add stronger release packaging and first-run setup flows.
+- Record a polished demo walkthrough for this README.
 
 ---
 
@@ -421,9 +348,7 @@ The `HANDOFF-NEXT-AGENT.md` at the repo root tracks rolling state between sessio
 
 <sub>
 
-Symphony AI runs on the **TOAD orchestrator engine** (the project's internal codename, preserved in `toad-local/`).
-
-Built with [React](https://react.dev/) · [Tauri 2](https://tauri.app/) · [SQLite](https://sqlite.org/) · [Node.js](https://nodejs.org/) · [MCP](https://modelcontextprotocol.io/) · disciplined TDD.
+Built with [React](https://react.dev/) . [Tauri 2](https://tauri.app/) . [SQLite](https://sqlite.org/) . [Node.js](https://nodejs.org/) . [MCP](https://modelcontextprotocol.io/)
 
 </sub>
 

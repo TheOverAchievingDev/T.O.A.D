@@ -1,9 +1,9 @@
 {
-  "name": "toad-local",
+  "name": "symphony-engine",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Local-first multi-agent orchestration prototype.",
+  "description": "Local-first engine for Symphony AI's agent teams, Foundry, IDE, drift monitor, and infrastructure plugins.",
   "scripts": {
     "api:dev": "node --no-warnings scripts/dev-api-server.mjs",
     "mcp:stdio": "node --no-warnings src/mcp/stdioServer.js",
