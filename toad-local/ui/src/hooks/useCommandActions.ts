@@ -33,9 +33,9 @@ export function useCommandActions({
 
     // ---- Navigate ----
     actions.push(
-      { id: 'nav.workspace', group: 'Navigate', label: 'Go to Workspace', icon: 'layers', hint: 'org chart',
-        keywords: ['home', 'team', 'org', 'chart'],
-        run: () => setTweak('screen', 'workspace') },
+      { id: 'nav.workspace', group: 'Navigate', label: 'Go to Cockpit', icon: 'layers', hint: 'IDE',
+        keywords: ['home', 'team', 'org', 'chart', 'ide', 'cockpit'],
+        run: () => setTweak('screen', 'cockpit') },
       { id: 'nav.tasks', group: 'Navigate', label: 'Go to Tasks', icon: 'kanban', hint: 'kanban',
         keywords: ['kanban', 'list', 'todo'],
         run: () => setTweak('screen', 'tasks') },

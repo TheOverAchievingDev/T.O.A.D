@@ -28,6 +28,7 @@ import { AuditLogScreen } from '@/components/AuditLogScreen';
 import { DriftScreen } from '@/components/DriftScreen';
 import { FoundryScreen } from '@/components/FoundryScreen';
 import { CodeScreen } from '@/components/CodeScreen';
+import { CockpitScreen } from '@/components/CockpitScreen';
 import { ShortcutsModal } from '@/components/ShortcutsModal';
 import { useShortcutsHotkey } from '@/hooks/useShortcutsHotkey';
 import {
@@ -53,7 +54,7 @@ import {
 import { callTool as callToadApi } from '@/api/client';
 import { useDrift } from '@/hooks/useDrift';
 
-type ProjectOpenScreen = Extract<Tweaks['screen'], 'workspace' | 'code'>;
+type ProjectOpenScreen = Extract<Tweaks['screen'], 'cockpit' | 'workspace' | 'code'>;
 
 export default function App() {
   return (
@@ -104,7 +105,7 @@ function AppInner() {
     window.setTimeout(refresh, 800);
   }, [refresh]);
 
-  const openRegisteredProject = useCallback(async (projectId: string, nextScreen: ProjectOpenScreen = 'workspace') => {
+  const openRegisteredProject = useCallback(async (projectId: string, nextScreen: ProjectOpenScreen = 'cockpit') => {
     const project = projectRegistry.projects.find((p) => p.id === projectId);
     if (!project) return;
     try {
@@ -119,7 +120,7 @@ function AppInner() {
     }
   }, [projectRegistry, refreshAfterProjectSwitch, setTweak]);
 
-  const pickProjectFolder = useCallback(async (nextScreen: ProjectOpenScreen = 'workspace') => {
+  const pickProjectFolder = useCallback(async (nextScreen: ProjectOpenScreen = 'cockpit') => {
     const picked = await pickAndSwitchProjectFolder();
     if (!picked) return;
     // Reuse an existing entry that points at the same path (case-insensitive
@@ -273,7 +274,7 @@ function AppInner() {
   }, [setTweak]);
 
   const openAgentFromPalette = useCallback((id: string) => {
-    setTweak('screen', 'workspace');
+    setTweak('screen', 'cockpit');
     setTweak('agentInbox', id);
   }, [setTweak]);
 
@@ -375,7 +376,7 @@ function AppInner() {
   function handleNavSelect(key: SidebarKey) {
     switch (key) {
       case 'workspace':
-        setTweak('screen', 'workspace');
+        setTweak('screen', 'cockpit');
         return;
       case 'tasks':
         setTweak('screen', 'tasks');
@@ -472,14 +473,14 @@ function AppInner() {
             <EmptyWorkspace onCreateTeam={() => setTweak('screen', 'create')} />
           )}
           {tweaks.screen === 'onboarding' && (
-            <OnboardingScreen onDone={() => setTweak('screen', 'workspace')} />
+            <OnboardingScreen onDone={() => setTweak('screen', 'cockpit')} />
           )}
           {tweaks.screen === 'picker' && (
             <ProjectPicker
               projects={projectRegistry.projects}
               activeId={projectRegistry.activeId}
               onOpenProject={(id) => {
-                void openRegisteredProject(id, 'workspace');
+                void openRegisteredProject(id, 'cockpit');
               }}
               onCreateTeam={() => setTweak('screen', 'create')}
               onSelectFolder={pickProjectFolder}
@@ -545,8 +546,42 @@ function AppInner() {
               onMaterialized={(teamId) => {
                 setActiveTeamId(teamId);
                 refresh();
-                setTweak('screen', 'workspace');
+                setTweak('screen', 'cockpit');
               }}
+            />
+          )}
+          {(tweaks.screen === 'cockpit' || tweaks.screen === 'create' || tweaks.screen === 'task') && (
+            <CockpitScreen
+              team={team}
+              tasks={tasks}
+              runtimes={runtimes}
+              messages={messages}
+              teamId={team.name || activeTeamId}
+              actor={{
+                teamId: team.name || activeTeamId || 'system',
+                agentId: 'ui-client',
+                agentName: 'ui',
+                role: 'human',
+              }}
+              projects={projectRegistry.projects}
+              activeProject={projectRegistry.active}
+              onSelectProject={(id) => {
+                void openRegisteredProject(id, 'cockpit');
+              }}
+              onSelectFolder={() => {
+                void pickProjectFolder('cockpit');
+              }}
+              onOpenTask={(id) => {
+                setSelectedTaskId(id);
+                setTweak('screen', 'task');
+              }}
+              onCreateTask={() => setTaskCreateOpen(true)}
+              onOpenLogs={(id) => setLogRuntimeId(id)}
+              driftData={drift.data}
+              driftLoading={drift.loading}
+              driftError={drift.error}
+              onRefreshDrift={drift.refresh}
+              onRefreshData={refresh}
             />
           )}
           {tweaks.screen === 'code' && (
@@ -601,11 +636,11 @@ function AppInner() {
               launchingTeamId={launchingTeamId ?? team.name}
               onContinue={() => {
                 setLaunchingTeamId(null);
-                setTweak('screen', 'workspace');
+                setTweak('screen', 'cockpit');
               }}
               onCancel={() => {
                 setLaunchingTeamId(null);
-                setTweak('screen', 'workspace');
+                setTweak('screen', 'cockpit');
               }}
             />
           )}
@@ -613,10 +648,10 @@ function AppInner() {
             <SettingsScreen
               tweaks={tweaks}
               setTweak={setTweak}
-              onClose={() => setTweak('screen', 'workspace')}
+              onClose={() => setTweak('screen', 'cockpit')}
             />
           )}
-          {(tweaks.screen === 'workspace' || tweaks.screen === 'create' || tweaks.screen === 'task') && !isOverlayScreen && (
+          {tweaks.screen === 'workspace' && !isOverlayScreen && (
             <Workspace
               team={team}
               tasks={tasks}
@@ -693,7 +728,7 @@ function AppInner() {
           }
           onClose={() => {
             setFoundryPlan(null);
-            setTweak('screen', 'workspace');
+            setTweak('screen', 'cockpit');
           }}
           onCreated={async (teamId) => {
             setActiveTeamId(teamId);
@@ -727,7 +762,7 @@ function AppInner() {
           taskId={selectedTaskId ?? undefined}
           task={selectedTaskId ? tasks.find((t) => t.id === selectedTaskId) : undefined}
           onClose={() => {
-            setTweak('screen', 'workspace');
+            setTweak('screen', 'cockpit');
             setSelectedTaskId(null);
           }}
         />
@@ -867,6 +902,7 @@ function AppInner() {
               label="Screen"
               value={tweaks.screen}
               options={[
+                { value: 'cockpit', label: 'Cockpit' },
                 { value: 'workspace', label: 'Workspace' },
                 { value: 'tasks', label: 'Tasks' },
                 { value: 'foundry', label: 'Foundry' },

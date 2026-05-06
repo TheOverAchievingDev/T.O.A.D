@@ -31,7 +31,7 @@ interface SidebarNavProps {
 }
 
 const DEFAULT_TOP: SidebarNavItem[] = [
-  { key: 'workspace', label: 'Workspace', icon: 'layers' },
+  { key: 'workspace', label: 'Cockpit', icon: 'layers' },
   { key: 'foundry', label: 'Foundry', icon: 'sparkle' },
   { key: 'code', label: 'Code', icon: 'code' },
   { key: 'tasks', label: 'Tasks', icon: 'kanban' },

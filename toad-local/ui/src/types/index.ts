@@ -138,6 +138,7 @@ export interface Tweaks {
   layout: 'org' | 'chat' | 'kanban';
   cardVariant: 'detail' | 'compact' | 'terminal';
   screen:
+    | 'cockpit'
     | 'workspace'
     | 'tasks'
     | 'settings'

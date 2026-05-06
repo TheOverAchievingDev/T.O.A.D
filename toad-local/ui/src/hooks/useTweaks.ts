@@ -8,7 +8,7 @@ export const TWEAK_DEFAULTS: Tweaks = {
   density: 'comfy',
   layout: 'org',
   cardVariant: 'detail',
-  screen: 'workspace',
+  screen: 'cockpit',
   agentInbox: '',
   showProviders: false,
   showNotifs: false,

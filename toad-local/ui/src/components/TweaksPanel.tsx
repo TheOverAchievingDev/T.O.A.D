@@ -300,7 +300,13 @@ export function TweaksPanel({
         label="Active"
         value={tweaks.screen}
         options={[
+          { value: 'cockpit', label: 'Cockpit' },
           { value: 'workspace', label: 'Workspace' },
+          { value: 'tasks', label: 'Tasks' },
+          { value: 'foundry', label: 'Foundry' },
+          { value: 'code', label: 'Code' },
+          { value: 'drift', label: 'Drift' },
+          { value: 'settings', label: 'Settings' },
           { value: 'picker', label: 'Picker' },
           { value: 'empty', label: 'Empty' },
           { value: 'onboarding', label: 'Onboarding' },
