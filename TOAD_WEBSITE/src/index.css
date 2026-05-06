@@ -1,0 +1,56 @@
+:root {
+  /* Light Theme (Claude-inspired) */
+  --bg-color: #F9F8F6;
+  --text-color: #302E29;
+  --accent-color: #D97757;
+  --secondary-bg: #FFFFFF;
+  --border-color: #E6E4E0;
+  --card-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  --font-serif: "Ibarra Real Nova", serif;
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --code-bg: #F1F0EC;
+}
+
+[data-theme='dark'] {
+  /* Dark Theme (IDE-inspired) */
+  --bg-color: #1a1a1a;
+  --text-color: #e0e0e0;
+  --accent-color: #64b5f6;
+  --secondary-bg: #2d2d2d;
+  --border-color: #404040;
+  --card-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --code-bg: #252525;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  font-family: var(--font-sans);
+  transition: background-color 0.3s ease, color 0.3s ease;
+  min-height: 100vh;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+a {
+  color: var(--accent-color);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+code {
+  font-family: 'Fira Code', 'Courier New', Courier, monospace;
+}
