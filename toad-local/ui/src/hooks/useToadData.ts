@@ -16,6 +16,7 @@ import type {
   TaskRiskLevel,
   MatchedRiskRule,
   UiValidationRun,
+  UiTaskReview,
   ValidationKind,
   ValidationVerdict,
 } from '@/types';
@@ -62,6 +63,20 @@ interface BackendTask {
   testCommands?: string[];
   validations?: BackendValidationRun[];
   latestValidation?: Partial<Record<string, BackendValidationRun>>;
+  review?: BackendTaskReview | null;
+}
+
+interface BackendTaskReview {
+  summary?: string | null;
+  diff?: string | null;
+  files?: unknown[];
+  scopeDrift?: unknown[];
+  noOpDiff?: boolean;
+  reviewerId?: string | null;
+  requestedBy?: string;
+  requestedAt?: string;
+  decision?: string | null;
+  reason?: string | null;
 }
 
 interface BackendValidationRun {
@@ -270,6 +285,7 @@ function normalizeTask(raw: BackendTask, fallbackProject: string): UiTask {
       : undefined,
     validations,
     latestValidation: normalizeLatestValidation(raw.latestValidation),
+    review: normalizeTaskReview(raw.review),
     worktree: raw.worktree && typeof raw.worktree === 'object'
       ? {
           status: raw.worktree.status,
@@ -277,6 +293,24 @@ function normalizeTask(raw: BackendTask, fallbackProject: string): UiTask {
           branch: raw.worktree.branch ?? null,
         }
       : null,
+  };
+}
+
+function normalizeTaskReview(raw: BackendTask['review']): UiTaskReview | null {
+  if (!raw || typeof raw !== 'object') return null;
+  return {
+    summary: typeof raw.summary === 'string' ? raw.summary : null,
+    diff: typeof raw.diff === 'string' ? raw.diff : null,
+    files: Array.isArray(raw.files) ? raw.files.filter((file): file is string => typeof file === 'string') : [],
+    scopeDrift: Array.isArray(raw.scopeDrift)
+      ? raw.scopeDrift.filter((file): file is string => typeof file === 'string')
+      : [],
+    noOpDiff: raw.noOpDiff === true,
+    reviewerId: typeof raw.reviewerId === 'string' ? raw.reviewerId : null,
+    requestedBy: typeof raw.requestedBy === 'string' ? raw.requestedBy : undefined,
+    requestedAt: typeof raw.requestedAt === 'string' ? raw.requestedAt : undefined,
+    decision: typeof raw.decision === 'string' ? raw.decision : null,
+    reason: typeof raw.reason === 'string' ? raw.reason : null,
   };
 }
 

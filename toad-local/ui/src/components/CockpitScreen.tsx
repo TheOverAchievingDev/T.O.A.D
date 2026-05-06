@@ -30,6 +30,7 @@ import {
   validationSummary,
 } from './cockpitValidation';
 import { buildCockpitOutputEntries } from './cockpitOutput';
+import { summarizeCockpitReview } from './cockpitReview';
 import type { StreamEntry } from '@/utils/agentStream';
 
 interface CockpitScreenProps {
@@ -128,6 +129,10 @@ export function CockpitScreen({
   const latestValidation = validationRuns[0] ?? null;
   const latestValidationOutput = validationOutputLines(latestValidation);
   const selectedKindLatestValidation = selectedTask?.latestValidation?.[validationKind] ?? null;
+  const reviewSummary = summarizeCockpitReview({
+    review: selectedTask?.review ?? null,
+    validations: selectedTask?.validations ?? [],
+  });
 
   async function refreshFiles() {
     if (!teamId) return;
@@ -447,6 +452,11 @@ export function CockpitScreen({
             {selectedTask ? (
               <>
                 <p className="dim">{selectedTask.title}</p>
+                <div className={`cockpit-review-card ${reviewSummary.state}`}>
+                  <span>Review gate</span>
+                  <strong>{reviewSummary.state}</strong>
+                  <p>{selectedTask.review?.summary || selectedTask.review?.reason || 'No review request has been recorded for this task yet.'}</p>
+                </div>
                 <div className="cockpit-review-row">
                   <span>Status</span>
                   <strong>{selectedTask.status}</strong>
@@ -455,6 +465,43 @@ export function CockpitScreen({
                   <span>Assignee</span>
                   <strong>{selectedTask.assignee || 'unassigned'}</strong>
                 </div>
+                <div className="cockpit-review-row">
+                  <span>Files changed</span>
+                  <strong>{reviewSummary.fileCount}</strong>
+                </div>
+                <div className="cockpit-review-row">
+                  <span>Scope drift</span>
+                  <strong>{reviewSummary.scopeDriftCount}</strong>
+                </div>
+                <div className="cockpit-review-row">
+                  <span>Validations</span>
+                  <strong>{reviewSummary.validationLabel}</strong>
+                </div>
+                {selectedTask.review?.requestedAt && (
+                  <div className="cockpit-review-row">
+                    <span>Requested</span>
+                    <strong>{formatValidationTime(selectedTask.review.requestedAt) ?? selectedTask.review.requestedAt}</strong>
+                  </div>
+                )}
+                {(selectedTask.review?.files?.length ?? 0) > 0 && (
+                  <div className="cockpit-review-files">
+                    <span>Changed files</span>
+                    {selectedTask.review?.files.slice(0, 6).map((file) => (
+                      <code key={file}>{file}</code>
+                    ))}
+                    {(selectedTask.review?.files.length ?? 0) > 6 && (
+                      <em>{(selectedTask.review?.files.length ?? 0) - 6} more</em>
+                    )}
+                  </div>
+                )}
+                {(selectedTask.review?.scopeDrift?.length ?? 0) > 0 && (
+                  <div className="cockpit-review-files drift">
+                    <span>Scope drift</span>
+                    {selectedTask.review?.scopeDrift.slice(0, 4).map((file) => (
+                      <code key={file}>{file}</code>
+                    ))}
+                  </div>
+                )}
                 <button className="btn btn-sm" type="button" onClick={() => onOpenTask(selectedTask.id)}>
                   Open full task
                 </button>

@@ -110,6 +110,20 @@ export interface UiTask {
   testCommands?: string[];
   validations?: UiValidationRun[];
   latestValidation?: Partial<Record<ValidationKind, UiValidationRun>>;
+  review?: UiTaskReview | null;
+}
+
+export interface UiTaskReview {
+  summary?: string | null;
+  diff?: string | null;
+  files: string[];
+  scopeDrift: string[];
+  noOpDiff: boolean;
+  reviewerId?: string | null;
+  requestedBy?: string;
+  requestedAt?: string;
+  decision?: string | null;
+  reason?: string | null;
 }
 
 export type ValidationKind = 'install' | 'lint' | 'typecheck' | 'test' | 'build' | 'security';

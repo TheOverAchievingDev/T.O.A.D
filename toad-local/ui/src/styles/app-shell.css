@@ -886,6 +886,85 @@
   font-size: 12px;
 }
 
+.cockpit-review-row strong {
+  max-width: 160px;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cockpit-review-card {
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.025);
+  padding: 10px;
+  margin: 10px 0;
+}
+
+.cockpit-review-card.ready {
+  border-color: color-mix(in oklab, var(--ok) 30%, var(--border-soft));
+}
+
+.cockpit-review-card.blocked {
+  border-color: color-mix(in oklab, var(--err) 35%, var(--border-soft));
+}
+
+.cockpit-review-card > span {
+  color: var(--fg-dim);
+  font-size: 10.5px;
+}
+
+.cockpit-review-card strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--fg);
+  font-size: 15px;
+  text-transform: capitalize;
+}
+
+.cockpit-review-card p {
+  margin: 6px 0 0;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.cockpit-review-files {
+  margin: 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.cockpit-review-files > span {
+  color: var(--fg-dim);
+  font-size: 10.5px;
+}
+
+.cockpit-review-files code {
+  display: block;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: var(--bg-input);
+  color: var(--fg-muted);
+  padding: 5px 6px;
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cockpit-review-files.drift code {
+  border-color: color-mix(in oklab, var(--err) 35%, var(--border-soft));
+}
+
+.cockpit-review-files em {
+  color: var(--fg-dim);
+  font-size: 10.5px;
+  font-style: normal;
+}
+
 .cockpit-panel-title,
 .cockpit-bottom-title,
 .cockpit-bottom-actions {
