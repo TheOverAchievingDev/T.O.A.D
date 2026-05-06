@@ -32,6 +32,7 @@ import {
 import { buildCockpitOutputEntries } from './cockpitOutput';
 import { summarizeCockpitReview } from './cockpitReview';
 import { buildCockpitTaskGroups } from './cockpitTasks';
+import { buildCockpitAgentRows } from './cockpitAgents';
 import type { StreamEntry } from '@/utils/agentStream';
 
 interface CockpitScreenProps {
@@ -104,6 +105,10 @@ export function CockpitScreen({
   const reviewTasks = tasks.filter((task) => task.status === 'review');
   const activeTasks = tasks.filter((task) => task.status !== 'done' && task.status !== 'rejected');
   const taskGroups = useMemo(() => buildCockpitTaskGroups(activeTasks), [activeTasks]);
+  const agentRows = useMemo(
+    () => buildCockpitAgentRows({ members: team.members, runtimes, streams: agentStreams }),
+    [agentStreams, runtimes, team.members],
+  );
   const worktreeTasks = tasks.filter((task) => task.worktree?.status === 'created' && task.worktree.path);
   const fileSource = useMemo(() => sourceKeyToIdeSource(fileSourceKey), [fileSourceKey]);
   const codeTree = useMemo(() => buildCodeTree(fileTree?.entries ?? []), [fileTree?.entries]);
@@ -374,24 +379,30 @@ export function CockpitScreen({
                 <span>Create or launch a team to see agent status here.</span>
               </div>
             ) : (
-              team.members.map((member) => {
-                const runtime = runtimes.find((r) => r.agent === member.id || r.agent === member.name);
+              agentRows.map((row) => {
+                const { member, runtime } = row;
                 return (
                   <button
                     key={member.id}
                     type="button"
                     className="cockpit-agent"
                     style={roleStyle(member.role)}
-                    onClick={() => runtime && onOpenLogs(runtime.id)}
-                    disabled={!runtime}
+                    onClick={() => row.canOpenLogs && runtime && onOpenLogs(runtime.id)}
+                    disabled={!row.canOpenLogs}
                   >
-                    <span className={`status-dot ${member.status}`} />
+                    <span className={`status-dot ${row.status}`} />
                     <span className="agent-avatar">{member.avatar}</span>
                     <span className="cockpit-agent-main">
-                      <strong>{member.name}</strong>
-                      <span>{member.activity?.label ?? member.task ?? 'Idle'}</span>
+                      <span className="cockpit-agent-name-row">
+                        <strong>{member.name}</strong>
+                        <em>{member.role}</em>
+                      </span>
+                      <span>{row.latestActivity}</span>
+                      <span className="cockpit-agent-runtime">{row.runtimeLabel ?? member.model}</span>
                     </span>
-                    {runtime && <span className="mono cockpit-agent-pid">pid {runtime.pid}</span>}
+                    <span className="mono cockpit-agent-pid">
+                      {runtime ? `pid ${runtime.pid}` : row.status}
+                    </span>
                   </button>
                 );
               })

@@ -758,8 +758,9 @@
 
 .cockpit-agent {
   display: grid;
-  grid-template-columns: auto 28px minmax(0, 1fr) auto;
-  align-items: center;
+  grid-template-columns: auto 28px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: start;
   gap: 8px;
 }
 
@@ -781,21 +782,49 @@
   gap: 2px;
 }
 
-.cockpit-agent-main strong,
-.cockpit-agent-main span {
+.cockpit-agent-name-row,
+.cockpit-agent-main > span,
+.cockpit-agent-pid {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.cockpit-agent-main strong {
+.cockpit-agent-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cockpit-agent-name-row strong {
   font-size: 12.5px;
 }
 
-.cockpit-agent-main span,
+.cockpit-agent-name-row em {
+  color: var(--accent);
+  font-size: 9.5px;
+  font-style: normal;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.cockpit-agent-main > span,
+.cockpit-agent-runtime,
 .cockpit-agent-pid {
   font-size: 10.5px;
   color: var(--fg-muted);
+}
+
+.cockpit-agent-runtime {
+  color: var(--fg-dim);
+}
+
+.cockpit-agent-pid {
+  grid-column: 3;
+  justify-self: start;
+  max-width: 100%;
+  padding-left: 0;
 }
 
 .cockpit-empty {
