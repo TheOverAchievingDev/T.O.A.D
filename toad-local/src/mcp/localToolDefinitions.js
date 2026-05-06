@@ -260,6 +260,56 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
     },
   }),
   makeTool({
+    name: COMMANDS.IDE_GET_STATUS,
+    title: 'IDE Get Status',
+    description: 'Read-only. Returns git status for files in the selected project root or task worktree.',
+    required: [],
+    properties: {
+      source: IDE_SOURCE_SCHEMA,
+    },
+  }),
+  makeTool({
+    name: COMMANDS.IDE_GET_DIFF,
+    title: 'IDE Get Diff',
+    description: 'Read-only. Returns the unified git diff for a specific file (or all modified files if relativePath is omitted).',
+    required: [],
+    properties: {
+      source: IDE_SOURCE_SCHEMA,
+      relativePath: { type: 'string', minLength: 1 },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.IDE_SEARCH_FILES,
+    title: 'IDE Search Files',
+    description: 'Read-only. Searches for text across files in a project or task worktree. Uses case-insensitive regex matching natively through git grep.',
+    required: ['query'],
+    properties: {
+      source: IDE_SOURCE_SCHEMA,
+      query: { type: 'string', minLength: 1 },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.IDE_CHECKPOINT_TASK,
+    title: 'IDE Checkpoint Task',
+    description: 'Mutating. Creates a formal git commit on the task worktree branch for all current modifications. Restricted to lead and human roles.',
+    required: ['message'],
+    properties: {
+      source: IDE_SOURCE_SCHEMA,
+      message: { type: 'string', minLength: 1 },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.IDE_APPLY_PATCH,
+    title: 'IDE Apply Patch',
+    description: 'Mutating. Reverts or applies a specific hunk patch to the task worktree using git apply. Restricted to lead and human roles.',
+    required: ['patchContent'],
+    properties: {
+      source: IDE_SOURCE_SCHEMA,
+      patchContent: { type: 'string', minLength: 1 },
+      reverse: { type: 'boolean' },
+    },
+  }),
+  makeTool({
     name: COMMANDS.CROSS_TEAM_MESSAGES,
     title: 'Cross-Team Messages',
     description: 'List cross-team messages visible to the current team.',
@@ -309,6 +359,56 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
     properties: {
       runtimeId: { type: 'string', minLength: 1 },
       signal: { type: 'string', enum: ['SIGTERM', 'SIGINT', 'SIGKILL'] },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.EAS_PROJECT_INFO,
+    title: 'EAS Project Info',
+    description: 'Get EAS (Expo Application Services) project configuration and ID.',
+    required: [],
+    properties: {
+      cwd: { type: 'string', description: 'Directory containing app.json / eas.json. Defaults to project root.' },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.EAS_BUILD,
+    title: 'EAS Build',
+    description: 'Trigger a mobile app build on EAS. Returns a jobId immediately; build runs in background.',
+    required: ['platform'],
+    properties: {
+      platform: { type: 'string', enum: ['android', 'ios', 'all'], description: 'Target platform.' },
+      profile: { type: 'string', description: 'Build profile from eas.json (e.g. production, development). Defaults to production.' },
+      cwd: { type: 'string', description: 'Directory containing app.json / eas.json.' },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.EAS_UPDATE,
+    title: 'EAS Update',
+    description: 'Trigger an Over-The-Air (OTA) update on EAS. Returns a jobId immediately; update runs in background.',
+    required: ['branch', 'message'],
+    properties: {
+      branch: { type: 'string', description: 'EAS branch to publish to.' },
+      message: { type: 'string', description: 'Update message / release notes.' },
+      cwd: { type: 'string', description: 'Directory containing app.json / eas.json.' },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.PLUGIN_JOB_GET,
+    title: 'Get Plugin Job',
+    description: 'Get the current status and log tail for a background plugin job (e.g. an EAS build).',
+    required: ['jobId'],
+    properties: {
+      jobId: { type: 'string', minLength: 1 },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.PLUGIN_JOB_LIST,
+    title: 'List Plugin Jobs',
+    description: 'List recent background jobs for the team.',
+    required: [],
+    properties: {
+      state: { type: 'string', enum: ['pending', 'running', 'finished', 'error'] },
+      limit: { type: 'integer', minimum: 1, maximum: 500 },
     },
   }),
   makeTool({
@@ -456,6 +556,13 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
       riskLevel: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Risk classification.' },
       teamId: { type: 'string', description: 'Optional team ID; defaults to actor.teamId.' },
     },
+  }),
+  makeTool({
+    name: COMMANDS.DRIFT_RUN,
+    title: 'Run Drift Engine',
+    description: 'Read-only. Trigger a drift engine run for the current team. Returns the full finding list and per-task scores.',
+    required: [],
+    properties: {},
   }),
   makeTool({
     name: COMMANDS.FOUNDRY_SESSION_CREATE,

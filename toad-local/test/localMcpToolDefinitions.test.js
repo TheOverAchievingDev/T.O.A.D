@@ -21,6 +21,10 @@ test('listLocalMcpTools exposes MCP-shaped local command tools', () => {
     'cross_team_send',
     'diagnostics_run',
     'drift_correction_create',
+    'drift_run',
+    'eas_build',
+    'eas_project_info',
+    'eas_update',
     'foundry_artifact_export',
     'foundry_artifact_generate',
     'foundry_artifact_upsert',
@@ -44,10 +48,17 @@ test('listLocalMcpTools exposes MCP-shaped local command tools', () => {
     'github_pat_verify',
     'github_status',
     'health_status',
+    'ide_apply_patch',
+    'ide_checkpoint_task',
+    'ide_get_diff',
+    'ide_get_status',
     'ide_read_file',
+    'ide_search_files',
     'ide_tree_list',
     'ide_write_file',
     'message_send',
+    'plugin_job_get',
+    'plugin_job_list',
     'provider_auth_login',
     'provider_auth_logout',
     'provider_auth_status',
@@ -96,6 +107,8 @@ test('mutating MCP tools require idempotencyKey in their schemas', () => {
     'review_request',
     'review_decide',
     'ide_write_file',
+    'ide_checkpoint_task',
+    'ide_apply_patch',
   ]) {
     const tool = getLocalMcpTool(name);
     assert.ok(tool.inputSchema.required.includes('idempotencyKey'), name);
@@ -139,7 +152,7 @@ test('mutating MCP tools require idempotencyKey in their schemas', () => {
   }
 
   // Read-only tools
-  for (const name of ['task_list', 'agent_status', 'approval_list', 'runtime_events', 'cross_team_messages', 'tool_activity', 'health_status', 'team_list', 'review_list', 'stuck_runtime_list', 'foundry_session_list', 'foundry_session_get', 'ide_tree_list', 'ide_read_file']) {
+  for (const name of ['task_list', 'agent_status', 'approval_list', 'runtime_events', 'cross_team_messages', 'tool_activity', 'health_status', 'team_list', 'review_list', 'stuck_runtime_list', 'foundry_session_list', 'foundry_session_get', 'ide_tree_list', 'ide_read_file', 'ide_get_status', 'ide_get_diff']) {
     assert.ok(!getLocalMcpTool(name).inputSchema.required.includes('idempotencyKey'), name);
     assert.equal(getLocalMcpTool(name).annotations.readOnlyHint, true, `${name} should be readOnly`);
   }

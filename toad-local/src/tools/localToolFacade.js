@@ -50,12 +50,24 @@ import {
   railwayGetConnectionString as defaultRailwayGetConnectionString,
   railwayRunMigration as defaultRailwayRunMigration,
 } from '../plugins/railway/railwayTools.js';
+import {
+  easProjectInfo as defaultEasProjectInfo,
+  easBuild as defaultEasBuild,
+  easUpdate as defaultEasUpdate,
+} from '../plugins/eas/easTools.js';
 
 // §17: review-feedback severity scale, ordered low → high blocking weight.
 export const REVIEW_FEEDBACK_SEVERITIES = Object.freeze(['nit', 'minor', 'major', 'blocking']);
 import { computeDiff as defaultComputeDiff } from '../task/diffComputer.js';
 import { createDriftCorrection } from '../drift/driftCorrection.js';
 import { listIdeTree, readIdeFile, writeIdeFile } from '../ide/ideFileTools.js';
+import {
+  getIdeStatus,
+  getIdeDiff,
+  createIdeCheckpoint,
+  applyIdePatch,
+  searchIdeFiles,
+} from '../ide/ideGitTools.js';
 
 export class LocalToolFacade {
   // 90s TTL cache for the claude /usage pty probe. We don't store this
@@ -210,6 +222,16 @@ export class LocalToolFacade {
         return this.#ideReadFile(actor, args);
       case COMMANDS.IDE_WRITE_FILE:
         return this.#ideWriteFile(actor, args);
+      case COMMANDS.IDE_GET_STATUS:
+        return this.#ideGetStatus(actor, args);
+      case COMMANDS.IDE_GET_DIFF:
+        return this.#ideGetDiff(actor, args);
+      case COMMANDS.IDE_CHECKPOINT_TASK:
+        return this.#ideCheckpointTask(actor, args);
+      case COMMANDS.IDE_APPLY_PATCH:
+        return this.#ideApplyPatch(actor, args);
+      case COMMANDS.IDE_SEARCH_FILES:
+        return this.#ideSearchFiles(actor, args);
       case COMMANDS.RUNTIME_LIST:
         return this.#runtimeList(actor, args);
       case COMMANDS.USAGE_SUMMARY:
@@ -286,6 +308,8 @@ export class LocalToolFacade {
         return this.#providerAuthLogin(args);
       case COMMANDS.PROVIDER_AUTH_LOGOUT:
         return this.#providerAuthLogout(args);
+      case COMMANDS.DRIFT_RUN:
+        return this.#driftRun(actor);
       case COMMANDS.PLUGIN_LIST_AVAILABLE:
         return this.#pluginListAvailable(actor, args);
       case COMMANDS.PLUGIN_LOGIN:
@@ -302,6 +326,16 @@ export class LocalToolFacade {
         return this.#railwayGetConnectionString(actor, args);
       case COMMANDS.RAILWAY_RUN_MIGRATION:
         return this.#railwayRunMigration(actor, args);
+      case COMMANDS.EAS_PROJECT_INFO:
+        return this.#easProjectInfo(actor, args);
+      case COMMANDS.EAS_BUILD:
+        return this.#easBuild(actor, args);
+      case COMMANDS.EAS_UPDATE:
+        return this.#easUpdate(actor, args);
+      case COMMANDS.PLUGIN_JOB_GET:
+        return this.#pluginJobGet(actor, args);
+      case COMMANDS.PLUGIN_JOB_LIST:
+        return this.#pluginJobList(actor, args);
       case COMMANDS.AUDIT_LOG_QUERY:
         return this.#auditLogQuery(actor, args);
       case COMMANDS.FOUNDRY_SESSION_CREATE:
@@ -435,6 +469,56 @@ export class LocalToolFacade {
       relativePath: requireString(args.relativePath, 'args.relativePath'),
       content: args.content,
       expectedSha256: typeof args.expectedSha256 === 'string' ? args.expectedSha256 : undefined,
+    });
+  }
+
+  #ideGetStatus(actor, args) {
+    return getIdeStatus({
+      projectCwd: this.projectCwd,
+      taskBoard: this.taskBoard,
+      teamId: actor.teamId,
+      source: args.source,
+    });
+  }
+
+  #ideGetDiff(actor, args) {
+    return getIdeDiff({
+      projectCwd: this.projectCwd,
+      taskBoard: this.taskBoard,
+      teamId: actor.teamId,
+      source: args.source,
+      relativePath: args.relativePath,
+    });
+  }
+
+  #ideCheckpointTask(actor, args) {
+    return createIdeCheckpoint({
+      projectCwd: this.projectCwd,
+      taskBoard: this.taskBoard,
+      teamId: actor.teamId,
+      source: args.source,
+      message: args.message,
+    });
+  }
+
+  #ideApplyPatch(actor, args) {
+    return applyIdePatch({
+      projectCwd: this.projectCwd,
+      taskBoard: this.taskBoard,
+      teamId: actor.teamId,
+      source: args.source,
+      patchContent: args.patchContent,
+      reverse: args.reverse,
+    });
+  }
+
+  #ideSearchFiles(actor, args) {
+    return searchIdeFiles({
+      projectCwd: this.projectCwd,
+      taskBoard: this.taskBoard,
+      teamId: actor.teamId,
+      source: args.source,
+      query: args.query,
     });
   }
 
@@ -2289,6 +2373,74 @@ export class LocalToolFacade {
       resourceId: requireString(args?.resourceId, 'args.resourceId'),
       sql: requireString(args?.sql, 'args.sql'),
     });
+  }
+
+  // ---- EAS tools -----------------------------------------------------------
+
+  async #easProjectInfo(_actor, args) {
+    const impl = this.easToolImpls?.projectInfo || defaultEasProjectInfo;
+    return impl({
+      cwd: args?.cwd || this.projectCwd || process.cwd(),
+      runEasCli: this.easToolImpls?.runEasCli,
+    });
+  }
+
+  async #easBuild(actor, args) {
+    if (!this.pluginJobs) {
+      throw new Error('eas_build: pluginJobs not configured for this facade');
+    }
+    const impl = this.easToolImpls?.build || defaultEasBuild;
+    const teamId = (typeof args?.teamId === 'string' && args.teamId.length > 0)
+      ? args.teamId : actor.teamId;
+    return impl({
+      teamId,
+      platform: requireString(args?.platform, 'args.platform'),
+      profile: args?.profile || 'production',
+      cwd: args?.cwd || this.projectCwd || process.cwd(),
+      runEasCli: this.easToolImpls?.runEasCli,
+      pluginJobs: this.pluginJobs,
+    });
+  }
+
+  async #easUpdate(actor, args) {
+    if (!this.pluginJobs) {
+      throw new Error('eas_update: pluginJobs not configured for this facade');
+    }
+    const impl = this.easToolImpls?.update || defaultEasUpdate;
+    const teamId = (typeof args?.teamId === 'string' && args.teamId.length > 0)
+      ? args.teamId : actor.teamId;
+    return impl({
+      teamId,
+      branch: requireString(args?.branch, 'args.branch'),
+      message: requireString(args?.message, 'args.message'),
+      cwd: args?.cwd || this.projectCwd || process.cwd(),
+      runEasCli: this.easToolImpls?.runEasCli,
+      pluginJobs: this.pluginJobs,
+    });
+  }
+
+  // ---- Plugin Jobs ---------------------------------------------------------
+
+  #pluginJobGet(_actor, args) {
+    if (!this.pluginJobs) {
+      throw new Error('plugin_job_get: pluginJobs not configured for this facade');
+    }
+    const jobId = requireString(args?.jobId, 'args.jobId');
+    const job = this.pluginJobs.get({ jobId });
+    if (!job) throw new Error(`plugin job not found: ${jobId}`);
+    return job;
+  }
+
+  #pluginJobList(actor, args) {
+    if (!this.pluginJobs) {
+      throw new Error('plugin_job_list: pluginJobs not configured for this facade');
+    }
+    const teamId = (typeof args?.teamId === 'string' && args.teamId.length > 0)
+      ? args.teamId : actor.teamId;
+    const state = args?.state;
+    const limit = Number.isInteger(args?.limit) ? args.limit : 100;
+    const jobs = this.pluginJobs.list({ teamId, state, limit });
+    return { jobs };
   }
 
   // ---- Foundry -------------------------------------------------------------

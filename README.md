@@ -94,6 +94,34 @@ Live signed-in status and remaining plan quota for each subscription provider. A
 
 </td>
 </tr>
+<tr>
+<td width="50%" valign="top">
+
+### 📱 EAS Plugin (Slice 2)
+
+Trigger Expo Application Services (EAS) builds and Over-The-Air (OTA) updates directly from the orchestrator. Agents can check project info and trigger remote builds while ensuring cost and platform constraints are respected.
+
+</td>
+<td width="50%" valign="top">
+
+### ⚙️ Background Job Poller
+
+The first implementation of the `plugin_jobs` infrastructure. Long-running builds and updates run in the background with persistent log streaming to SQLite. Humans can monitor progress and log tails in real-time through the Plugins dashboard.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### 🎨 Drift & Agent Overlays
+
+Visual intelligence inside the code editor. Real-time drift findings are annotated with squigglies and gutter markers, including severity and context on hover. A non-blocking banner alerts humans when an agent is actively mutating the worktree they are viewing.
+
+</td>
+<td width="50%" valign="top">
+
+</td>
+</tr>
 </table>
 
 ---

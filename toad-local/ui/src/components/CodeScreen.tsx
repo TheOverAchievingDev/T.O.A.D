@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState, useRef, type CSSProperties } from 'react';
 import * as monaco from 'monaco-editor';
 import Editor, { loader } from '@monaco-editor/react';
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
@@ -7,7 +7,7 @@ import cssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker';
 import htmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker';
 import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker';
 import { callTool, type Actor } from '@/api/client';
-import type { UiTask } from '@/types';
+import type { UiTask, Runtime } from '@/types';
 import type { ProjectEntry } from '@/hooks/useProjects';
 import { Icon } from './Icon';
 import {
@@ -16,6 +16,8 @@ import {
   filterCodeTree,
   flattenVisibleCodeTree,
 } from './codeTreeNavigator';
+import { MarkdownPreview } from './MarkdownPreview';
+import type { DriftRunResult } from '@/hooks/useDrift';
 
 loader.config({ monaco });
 
@@ -48,6 +50,7 @@ interface IdeTreeEntry {
   name: string;
   kind: 'file' | 'directory';
   sizeBytes?: number;
+  gitStatus?: string;
 }
 
 interface IdeTreeResult {
@@ -55,6 +58,16 @@ interface IdeTreeResult {
   rootLabel: string;
   entries: IdeTreeEntry[];
   truncated: boolean;
+}
+
+interface IdeStatusEntry {
+  relativePath: string;
+  status: string;
+}
+
+interface IdeStatusResult {
+  source: IdeSource;
+  entries: IdeStatusEntry[];
 }
 
 interface IdeFileResult {
@@ -83,9 +96,23 @@ interface CodeScreenProps {
   activeProject?: ProjectEntry | null;
   onSelectProject?: (projectId: string) => void;
   onSelectFolder?: () => void;
+  driftData?: DriftRunResult | null;
+  runtimes?: Runtime[];
 }
 
 const DEFAULT_ACTOR: Actor = { teamId: 'system', agentId: 'ui-client', agentName: 'ui', role: 'human' };
+
+export type OpenTab = {
+  path: string;
+  file: IdeFileResult | null;
+  fileError: string | null;
+  saveError: string | null;
+  draftContent: string;
+  editorMode: 'code' | 'diff' | 'preview' | 'split';
+  diffContent: string;
+  loading: boolean;
+  saving: boolean;
+};
 
 export function CodeScreen({
   teamId,
@@ -95,25 +122,41 @@ export function CodeScreen({
   activeProject = null,
   onSelectProject,
   onSelectFolder,
+  driftData,
+  runtimes = [],
 }: CodeScreenProps) {
   const [sourceKey, setSourceKey] = useState('project');
   const [tree, setTree] = useState<IdeTreeResult | null>(null);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [file, setFile] = useState<IdeFileResult | null>(null);
   const [treeError, setTreeError] = useState<string | null>(null);
-  const [fileError, setFileError] = useState<string | null>(null);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [draftContent, setDraftContent] = useState('');
   const [treeQuery, setTreeQuery] = useState('');
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
   const [loadingTree, setLoadingTree] = useState(false);
-  const [loadingFile, setLoadingFile] = useState(false);
-  const [savingFile, setSavingFile] = useState(false);
+
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const decorationsCollectionRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
+
+  const [tabs, setTabs] = useState<OpenTab[]>([]);
+  const [activeTabPath, setActiveTabPath] = useState<string | null>(null);
+
+  const [leftPaneMode, setLeftPaneMode] = useState<'tree' | 'search'>('tree');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<{relativePath: string, lineNumber: number, content: string}[] | null>(null);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   const worktreeTasks = useMemo(
     () => tasks.filter((task) => task.worktree?.status === 'created' && task.worktree.path),
     [tasks],
   );
+
+  const activeAgentsInWorktree = useMemo(() => {
+    if (!sourceKey.startsWith('task:')) return [];
+    const taskId = sourceKey.slice(5);
+    const task = tasks.find(t => t.id === taskId);
+    if (!task || task.status === 'done' || task.status === 'rejected') return [];
+    const assignee = task.assignee || 'lead';
+    return runtimes.filter(r => (r.agent === assignee || r.agent === 'lead') && (r.status === 'live' || r.status === 'launching'));
+  }, [sourceKey, tasks, runtimes]);
 
   const source = useMemo<IdeSource>(() => {
     if (sourceKey.startsWith('task:')) {
@@ -135,7 +178,10 @@ export function CodeScreen({
     role: actor.role,
   }), [actor.agentId, actor.agentName, actor.role, effectiveTeamId]);
 
-  const isDirty = file !== null && draftContent !== file.content;
+  const activeTab = tabs.find((t) => t.path === activeTabPath);
+  const isDirty = activeTab ? activeTab.draftContent !== activeTab.file?.content : false;
+  const isAnyDirty = tabs.some((t) => t.file !== null && t.draftContent !== t.file.content);
+
   const codeTree = useMemo(() => buildCodeTree(tree?.entries ?? []), [tree?.entries]);
   const filteredTree = useMemo(() => filterCodeTree(codeTree, treeQuery), [codeTree, treeQuery]);
   const effectiveExpandedPaths = useMemo(
@@ -149,56 +195,121 @@ export function CodeScreen({
   const visibleFiles = visibleTreeNodes.filter((node) => node.kind === 'file');
 
   function confirmDiscardDirty(): boolean {
-    return !isDirty || window.confirm('Discard unsaved changes?');
+    return !isAnyDirty || window.confirm('You have unsaved changes in open tabs. Discard them?');
+  }
+
+  function confirmDiscardTabDirty(tab: OpenTab): boolean {
+    const dirty = tab.file !== null && tab.draftContent !== tab.file.content;
+    return !dirty || window.confirm(`Discard unsaved changes in ${tab.path}?`);
+  }
+
+  async function performSearch() {
+    if (!searchQuery.trim() || !effectiveTeamId) return;
+    setIsSearching(true);
+    setSearchError(null);
+    try {
+      const res = await callTool<{ matches: { relativePath: string, lineNumber: number, content: string }[] }>({
+        actor: toolActor,
+        method: 'ide_search_files',
+        args: { source, query: searchQuery },
+      });
+      setSearchResults(res.matches || []);
+    } catch (err) {
+      setSearchError(errorMessage(err));
+      setSearchResults(null);
+    } finally {
+      setIsSearching(false);
+    }
   }
 
   async function openFile(relativePath: string) {
     if (!effectiveTeamId) return;
-    if (relativePath !== selectedPath && !confirmDiscardDirty()) return;
-    setSelectedPath(relativePath);
-    setLoadingFile(true);
-    setFileError(null);
-    setSaveError(null);
+    
+    // Switch to tab if already open
+    if (tabs.some(t => t.path === relativePath)) {
+      setActiveTabPath(relativePath);
+      return;
+    }
+
+    const newTab: OpenTab = {
+      path: relativePath,
+      file: null,
+      fileError: null,
+      saveError: null,
+      draftContent: '',
+      editorMode: 'code',
+      diffContent: '',
+      loading: true,
+      saving: false,
+    };
+    
+    setTabs(prev => [...prev, newTab]);
+    setActiveTabPath(relativePath);
+
     try {
       const result = await callTool<IdeFileResult>({
         actor: toolActor,
         method: 'ide_read_file',
         args: { source, relativePath },
       });
-      setFile(result);
-      setDraftContent(result.content);
+      setTabs(prev => prev.map(t => t.path === relativePath ? { ...t, file: result, draftContent: result.content, loading: false } : t));
     } catch (err) {
-      setFile(null);
-      setDraftContent('');
-      setFileError(errorMessage(err));
-    } finally {
-      setLoadingFile(false);
+      setTabs(prev => prev.map(t => t.path === relativePath ? { ...t, fileError: errorMessage(err), loading: false } : t));
     }
   }
 
-  async function refreshTree(pathToReopen = selectedPath, skipDirtyCheck = false) {
+  function closeTab(path: string, event?: React.MouseEvent) {
+    if (event) event.stopPropagation();
+    const tab = tabs.find(t => t.path === path);
+    if (!tab) return;
+    if (!confirmDiscardTabDirty(tab)) return;
+    
+    setTabs(prev => {
+      const nextTabs = prev.filter(t => t.path !== path);
+      if (activeTabPath === path) {
+        if (nextTabs.length > 0) {
+          setActiveTabPath(nextTabs[nextTabs.length - 1].path);
+        } else {
+          setActiveTabPath(null);
+        }
+      }
+      return nextTabs;
+    });
+  }
+
+  async function refreshTree(pathToReopen = activeTabPath, skipDirtyCheck = false) {
     if (!effectiveTeamId) return;
-    if (!skipDirtyCheck && isDirty && !confirmDiscardDirty()) return;
+    if (!skipDirtyCheck && isAnyDirty && !confirmDiscardDirty()) return;
     setLoadingTree(true);
     setTreeError(null);
     try {
-      const result = await callTool<IdeTreeResult>({
-        actor: toolActor,
-        method: 'ide_tree_list',
-        args: { source },
-      });
+      const [result, statusResult] = await Promise.all([
+        callTool<IdeTreeResult>({
+          actor: toolActor,
+          method: 'ide_tree_list',
+          args: { source },
+        }),
+        callTool<IdeStatusResult>({
+          actor: toolActor,
+          method: 'ide_get_status',
+          args: { source },
+        }).catch(() => null),
+      ]);
+
+      if (statusResult) {
+        const statusMap = new Map(statusResult.entries.map((e) => [e.relativePath, e.status.trim()]));
+        for (const entry of result.entries) {
+          const st = statusMap.get(entry.path);
+          if (st) {
+            entry.gitStatus = st;
+          }
+        }
+      }
+
       setTree(result);
       setExpandedPaths((current) => mergeExpandedPaths(current, getInitialExpandedPaths(result.entries, pathToReopen)));
 
-      if (pathToReopen && result.entries.some((entry) => entry.path === pathToReopen && entry.kind === 'file')) {
-        await openFile(pathToReopen);
-      } else {
-        setSelectedPath(null);
-        setFile(null);
-        setDraftContent('');
-        setFileError(null);
-        setSaveError(null);
-      }
+      // Optionally we could close tabs that no longer exist, but for now we just keep them open until user closes or refresh fails to load them.
     } catch (err) {
       setTree(null);
       setTreeError(errorMessage(err));
@@ -208,24 +319,25 @@ export function CodeScreen({
   }
 
   async function saveFile() {
-    if (!effectiveTeamId || !file || !isDirty) return;
-    setSavingFile(true);
-    setSaveError(null);
+    if (!effectiveTeamId || !activeTab || !activeTab.file || !isDirty) return;
+    const pathToSave = activeTabPath;
+    
+    setTabs(prev => prev.map(t => t.path === pathToSave ? { ...t, saving: true, saveError: null } : t));
+    
     try {
       const result = await callTool<IdeFileResult>({
         actor: toolActor,
         method: 'ide_write_file',
-        idempotencyKey: createIdempotencyKey(file.relativePath),
+        idempotencyKey: createIdempotencyKey(activeTab.file.relativePath),
         args: {
-          source: file.source,
-          relativePath: file.relativePath,
-          content: draftContent,
-          expectedSha256: file.sha256,
+          source: activeTab.file.source,
+          relativePath: activeTab.file.relativePath,
+          content: activeTab.draftContent,
+          expectedSha256: activeTab.file.sha256,
         },
       });
-      setFile(result);
-      setDraftContent(result.content);
-      setSelectedPath(result.relativePath);
+      setTabs(prev => prev.map(t => t.path === pathToSave ? { ...t, file: result, draftContent: result.content, saving: false } : t));
+      
       const nextTree = await callTool<IdeTreeResult>({
         actor: toolActor,
         method: 'ide_tree_list',
@@ -234,39 +346,165 @@ export function CodeScreen({
       setTree(nextTree);
       setTreeError(null);
     } catch (err) {
-      setSaveError(errorMessage(err));
-    } finally {
-      setSavingFile(false);
+      setTabs(prev => prev.map(t => t.path === pathToSave ? { ...t, saveError: errorMessage(err), saving: false } : t));
     }
   }
 
   function revertFile() {
-    if (!file) return;
-    setDraftContent(file.content);
-    setSaveError(null);
+    if (!activeTab || !activeTab.file) return;
+    setTabs(prev => prev.map(t => t.path === activeTabPath ? { ...t, draftContent: t.file!.content, saveError: null } : t));
   }
 
   useEffect(() => {
-    setSelectedPath(null);
-    setFile(null);
-    setDraftContent('');
+    setActiveTabPath(null);
+    setTabs([]);
     setTreeQuery('');
     setExpandedPaths(new Set());
-    setFileError(null);
-    setSaveError(null);
+    setTreeError(null);
+    setSearchResults(null);
+    setSearchQuery('');
     void refreshTree(null, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveTeamId, sourceKey]);
 
   useEffect(() => {
     function handleBeforeUnload(event: BeforeUnloadEvent) {
-      if (!isDirty) return;
+      if (!isAnyDirty) return;
       event.preventDefault();
       event.returnValue = '';
     }
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [isDirty]);
+  }, [isAnyDirty]);
+
+  useEffect(() => {
+    if (!editorRef.current || !decorationsCollectionRef.current) return;
+    if (!activeTabPath || !driftData) {
+      decorationsCollectionRef.current.clear();
+      return;
+    }
+
+    const fileFindings = driftData.findings.filter(f => 
+      f.evidence.some(ev => ev === activeTabPath || ev.startsWith(activeTabPath + ':'))
+    );
+
+    const decorations: monaco.editor.IModelDeltaDecoration[] = [];
+
+    for (const finding of fileFindings) {
+      for (const ev of finding.evidence) {
+        if (ev === activeTabPath || ev.startsWith(activeTabPath + ':')) {
+          const match = ev.match(/:(\d+)/);
+          const lineNum = match ? parseInt(match[1], 10) : 1;
+          
+          decorations.push({
+            range: new monaco.Range(lineNum, 1, lineNum, 1),
+            options: {
+              isWholeLine: true,
+              className: 'drift-squiggly',
+              glyphMarginClassName: 'drift-glyph',
+              glyphMarginHoverMessage: { value: `**Drift Finding [${finding.severity.toUpperCase()}]: ${finding.title}**\n\n${finding.actual}` }
+            }
+          });
+        }
+      }
+    }
+
+    decorationsCollectionRef.current.set(decorations);
+  }, [activeTabPath, driftData, activeTab?.draftContent]);
+
+  async function loadDiff() {
+    if (!effectiveTeamId || !activeTabPath) return;
+    try {
+      const result = await callTool<{ diff: string }>({
+        actor: toolActor,
+        method: 'ide_get_diff',
+        args: { source, relativePath: activeTabPath },
+      });
+      setTabs(prev => prev.map(t => t.path === activeTabPath ? { ...t, diffContent: result.diff || 'No changes.', editorMode: 'diff' } : t));
+    } catch (err) {
+      setTabs(prev => prev.map(t => t.path === activeTabPath ? { ...t, fileError: errorMessage(err) } : t));
+    }
+  }
+
+  async function createCheckpoint() {
+    const message = window.prompt('Checkpoint message:');
+    if (!message) return;
+    try {
+      await callTool({
+        actor: toolActor,
+        method: 'ide_checkpoint_task',
+        args: { source, message },
+      });
+      void refreshTree(activeTabPath, true);
+    } catch (err) {
+      window.alert(errorMessage(err));
+    }
+  }
+
+  function handleEditorMount(editor: monaco.editor.IStandaloneCodeEditor) {
+    editorRef.current = editor;
+    decorationsCollectionRef.current = editor.createDecorationsCollection([]);
+    editor.addAction({
+      id: 'ide-revert-hunk',
+      label: 'Revert this Hunk',
+      contextMenuGroupId: '1_modification',
+      run: async (ed) => {
+        if (!activeTab || activeTab.editorMode !== 'diff') {
+          window.alert('Hunk reverts are only available in diff view.');
+          return;
+        }
+        const position = ed.getPosition();
+        if (!position) return;
+        const model = ed.getModel();
+        if (!model) return;
+        
+        const lineCount = model.getLineCount();
+        let startLine = position.lineNumber;
+        while (startLine > 0 && !model.getLineContent(startLine).startsWith('@@ ')) {
+          startLine--;
+        }
+        if (startLine === 0) {
+          window.alert('No hunk found at cursor.');
+          return;
+        }
+        
+        let endLine = position.lineNumber + 1;
+        while (endLine <= lineCount && !model.getLineContent(endLine).startsWith('@@ ')) {
+          endLine++;
+        }
+        
+        let header = '';
+        for (let i = 1; i < startLine; i++) {
+          const content = model.getLineContent(i);
+          header += content + '\n';
+          if (content.startsWith('+++')) break;
+        }
+        
+        let hunk = '';
+        for (let i = startLine; i < endLine; i++) {
+          hunk += model.getLineContent(i) + '\n';
+        }
+        
+        const patchContent = header + hunk;
+        if (window.confirm('Revert this hunk?')) {
+          try {
+             await callTool({
+               actor: toolActor,
+               method: 'ide_apply_patch',
+               args: { source, patchContent, reverse: true }
+             });
+             void refreshTree(activeTabPath, true);
+             // Re-load the diff and the file
+             const newFile = await callTool<IdeFileResult>({ actor: toolActor, method: 'ide_read_file', args: { source, relativePath: activeTabPath }});
+             const newDiff = await callTool<{diff: string}>({ actor: toolActor, method: 'ide_get_diff', args: { source, relativePath: activeTabPath }});
+             setTabs(prev => prev.map(t => t.path === activeTabPath ? { ...t, file: newFile, draftContent: newFile.content, diffContent: newDiff.diff || 'No changes.' } : t));
+          } catch(err) {
+             window.alert(errorMessage(err));
+          }
+        }
+      }
+    });
+  }
 
   if (!effectiveTeamId) {
     return (
@@ -333,6 +571,16 @@ export function CodeScreen({
               </option>
             ))}
           </select>
+          {source.kind === 'task_worktree' && (
+            <button
+              className="btn btn-sm"
+              type="button"
+              onClick={() => void createCheckpoint()}
+            >
+              <Icon name="check" size={12} />
+              Checkpoint
+            </button>
+          )}
           <button
             className="btn btn-sm"
             type="button"
@@ -348,121 +596,277 @@ export function CodeScreen({
       <div className="code-body">
         <aside className="code-tree" aria-label="Project files">
           <div className="code-tree-toolbar">
-            <div className="code-tree-search">
-              <Icon name="search" size={12} />
-              <input
-                value={treeQuery}
-                onChange={(event) => setTreeQuery(event.target.value)}
-                placeholder="Search files..."
-                aria-label="Search files"
-              />
-              {treeQuery && (
-                <button
-                  type="button"
-                  className="code-tree-clear"
-                  onClick={() => setTreeQuery('')}
-                  aria-label="Clear file search"
-                >
-                  x
+            <div className="code-pane-tabs" style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+              <button 
+                type="button" 
+                className={`btn btn-sm ${leftPaneMode === 'tree' ? 'btn-primary' : ''}`}
+                onClick={() => setLeftPaneMode('tree')}
+              >
+                Explorer
+              </button>
+              <button 
+                type="button" 
+                className={`btn btn-sm ${leftPaneMode === 'search' ? 'btn-primary' : ''}`}
+                onClick={() => setLeftPaneMode('search')}
+              >
+                Search
+              </button>
+            </div>
+            {leftPaneMode === 'tree' && (
+              <div className="code-tree-search">
+                <Icon name="search" size={12} />
+                <input
+                  value={treeQuery}
+                  onChange={(event) => setTreeQuery(event.target.value)}
+                  placeholder="Filter files..."
+                  aria-label="Filter files"
+                />
+                {treeQuery && (
+                  <button
+                    type="button"
+                    className="code-tree-clear"
+                    onClick={() => setTreeQuery('')}
+                    aria-label="Clear file filter"
+                  >
+                    x
+                  </button>
+                )}
+              </div>
+            )}
+            {leftPaneMode === 'tree' && (
+              <div className="code-tree-tools" style={{ marginTop: '4px' }}>
+                <button type="button" onClick={() => setExpandedPaths(new Set(collectDirectoryPaths(codeTree)))}>
+                  Expand all
                 </button>
+                <button type="button" onClick={() => setExpandedPaths(new Set())}>
+                  Collapse all
+                </button>
+              </div>
+            )}
+          </div>
+          
+          {leftPaneMode === 'tree' ? (
+            <>
+              {loadingTree && <div className="code-muted">Loading files...</div>}
+              {treeError && <div className="code-error">{treeError}</div>}
+              {tree?.truncated && <div className="code-muted">Tree truncated at the backend entry cap.</div>}
+              {tree && files.length === 0 && (
+                <div className="code-muted">No readable files found.</div>
+              )}
+              {tree && treeQuery && visibleFiles.length === 0 && (
+                <div className="code-muted">No matches found.</div>
+              )}
+              <div className="code-tree-list">
+                {visibleTreeNodes.map((node) => (
+                  <button
+                    key={node.path}
+                    type="button"
+                    className={`code-tree-row ${node.kind} ${activeTabPath === node.path ? 'active' : ''}`}
+                    onClick={() => {
+                      if (node.kind === 'directory') {
+                        setExpandedPaths((current) => toggleExpandedPath(current, node.path));
+                        return;
+                      }
+                      void openFile(node.path);
+                    }}
+                    title={node.path}
+                    style={{ '--depth': node.depth } as CSSProperties}
+                  >
+                    <span className="code-tree-disclosure" aria-hidden="true">
+                      {node.kind === 'directory' ? (effectiveExpandedPaths.has(node.path) ? 'v' : '>') : ''}
+                    </span>
+                    <span className="code-tree-icon">
+                      <Icon name={node.kind === 'directory' ? 'folder' : 'file'} size={13} />
+                    </span>
+                    <span className="code-tree-path">{node.name}</span>
+                    {node.gitStatus && (
+                      <span className={`code-tree-git-badge status-${node.gitStatus.replace(/\?/g, 'u').toLowerCase()}`}>
+                        {node.gitStatus}
+                      </span>
+                    )}
+                    {node.kind === 'file' && node.sizeBytes !== undefined && (
+                      <span className="code-tree-size">{formatCompactBytes(node.sizeBytes)}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="code-search-pane" style={{ padding: '0 8px' }}>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <input
+                  className="field-input"
+                  style={{ flex: 1 }}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') void performSearch(); }}
+                  placeholder="Search contents..."
+                />
+                <button className="btn btn-sm" type="button" onClick={() => void performSearch()} disabled={isSearching}>
+                  <Icon name="search" size={12} />
+                </button>
+              </div>
+              {searchError && <div className="code-error" style={{ marginTop: '8px' }}>{searchError}</div>}
+              {isSearching && <div className="code-muted" style={{ marginTop: '8px' }}>Searching...</div>}
+              {searchResults && searchResults.length === 0 && !isSearching && (
+                <div className="code-muted" style={{ marginTop: '8px' }}>No matches found.</div>
+              )}
+              {searchResults && searchResults.length > 0 && (
+                <div className="code-search-results" style={{ marginTop: '12px', overflowY: 'auto' }}>
+                  {searchResults.map((match, i) => (
+                    <div 
+                      key={i} 
+                      className="code-search-match" 
+                      style={{ padding: '4px', cursor: 'pointer', borderBottom: '1px solid var(--border)', fontSize: '11px' }}
+                      onClick={() => void openFile(match.relativePath)}
+                    >
+                      <div style={{ fontWeight: 'bold', color: 'var(--primary)' }}>{match.relativePath}:{match.lineNumber}</div>
+                      <div className="mono" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{match.content}</div>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
-            <div className="code-tree-tools">
-              <button type="button" onClick={() => setExpandedPaths(new Set(collectDirectoryPaths(codeTree)))}>
-                Expand all
-              </button>
-              <button type="button" onClick={() => setExpandedPaths(new Set())}>
-                Collapse all
-              </button>
-            </div>
-          </div>
-          {loadingTree && <div className="code-muted">Loading files...</div>}
-          {treeError && <div className="code-error">{treeError}</div>}
-          {tree?.truncated && <div className="code-muted">Tree truncated at the backend entry cap.</div>}
-          {tree && files.length === 0 && (
-            <div className="code-muted">No readable files found.</div>
           )}
-          {tree && treeQuery && visibleFiles.length === 0 && (
-            <div className="code-muted">No matches found.</div>
-          )}
-          <div className="code-tree-list">
-            {visibleTreeNodes.map((node) => (
-              <button
-                key={node.path}
-                type="button"
-                className={`code-tree-row ${node.kind} ${selectedPath === node.path ? 'active' : ''}`}
-                onClick={() => {
-                  if (node.kind === 'directory') {
-                    setExpandedPaths((current) => toggleExpandedPath(current, node.path));
-                    return;
-                  }
-                  void openFile(node.path);
-                }}
-                title={node.path}
-                style={{ '--depth': node.depth } as CSSProperties}
-              >
-                <span className="code-tree-disclosure" aria-hidden="true">
-                  {node.kind === 'directory' ? (effectiveExpandedPaths.has(node.path) ? 'v' : '>') : ''}
-                </span>
-                <span className="code-tree-icon">
-                  <Icon name={node.kind === 'directory' ? 'folder' : 'file'} size={13} />
-                </span>
-                <span className="code-tree-path">{node.name}</span>
-                {node.kind === 'file' && node.sizeBytes !== undefined && (
-                  <span className="code-tree-size">{formatCompactBytes(node.sizeBytes)}</span>
-                )}
-              </button>
-            ))}
-          </div>
         </aside>
 
-        <section className="code-editor-pane" aria-label="Selected file">
-          <div className="code-filebar">
-            <div className="code-file-meta">
-              <span className="mono">{selectedPath ?? 'No file selected'}</span>
-              {isDirty && <span className="code-dirty-pill">Unsaved</span>}
+        <section className="code-editor-pane" aria-label="Selected file" style={{ display: 'flex', flexDirection: 'column', position: 'relative' }}>
+          {activeAgentsInWorktree.length > 0 && (
+            <div className="code-agent-banner">
+              <Icon name="info" size={14} />
+              <span>
+                <strong>{activeAgentsInWorktree.length} agent{activeAgentsInWorktree.length > 1 ? 's' : ''}</strong> {activeAgentsInWorktree.length > 1 ? 'are' : 'is'} currently active in this worktree. Files may change.
+              </span>
             </div>
-            <div className="code-file-actions">
-              {file && <span className="dim">{formatBytes(file.sizeBytes)}</span>}
-              <button
-                className="btn btn-sm"
-                type="button"
-                onClick={revertFile}
-                disabled={!isDirty || savingFile}
-              >
-                Revert
-              </button>
-              <button
-                className="btn btn-sm btn-primary"
-                type="button"
-                onClick={() => void saveFile()}
-                disabled={!isDirty || savingFile}
-              >
-                <Icon name="check" size={12} />
-                {savingFile ? 'Saving' : 'Save'}
-              </button>
-            </div>
-          </div>
-          {loadingFile && <div className="code-editor-state">Loading file...</div>}
-          {fileError && <div className="code-editor-state error">{fileError}</div>}
-          {saveError && <div className="code-save-error">{saveError}</div>}
-          {!loadingFile && !fileError && !file && (
-            <div className="code-editor-state">Select a file to edit it.</div>
           )}
-          {file && (
-            <Editor
-              height="100%"
-              value={draftContent}
-              language={file.languageHint ?? languageFromPath(file.relativePath)}
-              theme="vs-dark"
-              onChange={(value) => setDraftContent(value ?? '')}
-              options={{
-                minimap: { enabled: false },
-                automaticLayout: true,
-                scrollBeyondLastLine: false,
-                renderWhitespace: 'selection',
-              }}
-            />
+          {tabs.length > 0 && (
+            <div className="code-tabs" style={{ display: 'flex', overflowX: 'auto', borderBottom: '1px solid var(--border)' }}>
+              {tabs.map((tab) => {
+                const isTabDirty = tab.file !== null && tab.draftContent !== tab.file.content;
+                return (
+                  <div
+                    key={tab.path}
+                    className={`code-tab ${activeTabPath === tab.path ? 'active' : ''}`}
+                    style={{
+                      padding: '8px 12px',
+                      cursor: 'pointer',
+                      borderRight: '1px solid var(--border)',
+                      backgroundColor: activeTabPath === tab.path ? 'var(--bg)' : 'var(--bg-muted)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}
+                    onClick={() => setActiveTabPath(tab.path)}
+                  >
+                    <span className="mono" style={{ fontSize: '12px' }}>{tab.path.split('/').pop()}</span>
+                    {isTabDirty && <span className="code-dirty-dot" style={{ color: 'var(--primary)', fontWeight: 'bold' }}>*</span>}
+                    <button 
+                      type="button" 
+                      onClick={(e) => closeTab(tab.path, e)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
+                    >
+                      x
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          
+          {activeTab ? (
+            <>
+              <div className="code-filebar">
+                <div className="code-file-meta">
+                  <span className="mono">{activeTab.path}</span>
+                  {(activeTab.file !== null && activeTab.draftContent !== activeTab.file.content) && <span className="code-dirty-pill">Unsaved</span>}
+                </div>
+                <div className="code-file-actions">
+                  {activeTab.file && <span className="dim">{formatBytes(activeTab.file.sizeBytes)}</span>}
+                  {(activeTab.file?.languageHint === 'markdown' || activeTab.path.endsWith('.md')) && (
+                    <div className="code-mode-toggles" style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: '4px', overflow: 'hidden' }}>
+                      <button className={`btn btn-sm ${activeTab.editorMode === 'code' ? 'btn-primary' : ''}`} style={{ border: 'none', borderRadius: 0 }} onClick={() => setTabs(prev => prev.map(t => t.path === activeTabPath ? { ...t, editorMode: 'code' } : t))}>Code</button>
+                      <button className={`btn btn-sm ${activeTab.editorMode === 'preview' ? 'btn-primary' : ''}`} style={{ border: 'none', borderRadius: 0 }} onClick={() => setTabs(prev => prev.map(t => t.path === activeTabPath ? { ...t, editorMode: 'preview' } : t))}>Preview</button>
+                      <button className={`btn btn-sm ${activeTab.editorMode === 'split' ? 'btn-primary' : ''}`} style={{ border: 'none', borderRadius: 0 }} onClick={() => setTabs(prev => prev.map(t => t.path === activeTabPath ? { ...t, editorMode: 'split' } : t))}>Split</button>
+                    </div>
+                  )}
+                  <button
+                    className="btn btn-sm"
+                    type="button"
+                    onClick={() => {
+                      if (activeTab.editorMode === 'diff') {
+                        setTabs(prev => prev.map(t => t.path === activeTabPath ? { ...t, editorMode: 'code' } : t));
+                      } else {
+                        void loadDiff();
+                      }
+                    }}
+                    disabled={!activeTab.file}
+                  >
+                    {activeTab.editorMode === 'diff' ? 'Edit Code' : 'View Diff'}
+                  </button>
+                  <button
+                    className="btn btn-sm"
+                    type="button"
+                    onClick={revertFile}
+                    disabled={!(activeTab.file !== null && activeTab.draftContent !== activeTab.file.content) || activeTab.saving || activeTab.editorMode === 'diff'}
+                  >
+                    Revert
+                  </button>
+                  <button
+                    className="btn btn-sm btn-primary"
+                    type="button"
+                    onClick={() => void saveFile()}
+                    disabled={!(activeTab.file !== null && activeTab.draftContent !== activeTab.file.content) || activeTab.saving || activeTab.editorMode === 'diff'}
+                  >
+                    <Icon name="check" size={12} />
+                    {activeTab.saving ? 'Saving' : 'Save'}
+                  </button>
+                </div>
+              </div>
+              
+              <div style={{ flex: 1, minHeight: 0 }}>
+                {activeTab.loading && <div className="code-editor-state">Loading file...</div>}
+                {activeTab.fileError && <div className="code-editor-state error">{activeTab.fileError}</div>}
+                {activeTab.saveError && <div className="code-save-error">{activeTab.saveError}</div>}
+                {!activeTab.loading && !activeTab.fileError && !activeTab.file && (
+                  <div className="code-editor-state">Select a file to edit it.</div>
+                )}
+                {activeTab.file && (
+                  <div style={{ display: 'flex', width: '100%', height: '100%' }}>
+                    {activeTab.editorMode !== 'preview' && (
+                      <div style={{ flex: 1, minWidth: 0, height: '100%' }}>
+                        <Editor
+                          height="100%"
+                          value={activeTab.editorMode === 'diff' ? activeTab.diffContent : activeTab.draftContent}
+                          language={activeTab.editorMode === 'diff' ? 'diff' : (activeTab.file.languageHint ?? languageFromPath(activeTab.file.relativePath))}
+                          theme="vs-dark"
+                          onChange={(value) => {
+                            if (activeTab.editorMode === 'code' || activeTab.editorMode === 'split') {
+                              setTabs(prev => prev.map(t => t.path === activeTabPath ? { ...t, draftContent: value ?? '' } : t));
+                            }
+                          }}
+                          onMount={handleEditorMount}
+                          options={{
+                            minimap: { enabled: false },
+                            automaticLayout: true,
+                            scrollBeyondLastLine: false,
+                            renderWhitespace: 'selection',
+                            readOnly: activeTab.editorMode === 'diff',
+                            glyphMargin: true,
+                          }}
+                        />
+                      </div>
+                    )}
+                    {(activeTab.editorMode === 'preview' || activeTab.editorMode === 'split') && (
+                      <div style={{ flex: 1, minWidth: 0, height: '100%', borderLeft: activeTab.editorMode === 'split' ? '1px solid var(--border)' : 'none' }}>
+                        <MarkdownPreview content={activeTab.draftContent} />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="code-editor-state">Select a file to open a tab.</div>
           )}
         </section>
       </div>

@@ -439,6 +439,33 @@
   line-height: 1.55;
 }
 
+.code-tree-git-badge {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 9px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: var(--bg);
+}
+
+.code-tree-git-badge.status-m {
+  background: #e3b341;
+}
+
+.code-tree-git-badge.status-a {
+  background: #58a65c;
+}
+
+.code-tree-git-badge.status-d {
+  background: #e06c75;
+}
+
+.code-tree-git-badge.status-u {
+  background: #61afef;
+}
+
 .foundry-exported {
   flex: 0 0 auto;
   padding: 10px 12px;
@@ -769,4 +796,45 @@
   .code-body {
     grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
   }
+}
+
+/* Drift Annotations */
+.drift-squiggly {
+  border-bottom: 2px dashed var(--err);
+  background: color-mix(in oklab, var(--err) 10%, transparent);
+}
+
+.drift-glyph {
+  background: var(--err);
+  border-radius: 50%;
+  width: 10px !important;
+  height: 10px !important;
+  margin-left: 5px;
+  margin-top: 4px;
+}
+
+/* Agent Activity Banner */
+.code-agent-banner {
+  position: absolute;
+  top: 48px; /* Positioned below the tabs */
+  left: 50%;
+  transform: translateX(-50%);
+  background: oklch(0.30 0.06 60);
+  color: oklch(0.92 0.06 80);
+  padding: 6px 16px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 100;
+  border-radius: 0 0 6px 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  border: 1px solid oklch(0.40 0.06 60);
+  border-top: none;
+  white-space: nowrap;
+  pointer-events: none; /* Allow interaction with editor behind it if needed, or keep for purely info */
+}
+
+.code-agent-banner strong {
+  color: #fff;
 }

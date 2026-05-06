@@ -73,6 +73,40 @@ export class SqlitePluginJobs {
     ).all(...params, limit);
     return rows.map(rowToJob);
   }
+
+  close() {
+    if (this.db) {
+      try { this.db.close(); } catch { /* ignore */ }
+    }
+  }
+
+  /**
+   * Execute a background job. The caller provides a `runner` function
+   * that takes an `onLog` callback. We update the job state to 'running',
+   * then 'finished' or 'error' based on the runner's resolution.
+   */
+  async executeJob({ jobId, runner }) {
+    this.update({ jobId, state: 'running' });
+    try {
+      const result = await runner((chunk) => {
+        this.update({ jobId, logChunk: chunk });
+      });
+      this.update({
+        jobId,
+        state: 'finished',
+        finishedAt: new Date().toISOString(),
+      });
+      return result;
+    } catch (err) {
+      this.update({
+        jobId,
+        state: 'error',
+        error: err.message,
+        finishedAt: new Date().toISOString(),
+      });
+      throw err;
+    }
+  }
 }
 
 function rowToJob(r) {

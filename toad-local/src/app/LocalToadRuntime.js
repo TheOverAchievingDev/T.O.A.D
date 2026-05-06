@@ -11,6 +11,7 @@ import { SqliteRuntimeEventLog } from '../runtime/sqliteRuntimeEventLog.js';
 import { SqliteRuntimeRegistry } from '../runtime/sqliteRuntimeRegistry.js';
 import { SqliteTaskBoard } from '../task/sqliteTaskBoard.js';
 import { SqliteTeamConfigRegistry } from '../team/sqliteTeamConfigRegistry.js';
+import { SqlitePluginJobs } from '../plugins/pluginJobs.js';
 import { LocalToolFacade } from '../tools/localToolFacade.js';
 import { WorktreeManager } from '../task/worktreeManager.js';
 import { checkForConflicts } from '../task/mergeChecker.js';
@@ -80,6 +81,7 @@ export class LocalToadRuntime {
     this.runtimeRegistry = runtimeRegistry || new SqliteRuntimeRegistry({ filePath: dbPath });
     this.eventLog = eventLog || new SqliteRuntimeEventLog({ filePath: dbPath });
     this.teamConfigRegistry = teamConfigRegistry || new SqliteTeamConfigRegistry({ filePath: dbPath });
+    this.pluginJobs = new SqlitePluginJobs({ filePath: dbPath });
     // Foundry sessions are global (live in ~/.symphony/foundry.db) so they
     // survive `switch_project` calls — the user can plan a project in
     // Foundry, then materialize it into a freshly-picked folder.
@@ -171,6 +173,7 @@ export class LocalToadRuntime {
         stopAgent: ({ runtimeId, signal } = {}) =>
           this.stopAgent(runtimeId, signal ? { signal } : undefined),
         teamConfigRegistry: this.teamConfigRegistry,
+        pluginJobs: this.pluginJobs,
         foundryStore: this.foundryStore,
         dbPath,
         eventLog: this.eventLog,
@@ -610,7 +613,9 @@ export class LocalToadRuntime {
     this.adapters.clear();
     if (this.eventBus) this.eventBus.dispose();
     closeIfSupported(this.eventLog);
+    closeIfSupported(this.pluginJobs);
     closeIfSupported(this.runtimeRegistry);
+
     closeIfSupported(this.approvalBroker);
     closeIfSupported(this.foundryStore);
     closeIfSupported(this.teamConfigRegistry);

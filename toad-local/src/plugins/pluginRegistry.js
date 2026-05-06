@@ -35,12 +35,17 @@ export const PLUGIN_COMMANDS = Object.freeze({
     cli: 'eas',
     statusMode: 'file',
     statusFile: path.join('~', '.expo', 'state.json'),
-    parseFileStatus: () => ({ signedIn: false, reason: 'EAS plugin not implemented in slice 1' }),
+    parseFileStatus: parseEasFileStatus,
     manualLogin: true,
-    loginInstructions: 'EAS plugin lands in slice 2.',
-    supported: false,
-    unsupportedReason: 'EAS plugin lands in slice 2 (background-job infrastructure exercise).',
-    riskProfile: Object.freeze({}),
+    loginInstructions: 'Run `eas login` in a terminal. Symphony will detect the auth file once you complete the browser flow.',
+    supported: true,
+    riskProfile: Object.freeze({
+      project_info: 'low',
+      build:        'high',
+      update:       'high',
+      job_get:      'low',
+      job_list:     'low',
+    }),
   }),
   vercel: Object.freeze({
     label: 'Vercel',
@@ -90,6 +95,39 @@ export function parseRailwayFileStatus(authJson, _infoJson, providerId) {
       name: pickString(user.name),
     },
     plan: pickString(authJson.plan, user.plan),
+    raw: { tokenLength: token.length },
+  };
+}
+
+/**
+ * Verify EAS (Expo) auth file. Expo stores session info in
+ * ~/.expo/state.json under `auth.sessionToken`.
+ */
+export function parseEasFileStatus(authJson, _infoJson, providerId) {
+  if (!authJson || typeof authJson !== 'object' || Array.isArray(authJson)) {
+    return {
+      providerId,
+      supported: true,
+      signedIn: false,
+      reason: 'EAS auth file is empty or not an object.',
+    };
+  }
+  const token = authJson.auth?.sessionToken;
+  if (!token) {
+    return {
+      providerId,
+      supported: true,
+      signedIn: false,
+      reason: 'EAS auth file present but sessionToken is missing.',
+    };
+  }
+  // Expo state.json doesn't always have user info directly; it might
+  // just have the token.
+  return {
+    providerId,
+    supported: true,
+    signedIn: true,
+    user: authJson.auth?.username ? { login: authJson.auth.username } : null,
     raw: { tokenLength: token.length },
   };
 }

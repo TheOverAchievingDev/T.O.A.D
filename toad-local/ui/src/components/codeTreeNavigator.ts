@@ -3,6 +3,7 @@ export interface CodeTreeEntry {
   name: string;
   kind: 'file' | 'directory';
   sizeBytes?: number;
+  gitStatus?: string;
 }
 
 export interface CodeTreeNode {
@@ -12,6 +13,7 @@ export interface CodeTreeNode {
   sizeBytes?: number;
   children: CodeTreeNode[];
   depth: number;
+  gitStatus?: string;
 }
 
 export interface CodeTreeFilterResult {
@@ -24,7 +26,7 @@ export function buildCodeTree(entries: CodeTreeEntry[]): CodeTreeNode[] {
   const rootNodes: CodeTreeNode[] = [];
 
   for (const entry of entries) {
-    ensureNode(entry.path, entry.kind, entry.name, entry.sizeBytes);
+    ensureNode(entry.path, entry.kind, entry.name, entry.sizeBytes, entry.gitStatus);
   }
 
   for (const node of nodeByPath.values()) {
@@ -42,12 +44,13 @@ export function buildCodeTree(entries: CodeTreeEntry[]): CodeTreeNode[] {
   assignDepthAndSort(rootNodes, 0);
   return rootNodes;
 
-  function ensureNode(path: string, kind: 'file' | 'directory', name: string, sizeBytes?: number): CodeTreeNode {
+  function ensureNode(path: string, kind: 'file' | 'directory', name: string, sizeBytes?: number, gitStatus?: string): CodeTreeNode {
     const normalizedPath = normalizeTreePath(path);
     const existing = nodeByPath.get(normalizedPath);
     if (existing) {
       if (kind === 'directory' && existing.kind !== 'directory') existing.kind = 'directory';
       if (sizeBytes !== undefined) existing.sizeBytes = sizeBytes;
+      if (gitStatus !== undefined) existing.gitStatus = gitStatus;
       return existing;
     }
     const node: CodeTreeNode = {
@@ -55,6 +58,7 @@ export function buildCodeTree(entries: CodeTreeEntry[]): CodeTreeNode[] {
       name: name || basename(normalizedPath),
       kind,
       ...(sizeBytes !== undefined ? { sizeBytes } : {}),
+      ...(gitStatus !== undefined ? { gitStatus } : {}),
       children: [],
       depth: 0,
     };

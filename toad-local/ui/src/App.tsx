@@ -567,6 +567,8 @@ function AppInner() {
                 agentName: 'ui',
                 role: 'human',
               }}
+              driftData={drift.data}
+              runtimes={runtimes}
             />
           )}
           {tweaks.screen === 'costs' && (

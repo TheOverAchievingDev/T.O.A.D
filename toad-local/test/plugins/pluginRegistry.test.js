@@ -24,8 +24,8 @@ test('PLUGIN_COMMANDS.railway is supported with the right shape', () => {
   assert.equal(r.riskProfile.provision_db, 'medium');
 });
 
-test('PLUGIN_COMMANDS.eas + .vercel are recognized but unsupported in slice 1', () => {
-  assert.equal(PLUGIN_COMMANDS.eas.supported, false);
+test('PLUGIN_COMMANDS.eas + .vercel are recognized but vercel is unsupported in slice 2', () => {
+  assert.equal(PLUGIN_COMMANDS.eas.supported, true);
   assert.equal(PLUGIN_COMMANDS.vercel.supported, false);
 });
 

@@ -19,6 +19,16 @@ interface ResourceInfo {
   createdAt: string;
 }
 
+interface JobInfo {
+  jobId: string;
+  pluginId: string;
+  action: string;
+  state: 'pending' | 'running' | 'finished' | 'error';
+  startedAt: string;
+  finishedAt: string | null;
+  error: string | null;
+}
+
 const PROVIDER_GLYPH_CLASS: Record<string, string> = {
   railway: 'railway',
   eas: 'eas',
@@ -28,6 +38,7 @@ const PROVIDER_GLYPH_CLASS: Record<string, string> = {
 export function PluginsSettings() {
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [resources, setResources] = useState<ResourceInfo[]>([]);
+  const [jobs, setJobs] = useState<JobInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [pendingLogin, setPendingLogin] = useState<string | null>(null);
 
@@ -44,6 +55,12 @@ export function PluginsSettings() {
         method: 'plugin_resource_list', args: {},
       }) as { resources: ResourceInfo[] };
       setResources(r.resources);
+
+      const j = await callToadApi({
+        actor: { teamId: 'default', agentId: 'ui-client', role: 'human' },
+        method: 'plugin_job_list', args: { limit: 10 },
+      }) as { jobs: JobInfo[] };
+      setJobs(j.jobs);
     } catch {
       // Silent — UI shows empty state.
     } finally {
@@ -173,6 +190,56 @@ export function PluginsSettings() {
                 <span style={{ color: 'var(--fg-dim)' }}> · {r.kind}</span>
                 <span style={{ color: 'var(--fg-muted)', fontSize: 11 }}> · {r.externalId}</span>
                 <span style={{ color: 'var(--fg-dim)', fontSize: 11 }}> · {new Date(r.createdAt).toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </SettingsCard>
+
+      <SettingsCard
+        title="Recent background jobs"
+        description="Long-running tasks triggered by plugins (e.g. EAS builds or OTA updates)."
+      >
+        {jobs.length === 0 ? (
+          <div className="dim" style={{ fontSize: 11 }}>No jobs yet.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {jobs.map((j) => (
+              <div key={j.jobId} style={{
+                padding: '8px 10px', fontSize: 12,
+                background: 'rgba(255,255,255,0.02)',
+                border: '1px solid var(--border-soft, rgba(255,255,255,0.06))',
+                borderRadius: 6,
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <span style={{ fontWeight: 600 }}>{j.pluginId}</span>
+                    <span style={{ color: 'var(--fg-dim)' }}> · {j.action}</span>
+                    <span style={{ color: 'var(--fg-muted)', fontSize: 11 }}> · {j.jobId.slice(0, 8)}</span>
+                  </div>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      padding: '2px 6px',
+                      borderRadius: 3,
+                      background: j.state === 'running' ? 'rgba(59,130,246,0.12)' : (j.state === 'error' ? 'rgba(239,68,68,0.12)' : 'rgba(255,255,255,0.04)'),
+                      color: j.state === 'running' ? '#3b82f6' : (j.state === 'error' ? '#ef4444' : 'var(--fg-dim)'),
+                      textTransform: 'uppercase',
+                      fontWeight: 600,
+                    }}
+                  >
+                    {j.state}
+                  </span>
+                </div>
+                <div style={{ marginTop: 4, color: 'var(--fg-dim)', fontSize: 11 }}>
+                  Started: {new Date(j.startedAt).toLocaleString()}
+                  {j.finishedAt && ` · Finished: ${new Date(j.finishedAt).toLocaleTimeString()}`}
+                </div>
+                {j.error && (
+                  <div style={{ marginTop: 4, color: '#ef4444', fontSize: 11 }}>
+                    Error: {j.error}
+                  </div>
+                )}
               </div>
             ))}
           </div>
