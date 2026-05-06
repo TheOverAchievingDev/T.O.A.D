@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Actor } from '@/api/client';
 import { callTool } from '@/api/client';
 import type { Message, Runtime, Team, UiTask } from '@/types';
@@ -9,6 +9,18 @@ import { Icon } from './Icon';
 import { CodeScreen } from './CodeScreen';
 import { TaskRiskBadge } from './TaskRiskBadge';
 import { DriftBadge } from './DriftBadge';
+import { IdeFileTree } from './IdeFileTree';
+import {
+  sourceKeyToIdeSource,
+  type IdeStatusResult,
+  type IdeTreeResult,
+} from './ideSource';
+import {
+  buildCodeTree,
+  collectDirectoryPaths,
+  filterCodeTree,
+  flattenVisibleCodeTree,
+} from './codeTreeNavigator';
 
 interface CockpitScreenProps {
   team: Team;
@@ -31,7 +43,7 @@ interface CockpitScreenProps {
   onRefreshData: () => void;
 }
 
-type LeftTab = 'tasks' | 'agents';
+type LeftTab = 'tasks' | 'files' | 'agents';
 type RightTab = 'output' | 'review' | 'drift';
 
 export function CockpitScreen({
@@ -59,6 +71,14 @@ export function CockpitScreen({
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(tasks[0]?.id ?? null);
   const [testRunning, setTestRunning] = useState(false);
   const [testMessage, setTestMessage] = useState<string | null>(null);
+  const [fileSourceKey, setFileSourceKey] = useState('project');
+  const [fileTree, setFileTree] = useState<IdeTreeResult | null>(null);
+  const [fileTreeError, setFileTreeError] = useState<string | null>(null);
+  const [fileTreeLoading, setFileTreeLoading] = useState(false);
+  const [fileQuery, setFileQuery] = useState('');
+  const [expandedFilePaths, setExpandedFilePaths] = useState<Set<string>>(() => new Set());
+  const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
+  const [externalOpenRequest, setExternalOpenRequest] = useState<{ sourceKey: string; path: string; requestId: number } | null>(null);
 
   const selectedTask = useMemo(() => {
     if (selectedTaskId) return tasks.find((task) => task.id === selectedTaskId) ?? tasks[0] ?? null;
@@ -68,10 +88,65 @@ export function CockpitScreen({
   const liveRuntimes = runtimes.filter((runtime) => runtime.status === 'live' || runtime.status === 'launching');
   const reviewTasks = tasks.filter((task) => task.status === 'review');
   const activeTasks = tasks.filter((task) => task.status !== 'done' && task.status !== 'rejected');
+  const worktreeTasks = tasks.filter((task) => task.worktree?.status === 'created' && task.worktree.path);
+  const fileSource = useMemo(() => sourceKeyToIdeSource(fileSourceKey), [fileSourceKey]);
+  const codeTree = useMemo(() => buildCodeTree(fileTree?.entries ?? []), [fileTree?.entries]);
+  const filteredTree = useMemo(() => filterCodeTree(codeTree, fileQuery), [codeTree, fileQuery]);
+  const effectiveExpandedPaths = useMemo(
+    () => (fileQuery.trim() ? new Set(filteredTree.expandedPaths) : expandedFilePaths),
+    [expandedFilePaths, filteredTree.expandedPaths, fileQuery],
+  );
+  const visibleFileNodes = useMemo(
+    () => flattenVisibleCodeTree(filteredTree.nodes, effectiveExpandedPaths),
+    [effectiveExpandedPaths, filteredTree.nodes],
+  );
+  const visibleFiles = visibleFileNodes.filter((node) => node.kind === 'file');
   const selectedDriftFindings = driftData?.findings.filter((finding) =>
     selectedTask ? finding.taskId === selectedTask.id : true,
   ) ?? [];
   const recentMessages = messages.slice(-8).reverse();
+
+  async function refreshFiles() {
+    if (!teamId) return;
+    setFileTreeLoading(true);
+    setFileTreeError(null);
+    try {
+      const [treeResult, statusResult] = await Promise.all([
+        callTool<IdeTreeResult>({
+          actor,
+          method: 'ide_tree_list',
+          args: { source: fileSource },
+        }),
+        callTool<IdeStatusResult>({
+          actor,
+          method: 'ide_get_status',
+          args: { source: fileSource },
+        }).catch(() => null),
+      ]);
+      if (statusResult) {
+        const statusByPath = new Map(statusResult.entries.map((entry) => [entry.relativePath, entry.status.trim()]));
+        for (const entry of treeResult.entries) {
+          const status = statusByPath.get(entry.path);
+          if (status) entry.gitStatus = status;
+        }
+      }
+      setFileTree(treeResult);
+      setExpandedFilePaths((current) => mergeExpandedPaths(current, getInitialExpandedPaths(treeResult.entries, activeFilePath)));
+    } catch (err) {
+      setFileTree(null);
+      setFileTreeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setFileTreeLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    setFileQuery('');
+    setExpandedFilePaths(new Set());
+    setFileTreeError(null);
+    void refreshFiles();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teamId, fileSourceKey, activeProject?.id]);
 
   async function runSelectedTaskTests() {
     if (!selectedTask || testRunning) return;
@@ -111,13 +186,17 @@ export function CockpitScreen({
             <Icon name="kanban" size={12} />
             Tasks
           </button>
+          <button type="button" className={leftTab === 'files' ? 'active' : ''} onClick={() => setLeftTab('files')}>
+            <Icon name="folder" size={12} />
+            Files
+          </button>
           <button type="button" className={leftTab === 'agents' ? 'active' : ''} onClick={() => setLeftTab('agents')}>
             <Icon name="users" size={12} />
             Agents
           </button>
         </div>
 
-        {leftTab === 'tasks' ? (
+        {leftTab === 'tasks' && (
           <div className="cockpit-task-list">
             {activeTasks.length === 0 ? (
               <div className="cockpit-empty">
@@ -160,7 +239,93 @@ export function CockpitScreen({
               })
             )}
           </div>
-        ) : (
+        )}
+
+        {leftTab === 'files' && (
+          <div className="cockpit-files">
+            <div className="cockpit-file-controls">
+              {projects.length > 0 && (
+                <select
+                  className="field-input mono"
+                  value={activeProject?.id ?? ''}
+                  aria-label="Active project"
+                  onChange={(event) => event.target.value && onSelectProject(event.target.value)}
+                >
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <button className="btn btn-sm" type="button" onClick={onSelectFolder}>
+                <Icon name="folder" size={12} />
+                Open folder
+              </button>
+              <select
+                className="field-input mono"
+                value={fileSourceKey}
+                aria-label="File source"
+                onChange={(event) => setFileSourceKey(event.target.value)}
+              >
+                <option value="project">Project root</option>
+                {worktreeTasks.map((task) => (
+                  <option key={task.id} value={`task:${task.id}`}>
+                    {task.id}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="code-tree-search cockpit-file-search">
+              <Icon name="search" size={12} />
+              <input
+                value={fileQuery}
+                onChange={(event) => setFileQuery(event.target.value)}
+                placeholder="Filter files..."
+                aria-label="Filter files"
+              />
+              {fileQuery && (
+                <button
+                  type="button"
+                  className="code-tree-clear"
+                  onClick={() => setFileQuery('')}
+                  aria-label="Clear file filter"
+                >
+                  x
+                </button>
+              )}
+            </div>
+            <div className="code-tree-tools">
+              <button type="button" onClick={() => setExpandedFilePaths(new Set(collectDirectoryPaths(codeTree)))}>
+                Expand all
+              </button>
+              <button type="button" onClick={() => setExpandedFilePaths(new Set())}>
+                Collapse all
+              </button>
+              <button type="button" onClick={() => void refreshFiles()}>
+                {fileTreeLoading ? 'Loading' : 'Refresh'}
+              </button>
+            </div>
+            {fileTreeLoading && <div className="code-muted">Loading files...</div>}
+            {fileTreeError && <div className="code-error">{fileTreeError}</div>}
+            {fileTree?.truncated && <div className="code-muted">Tree truncated at the backend entry cap.</div>}
+            {fileTree && visibleFiles.length === 0 && (
+              <div className="code-muted">{fileQuery ? 'No matches found.' : 'No readable files found.'}</div>
+            )}
+            <IdeFileTree
+              nodes={visibleFileNodes}
+              expandedPaths={effectiveExpandedPaths}
+              activePath={activeFilePath}
+              onToggleDirectory={(path) => setExpandedFilePaths((current) => toggleExpandedPath(current, path))}
+              onOpenFile={(path) => {
+                setActiveFilePath(path);
+                setExternalOpenRequest({ sourceKey: fileSourceKey, path, requestId: Date.now() });
+              }}
+            />
+          </div>
+        )}
+
+        {leftTab === 'agents' && (
           <div className="cockpit-agent-list">
             {team.members.length === 0 ? (
               <div className="cockpit-empty">
@@ -206,6 +371,8 @@ export function CockpitScreen({
           actor={actor}
           driftData={driftData}
           runtimes={runtimes}
+          mode="cockpit"
+          externalOpenRequest={externalOpenRequest}
         />
       </section>
 
@@ -326,4 +493,27 @@ function Metric({ label, value }: { label: string; value: string }) {
       <strong>{value}</strong>
     </div>
   );
+}
+
+function getInitialExpandedPaths(entries: { path: string; kind: 'file' | 'directory' }[], selectedPath: string | null): Set<string> {
+  const expanded = new Set<string>();
+  for (const entry of entries) {
+    if (entry.kind === 'directory' && !entry.path.includes('/')) expanded.add(entry.path);
+  }
+  if (selectedPath) {
+    const parts = selectedPath.split('/');
+    for (let index = 1; index < parts.length; index += 1) expanded.add(parts.slice(0, index).join('/'));
+  }
+  return expanded;
+}
+
+function mergeExpandedPaths(current: Set<string>, next: Set<string>): Set<string> {
+  return new Set([...current, ...next]);
+}
+
+function toggleExpandedPath(current: Set<string>, path: string): Set<string> {
+  const next = new Set(current);
+  if (next.has(path)) next.delete(path);
+  else next.add(path);
+  return next;
 }

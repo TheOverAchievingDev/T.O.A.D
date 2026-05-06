@@ -618,14 +618,37 @@
 
 .cockpit-task-list,
 .cockpit-agent-list,
+.cockpit-files,
 .cockpit-right-body {
   min-height: 0;
   overflow: auto;
 }
 
 .cockpit-task-list,
-.cockpit-agent-list {
+.cockpit-agent-list,
+.cockpit-files {
   padding: 10px;
+}
+
+.cockpit-files {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cockpit-file-controls {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.cockpit-file-controls .field-input,
+.cockpit-file-controls .btn {
+  width: 100%;
+}
+
+.cockpit-file-search {
+  flex: 0 0 auto;
 }
 
 .cockpit-task,
@@ -943,6 +966,10 @@
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
+}
+
+.code-body.editor-only {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .code-tree {

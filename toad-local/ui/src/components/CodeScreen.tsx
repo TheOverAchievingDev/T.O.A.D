@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import * as monaco from 'monaco-editor';
 import Editor, { loader } from '@monaco-editor/react';
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
@@ -18,6 +18,15 @@ import {
 } from './codeTreeNavigator';
 import { MarkdownPreview } from './MarkdownPreview';
 import type { DriftRunResult } from '@/hooks/useDrift';
+import { IdeFileTree } from './IdeFileTree';
+import {
+  sourceKeyToIdeSource,
+  type IdeFileResult,
+  type IdeSource,
+  type IdeStatusResult,
+  type IdeTreeEntry,
+  type IdeTreeResult,
+} from './ideSource';
 
 loader.config({ monaco });
 
@@ -41,45 +50,6 @@ window.MonacoEnvironment = {
   },
 };
 
-type IdeSource =
-  | { kind: 'project' }
-  | { kind: 'task_worktree'; taskId: string };
-
-interface IdeTreeEntry {
-  path: string;
-  name: string;
-  kind: 'file' | 'directory';
-  sizeBytes?: number;
-  gitStatus?: string;
-}
-
-interface IdeTreeResult {
-  source: IdeSource;
-  rootLabel: string;
-  entries: IdeTreeEntry[];
-  truncated: boolean;
-}
-
-interface IdeStatusEntry {
-  relativePath: string;
-  status: string;
-}
-
-interface IdeStatusResult {
-  source: IdeSource;
-  entries: IdeStatusEntry[];
-}
-
-interface IdeFileResult {
-  source: IdeSource;
-  relativePath: string;
-  content: string;
-  encoding: 'utf8';
-  sizeBytes: number;
-  sha256: string;
-  languageHint?: string;
-}
-
 type CodeTask = UiTask & {
   worktree?: {
     status?: string;
@@ -98,6 +68,12 @@ interface CodeScreenProps {
   onSelectFolder?: () => void;
   driftData?: DriftRunResult | null;
   runtimes?: Runtime[];
+  mode?: 'standalone' | 'cockpit';
+  externalOpenRequest?: {
+    sourceKey: string;
+    path: string;
+    requestId: number;
+  } | null;
 }
 
 const DEFAULT_ACTOR: Actor = { teamId: 'system', agentId: 'ui-client', agentName: 'ui', role: 'human' };
@@ -124,6 +100,8 @@ export function CodeScreen({
   onSelectFolder,
   driftData,
   runtimes = [],
+  mode = 'standalone',
+  externalOpenRequest = null,
 }: CodeScreenProps) {
   const [sourceKey, setSourceKey] = useState('project');
   const [tree, setTree] = useState<IdeTreeResult | null>(null);
@@ -137,6 +115,7 @@ export function CodeScreen({
 
   const [tabs, setTabs] = useState<OpenTab[]>([]);
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null);
+  const [pendingExternalOpen, setPendingExternalOpen] = useState<{ sourceKey: string; path: string } | null>(null);
 
   const [leftPaneMode, setLeftPaneMode] = useState<'tree' | 'search'>('tree');
   const [searchQuery, setSearchQuery] = useState('');
@@ -158,12 +137,9 @@ export function CodeScreen({
     return runtimes.filter(r => (r.agent === assignee || r.agent === 'lead') && (r.status === 'live' || r.status === 'launching'));
   }, [sourceKey, tasks, runtimes]);
 
-  const source = useMemo<IdeSource>(() => {
-    if (sourceKey.startsWith('task:')) {
-      return { kind: 'task_worktree', taskId: sourceKey.slice(5) };
-    }
-    return { kind: 'project' };
-  }, [sourceKey]);
+  const source = useMemo<IdeSource>(() => sourceKeyToIdeSource(sourceKey), [sourceKey]);
+  const showChrome = mode === 'standalone';
+  const showExplorer = mode === 'standalone';
 
   const effectiveTeamId = teamId ?? actor.teamId;
   const rootLabel =
@@ -257,6 +233,27 @@ export function CodeScreen({
       setTabs(prev => prev.map(t => t.path === relativePath ? { ...t, fileError: errorMessage(err), loading: false } : t));
     }
   }
+
+  useEffect(() => {
+    if (!externalOpenRequest) return;
+    if (!confirmDiscardDirty()) return;
+    if (sourceKey !== externalOpenRequest.sourceKey) {
+      setSourceKey(externalOpenRequest.sourceKey);
+      setPendingExternalOpen({ sourceKey: externalOpenRequest.sourceKey, path: externalOpenRequest.path });
+      return;
+    }
+    void openFile(externalOpenRequest.path);
+    // External requests are explicit UI commands; openFile intentionally captures current tab state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalOpenRequest?.requestId]);
+
+  useEffect(() => {
+    if (!pendingExternalOpen || sourceKey !== pendingExternalOpen.sourceKey) return;
+    void openFile(pendingExternalOpen.path);
+    setPendingExternalOpen(null);
+    // External requests are explicit UI commands; openFile intentionally captures current tab state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingExternalOpen, sourceKey]);
 
   function closeTab(path: string, event?: React.MouseEvent) {
     if (event) event.stopPropagation();
@@ -517,7 +514,8 @@ export function CodeScreen({
   const files = tree?.entries.filter((entry) => entry.kind === 'file') ?? [];
 
   return (
-    <main className="code-screen">
+    <main className={`code-screen ${mode === 'cockpit' ? 'code-screen-embedded' : ''}`}>
+      {showChrome && (
       <header className="code-header">
         <div>
           <div className="eyebrow">Orchestrator IDE</div>
@@ -592,8 +590,10 @@ export function CodeScreen({
           </button>
         </div>
       </header>
+      )}
 
-      <div className="code-body">
+      <div className={`code-body ${showExplorer ? '' : 'editor-only'}`}>
+        {showExplorer && (
         <aside className="code-tree" aria-label="Project files">
           <div className="code-tree-toolbar">
             <div className="code-pane-tabs" style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
@@ -656,40 +656,13 @@ export function CodeScreen({
               {tree && treeQuery && visibleFiles.length === 0 && (
                 <div className="code-muted">No matches found.</div>
               )}
-              <div className="code-tree-list">
-                {visibleTreeNodes.map((node) => (
-                  <button
-                    key={node.path}
-                    type="button"
-                    className={`code-tree-row ${node.kind} ${activeTabPath === node.path ? 'active' : ''}`}
-                    onClick={() => {
-                      if (node.kind === 'directory') {
-                        setExpandedPaths((current) => toggleExpandedPath(current, node.path));
-                        return;
-                      }
-                      void openFile(node.path);
-                    }}
-                    title={node.path}
-                    style={{ '--depth': node.depth } as CSSProperties}
-                  >
-                    <span className="code-tree-disclosure" aria-hidden="true">
-                      {node.kind === 'directory' ? (effectiveExpandedPaths.has(node.path) ? 'v' : '>') : ''}
-                    </span>
-                    <span className="code-tree-icon">
-                      <Icon name={node.kind === 'directory' ? 'folder' : 'file'} size={13} />
-                    </span>
-                    <span className="code-tree-path">{node.name}</span>
-                    {node.gitStatus && (
-                      <span className={`code-tree-git-badge status-${node.gitStatus.replace(/\?/g, 'u').toLowerCase()}`}>
-                        {node.gitStatus}
-                      </span>
-                    )}
-                    {node.kind === 'file' && node.sizeBytes !== undefined && (
-                      <span className="code-tree-size">{formatCompactBytes(node.sizeBytes)}</span>
-                    )}
-                  </button>
-                ))}
-              </div>
+              <IdeFileTree
+                nodes={visibleTreeNodes}
+                expandedPaths={effectiveExpandedPaths}
+                activePath={activeTabPath}
+                onToggleDirectory={(path) => setExpandedPaths((current) => toggleExpandedPath(current, path))}
+                onOpenFile={(path) => void openFile(path)}
+              />
             </>
           ) : (
             <div className="code-search-pane" style={{ padding: '0 8px' }}>
@@ -729,6 +702,7 @@ export function CodeScreen({
             </div>
           )}
         </aside>
+        )}
 
         <section className="code-editor-pane" aria-label="Selected file" style={{ display: 'flex', flexDirection: 'column', position: 'relative' }}>
           {activeAgentsInWorktree.length > 0 && (
