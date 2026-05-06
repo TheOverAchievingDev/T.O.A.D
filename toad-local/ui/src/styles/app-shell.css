@@ -630,6 +630,12 @@
   padding: 10px;
 }
 
+.cockpit-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .cockpit-files {
   display: flex;
   flex-direction: column;
@@ -663,9 +669,47 @@
   cursor: pointer;
 }
 
-.cockpit-task + .cockpit-task,
+.cockpit-task-group .cockpit-task + .cockpit-task,
 .cockpit-agent + .cockpit-agent {
   margin-top: 8px;
+}
+
+.cockpit-task-group {
+  min-width: 0;
+}
+
+.cockpit-task-group-head {
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--fg-muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.cockpit-task-group-head strong {
+  min-width: 20px;
+  height: 18px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-dim);
+  font-size: 10px;
+}
+
+.cockpit-task-group-empty {
+  border: 1px dashed var(--border-soft);
+  border-radius: 7px;
+  color: var(--fg-dim);
+  font-size: 11px;
+  padding: 9px;
+  text-align: center;
 }
 
 .cockpit-task.active {

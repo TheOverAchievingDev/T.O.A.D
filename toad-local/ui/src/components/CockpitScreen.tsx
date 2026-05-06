@@ -31,6 +31,7 @@ import {
 } from './cockpitValidation';
 import { buildCockpitOutputEntries } from './cockpitOutput';
 import { summarizeCockpitReview } from './cockpitReview';
+import { buildCockpitTaskGroups } from './cockpitTasks';
 import type { StreamEntry } from '@/utils/agentStream';
 
 interface CockpitScreenProps {
@@ -102,6 +103,7 @@ export function CockpitScreen({
   const liveRuntimes = runtimes.filter((runtime) => runtime.status === 'live' || runtime.status === 'launching');
   const reviewTasks = tasks.filter((task) => task.status === 'review');
   const activeTasks = tasks.filter((task) => task.status !== 'done' && task.status !== 'rejected');
+  const taskGroups = useMemo(() => buildCockpitTaskGroups(activeTasks), [activeTasks]);
   const worktreeTasks = tasks.filter((task) => task.worktree?.status === 'created' && task.worktree.path);
   const fileSource = useMemo(() => sourceKeyToIdeSource(fileSourceKey), [fileSourceKey]);
   const codeTree = useMemo(() => buildCodeTree(fileTree?.entries ?? []), [fileTree?.entries]);
@@ -233,38 +235,48 @@ export function CockpitScreen({
                 <span>Create a task to give the team work inside the cockpit.</span>
               </div>
             ) : (
-              activeTasks.map((task) => {
-                const member = team.members.find((m) => m.id === task.assignee);
-                return (
-                  <button
-                    key={task.id}
-                    type="button"
-                    className={`cockpit-task ${selectedTask?.id === task.id ? 'active' : ''}`}
-                    style={roleStyle(member?.role ?? 'developer')}
-                    onClick={() => setSelectedTaskId(task.id)}
-                    onDoubleClick={() => onOpenTask(task.id)}
-                    title="Double-click to open full task detail"
-                  >
-                    <span className="cockpit-task-top">
-                      <span className="task-id">{task.id}</span>
-                      <span className={`cockpit-status ${task.status}`}>{task.status}</span>
-                    </span>
-                    <span className="cockpit-task-title">{task.title}</span>
-                    <span className="cockpit-task-meta">
-                      {member ? member.name : task.assignee || 'unassigned'}
-                      {task.riskLevel && (
-                        <TaskRiskBadge
-                          level={task.riskLevel}
-                          requiresHumanApproval={task.requiresHumanApproval}
-                          humanApproved={task.humanApproved}
-                          matchedRules={task.matchedRules}
-                        />
-                      )}
-                      <DriftBadge score={driftData?.perTaskScores?.[task.id]} />
-                    </span>
-                  </button>
-                );
-              })
+              taskGroups.map((group) => (
+                <section key={group.status} className="cockpit-task-group">
+                  <div className="cockpit-task-group-head">
+                    <span>{group.label}</span>
+                    <strong>{group.count}</strong>
+                  </div>
+                  {group.tasks.length === 0 ? (
+                    <div className="cockpit-task-group-empty">No tasks</div>
+                  ) : group.tasks.map((task) => {
+                    const member = team.members.find((m) => m.id === task.assignee);
+                    return (
+                      <button
+                        key={task.id}
+                        type="button"
+                        className={`cockpit-task ${selectedTask?.id === task.id ? 'active' : ''}`}
+                        style={roleStyle(member?.role ?? 'developer')}
+                        onClick={() => setSelectedTaskId(task.id)}
+                        onDoubleClick={() => onOpenTask(task.id)}
+                        title="Double-click to open full task detail"
+                      >
+                        <span className="cockpit-task-top">
+                          <span className="task-id">{task.id}</span>
+                          <span className={`cockpit-status ${task.status}`}>{task.status}</span>
+                        </span>
+                        <span className="cockpit-task-title">{task.title}</span>
+                        <span className="cockpit-task-meta">
+                          {member ? member.name : task.assignee || 'unassigned'}
+                          {task.riskLevel && (
+                            <TaskRiskBadge
+                              level={task.riskLevel}
+                              requiresHumanApproval={task.requiresHumanApproval}
+                              humanApproved={task.humanApproved}
+                              matchedRules={task.matchedRules}
+                            />
+                          )}
+                          <DriftBadge score={driftData?.perTaskScores?.[task.id]} />
+                        </span>
+                      </button>
+                    );
+                  })}
+                </section>
+              ))
             )}
           </div>
         )}
