@@ -29,12 +29,15 @@ import {
   validationOutputLines,
   validationSummary,
 } from './cockpitValidation';
+import { buildCockpitOutputEntries } from './cockpitOutput';
+import type { StreamEntry } from '@/utils/agentStream';
 
 interface CockpitScreenProps {
   team: Team;
   tasks: UiTask[];
   runtimes: Runtime[];
   messages: Message[];
+  agentStreams?: Record<string, StreamEntry[]>;
   teamId: string | null;
   actor: Actor;
   projects: ProjectEntry[];
@@ -59,6 +62,7 @@ export function CockpitScreen({
   tasks,
   runtimes,
   messages,
+  agentStreams = {},
   teamId,
   actor,
   projects,
@@ -113,7 +117,10 @@ export function CockpitScreen({
   const selectedDriftFindings = driftData?.findings.filter((finding) =>
     selectedTask ? finding.taskId === selectedTask.id : true,
   ) ?? [];
-  const recentMessages = messages.slice(-8).reverse();
+  const outputEntries = useMemo(
+    () => buildCockpitOutputEntries({ streams: agentStreams, messages, limit: 12 }),
+    [agentStreams, messages],
+  );
   const validationRuns = useMemo(
     () => sortValidationRuns(selectedTask?.validations ?? []),
     [selectedTask?.validations],
@@ -415,14 +422,22 @@ export function CockpitScreen({
               <Metric label="Drift" value={driftData ? `${driftData.teamScore}%` : '-'} />
             </div>
             <h3>Recent output</h3>
-            {recentMessages.length === 0 ? (
-              <div className="cockpit-empty small">No agent messages yet.</div>
-            ) : recentMessages.map((message) => (
-              <div key={message.id} className="cockpit-message">
-                <span className="mono">{message.from} {'->'} {message.to}</span>
-                <p>{message.body}</p>
+            {outputEntries.length === 0 ? (
+              <div className="cockpit-empty small">No agent output yet.</div>
+            ) : (
+              <div className="cockpit-output-list">
+                {outputEntries.map((entry) => (
+                  <div key={entry.id} className={`cockpit-output-entry ${entry.kind}`}>
+                    <div className="cockpit-output-meta">
+                      <span className="mono">{entry.time || '--:--:--'}</span>
+                      <strong>{entry.agentId}</strong>
+                      <em>{entry.label}</em>
+                    </div>
+                    <p>{entry.body}</p>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
         )}
 

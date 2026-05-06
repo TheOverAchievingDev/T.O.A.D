@@ -811,6 +811,7 @@
 }
 
 .cockpit-message,
+.cockpit-output-entry,
 .cockpit-finding {
   border: 1px solid var(--border-soft);
   border-radius: 7px;
@@ -825,11 +826,55 @@
 }
 
 .cockpit-message p,
+.cockpit-output-entry p,
 .cockpit-finding p {
   margin: 5px 0 0;
   color: var(--fg-muted);
   font-size: 11.5px;
   line-height: 1.35;
+}
+
+.cockpit-output-list {
+  min-height: 0;
+}
+
+.cockpit-output-entry.tool {
+  border-color: color-mix(in oklab, var(--accent) 28%, var(--border-soft));
+}
+
+.cockpit-output-entry.output {
+  border-color: color-mix(in oklab, var(--ok) 22%, var(--border-soft));
+}
+
+.cockpit-output-entry.system,
+.cockpit-output-entry.thought {
+  opacity: 0.9;
+}
+
+.cockpit-output-meta {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(42px, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-dim);
+  font-size: 10.5px;
+}
+
+.cockpit-output-meta strong {
+  color: var(--fg);
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cockpit-output-meta em {
+  color: var(--fg-muted);
+  font-style: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cockpit-review-row {

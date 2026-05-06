@@ -556,6 +556,7 @@ function AppInner() {
               tasks={tasks}
               runtimes={runtimes}
               messages={messages}
+              agentStreams={agentStreams}
               teamId={team.name || activeTeamId}
               actor={{
                 teamId: team.name || activeTeamId || 'system',
