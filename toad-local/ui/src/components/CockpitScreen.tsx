@@ -37,6 +37,10 @@ import {
   buildCockpitFileSourceOptions,
   selectedTaskWorktreeSourceKey,
 } from './cockpitFileSources';
+import {
+  buildCockpitSearchSummary,
+  type CockpitSearchMatch,
+} from './cockpitSearch';
 import type { StreamEntry } from '@/utils/agentStream';
 
 interface CockpitScreenProps {
@@ -96,6 +100,10 @@ export function CockpitScreen({
   const [fileTreeError, setFileTreeError] = useState<string | null>(null);
   const [fileTreeLoading, setFileTreeLoading] = useState(false);
   const [fileQuery, setFileQuery] = useState('');
+  const [fileContentQuery, setFileContentQuery] = useState('');
+  const [fileSearchResults, setFileSearchResults] = useState<CockpitSearchMatch[] | null>(null);
+  const [fileSearchLoading, setFileSearchLoading] = useState(false);
+  const [fileSearchError, setFileSearchError] = useState<string | null>(null);
   const [expandedFilePaths, setExpandedFilePaths] = useState<Set<string>>(() => new Set());
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
   const [externalOpenRequest, setExternalOpenRequest] = useState<{ sourceKey: string; path: string; requestId: number } | null>(null);
@@ -134,6 +142,10 @@ export function CockpitScreen({
     [effectiveExpandedPaths, filteredTree.nodes],
   );
   const visibleFiles = visibleFileNodes.filter((node) => node.kind === 'file');
+  const fileSearchSummary = useMemo(
+    () => buildCockpitSearchSummary(fileSearchResults ?? [], 24),
+    [fileSearchResults],
+  );
   const selectedDriftFindings = driftData?.findings.filter((finding) =>
     selectedTask ? finding.taskId === selectedTask.id : true,
   ) ?? [];
@@ -196,8 +208,41 @@ export function CockpitScreen({
     }
   }
 
+  async function searchFileContents() {
+    const query = fileContentQuery.trim();
+    if (!teamId || !query) {
+      setFileSearchResults(null);
+      setFileSearchError(null);
+      return;
+    }
+    setFileSearchLoading(true);
+    setFileSearchError(null);
+    try {
+      const result = await callTool<{ matches: CockpitSearchMatch[] }>({
+        actor,
+        method: 'ide_search_files',
+        args: { source: fileSource, query },
+      });
+      setFileSearchResults(result.matches ?? []);
+    } catch (err) {
+      setFileSearchResults(null);
+      setFileSearchError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setFileSearchLoading(false);
+    }
+  }
+
+  function openFileFromCockpit(path: string) {
+    setActiveFilePath(path);
+    setExpandedFilePaths((current) => mergeExpandedPaths(current, getInitialExpandedPaths([], path)));
+    setExternalOpenRequest({ sourceKey: fileSourceKey, path, requestId: Date.now() });
+  }
+
   useEffect(() => {
     setFileQuery('');
+    setFileContentQuery('');
+    setFileSearchResults(null);
+    setFileSearchError(null);
     setExpandedFilePaths(new Set());
     setFileTreeError(null);
     void refreshFiles();
@@ -376,6 +421,59 @@ export function CockpitScreen({
                 </button>
               )}
             </div>
+            <div className="cockpit-content-search">
+              <div className="code-tree-search cockpit-file-search">
+                <Icon name="search" size={12} />
+                <input
+                  value={fileContentQuery}
+                  onChange={(event) => setFileContentQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') void searchFileContents();
+                  }}
+                  placeholder="Search contents..."
+                  aria-label="Search file contents"
+                />
+                {fileContentQuery && (
+                  <button
+                    type="button"
+                    className="code-tree-clear"
+                    onClick={() => {
+                      setFileContentQuery('');
+                      setFileSearchResults(null);
+                      setFileSearchError(null);
+                    }}
+                    aria-label="Clear content search"
+                  >
+                    x
+                  </button>
+                )}
+              </div>
+              <button className="btn btn-sm" type="button" onClick={() => void searchFileContents()} disabled={fileSearchLoading || !fileContentQuery.trim()}>
+                {fileSearchLoading ? 'Searching' : 'Find'}
+              </button>
+            </div>
+            {fileSearchError && <div className="code-error">{fileSearchError}</div>}
+            {fileSearchResults && (
+              <div className="cockpit-search-results" aria-label="Content search results">
+                <div className="cockpit-search-summary">
+                  <span>{fileSearchSummary.totalCount} match{fileSearchSummary.totalCount === 1 ? '' : 'es'}</span>
+                  {fileSearchSummary.overflowCount > 0 && <em>{fileSearchSummary.overflowCount} hidden</em>}
+                </div>
+                {fileSearchSummary.rows.length === 0 ? (
+                  <div className="code-muted">No content matches found.</div>
+                ) : fileSearchSummary.rows.map((match) => (
+                  <button
+                    key={match.id}
+                    className="cockpit-search-result"
+                    type="button"
+                    onClick={() => openFileFromCockpit(match.relativePath)}
+                  >
+                    <strong className="mono">{match.title}</strong>
+                    <span>{match.snippet}</span>
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="code-tree-tools">
               <button type="button" onClick={() => setExpandedFilePaths(new Set(collectDirectoryPaths(codeTree)))}>
                 Expand all
@@ -398,10 +496,7 @@ export function CockpitScreen({
               expandedPaths={effectiveExpandedPaths}
               activePath={activeFilePath}
               onToggleDirectory={(path) => setExpandedFilePaths((current) => toggleExpandedPath(current, path))}
-              onOpenFile={(path) => {
-                setActiveFilePath(path);
-                setExternalOpenRequest({ sourceKey: fileSourceKey, path, requestId: Date.now() });
-              }}
+              onOpenFile={openFileFromCockpit}
             />
           </div>
         )}
