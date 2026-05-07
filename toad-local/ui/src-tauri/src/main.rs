@@ -38,6 +38,8 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(ApiServer::new())
         .invoke_handler(tauri::generate_handler![switch_project, get_active_project])
         .setup(|app| {

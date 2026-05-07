@@ -45,11 +45,21 @@
     "longDescription": "Symphony AI turns project ideas into durable specs, launches role-based coding-agent teams, tracks real git work, monitors drift, and gates risky changes through a local-first desktop workspace.",
     "resources": [],
     "externalBin": [],
-    "copyright": "Copyright (c) 2026"
+    "copyright": "Copyright (c) 2026",
+    "createUpdaterArtifacts": true
   },
   "plugins": {
     "shell": {
       "open": true
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEZBOUU5MzQ3NDQ5NkJBQzIKUldUQ3VwWkVSNU9lK243MEZ6RlBabFZlQzhSTm1GWmk3RVRaeTlmWVZtRk1mbTlTNkpEYVQxMDMK",
+      "endpoints": [
+        "https://github.com/TheOverAchievingDev/T.O.A.D/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

@@ -10,7 +10,8 @@ export type SettingsSectionKey =
   | 'risk'
   | 'mcp'
   | 'notifications'
-  | 'advanced';
+  | 'advanced'
+  | 'about';
 
 export interface SettingsSection {
   key: SettingsSectionKey;
@@ -29,6 +30,7 @@ const SECTIONS: SettingsSection[] = [
   { key: 'mcp', label: 'MCP servers', icon: 'workflow', description: 'TOAD’s server + extras.' },
   { key: 'notifications', label: 'Notifications', icon: 'bell', description: 'Toasts, drawer entries, push.' },
   { key: 'advanced', label: 'Advanced', icon: 'terminal', description: 'DB path, port, log level, dev tools.' },
+  { key: 'about', label: 'About', icon: 'info', description: 'Version, updates, license.' },
 ];
 
 interface SettingsLayoutProps {

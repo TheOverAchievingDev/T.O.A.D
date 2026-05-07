@@ -11,6 +11,7 @@ import { PluginsSettings } from './PluginsSettings';
 import { McpServersSettings } from './McpServersSettings';
 import { NotificationsSettings } from './NotificationsSettings';
 import { AdvancedSettings } from './AdvancedSettings';
+import { AboutSettings } from './AboutSettings';
 
 interface SettingsScreenProps {
   tweaks: Tweaks;
@@ -32,6 +33,7 @@ export function SettingsScreen({ tweaks, setTweak, onClose }: SettingsScreenProp
       {active === 'mcp' && <McpServersSettings />}
       {active === 'notifications' && <NotificationsSettings />}
       {active === 'advanced' && <AdvancedSettings />}
+      {active === 'about' && <AboutSettings />}
     </SettingsLayout>
   );
 }
