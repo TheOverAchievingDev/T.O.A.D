@@ -53,7 +53,7 @@
       "open": true
     },
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEZBOUU5MzQ3NDQ5NkJBQzIKUldUQ3VwWkVSNU9lK243MEZ6RlBabFZlQzhSTm1GWmk3RVRaeTlmWVZtRk1mbTlTNkpEYVQxMDMK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc2NzJEREFBMDRGQjY5OQpSV1NadGsrZzJpMW5CMDA3WFF4bjVPbFkzQVRUM1d2NHdGZmtobFlCNGxBODN2MzFRa0tBSG5yQQo=",
       "endpoints": [
         "https://github.com/TheOverAchievingDev/T.O.A.D/releases/latest/download/latest.json"
       ],
