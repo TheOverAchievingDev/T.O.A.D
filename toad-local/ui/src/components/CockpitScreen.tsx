@@ -10,6 +10,7 @@ import { CodeScreen } from './CodeScreen';
 import { TaskRiskBadge } from './TaskRiskBadge';
 import { DriftBadge } from './DriftBadge';
 import { IdeFileTree } from './IdeFileTree';
+import { IdeEditorPane } from './IdeEditorPane';
 import {
   sourceKeyToIdeSource,
   type IdeStatusResult,
@@ -140,6 +141,15 @@ export function CockpitScreen({
     review: selectedTask?.review ?? null,
     validations: selectedTask?.validations ?? [],
   });
+
+  const activeAgentsInWorktree = useMemo(() => {
+    if (!fileSourceKey.startsWith('task:')) return [];
+    const taskId = fileSourceKey.slice(5);
+    const task = tasks.find(t => t.id === taskId);
+    if (!task || task.status === 'done' || task.status === 'rejected') return [];
+    const assignee = task.assignee || 'lead';
+    return liveRuntimes.filter(r => r.agent === assignee || r.agent === 'lead');
+  }, [fileSourceKey, tasks, liveRuntimes]);
 
   async function refreshFiles() {
     if (!teamId) return;
