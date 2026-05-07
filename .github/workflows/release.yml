@@ -26,6 +26,10 @@ jobs:
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      - name: install engine dependencies
+        run: npm install --omit=dev
+        working-directory: toad-local
+
       - name: install frontend dependencies
         run: npm install
         working-directory: toad-local/ui
