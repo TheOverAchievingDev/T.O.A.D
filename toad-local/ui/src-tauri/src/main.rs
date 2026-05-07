@@ -43,7 +43,7 @@ fn main() {
         .manage(ApiServer::new())
         .invoke_handler(tauri::generate_handler![switch_project, get_active_project])
         .setup(|app| {
-            let (project_dir, script) = match find_orchestrator_script() {
+            let (project_dir, script) = match find_orchestrator_script(app.handle()) {
                 Some(pair) => pair,
                 None => {
                     eprintln!(
@@ -89,9 +89,19 @@ fn main() {
 }
 
 /// Walk up from the current directory looking for a sibling that contains
-/// `scripts/dev-api-server.mjs`. Returns the directory holding `scripts/`
-/// (i.e. the project root) and the resolved script path.
-fn find_orchestrator_script() -> Option<(PathBuf, PathBuf)> {
+/// `scripts/dev-api-server.mjs`. In packaged builds, prefer the bundled
+/// resource copy at `$RESOURCE/engine/scripts/dev-api-server.mjs`.
+/// Returns the directory holding `scripts/` (i.e. the engine root) and the
+/// resolved script path.
+fn find_orchestrator_script(app: &AppHandle) -> Option<(PathBuf, PathBuf)> {
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let engine_dir = resource_dir.join("engine");
+        let resource_script = engine_dir.join("scripts").join("dev-api-server.mjs");
+        if resource_script.exists() {
+            return Some((engine_dir, resource_script));
+        }
+    }
+
     let start = std::env::current_dir().ok()?;
     let mut current: Option<&Path> = Some(start.as_path());
     for _ in 0..6 {
@@ -148,7 +158,10 @@ fn spawn_api(app: &AppHandle, project_dir: &Path, script: &Path, project_cwd: &s
             if project_cwd.is_empty() {
                 println!("[symphony-desktop] orchestrator API spawned (no project loaded)");
             } else {
-                println!("[symphony-desktop] orchestrator API spawned for {}", project_cwd);
+                println!(
+                    "[symphony-desktop] orchestrator API spawned for {}",
+                    project_cwd
+                );
             }
         }
         Err(err) => {
