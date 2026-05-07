@@ -39,6 +39,6 @@ jobs:
           tagName: v__VERSION__
           releaseName: 'Symphony AI v__VERSION__'
           releaseBody: 'See the assets below for the latest installers and updater bundles.'
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           projectPath: toad-local/ui
