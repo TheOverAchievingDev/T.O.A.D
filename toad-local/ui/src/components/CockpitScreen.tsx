@@ -6,7 +6,6 @@ import type { ProjectEntry } from '@/hooks/useProjects';
 import type { DriftRunResult } from '@/hooks/useDrift';
 import { roleStyle } from '@/data/roles';
 import { Icon } from './Icon';
-import { CodeScreen } from './CodeScreen';
 import { TaskRiskBadge } from './TaskRiskBadge';
 import { DriftBadge } from './DriftBadge';
 import { IdeFileTree } from './IdeFileTree';
@@ -34,6 +33,10 @@ import { buildCockpitOutputEntries } from './cockpitOutput';
 import { summarizeCockpitReview } from './cockpitReview';
 import { buildCockpitTaskGroups } from './cockpitTasks';
 import { buildCockpitAgentRows } from './cockpitAgents';
+import {
+  buildCockpitFileSourceOptions,
+  selectedTaskWorktreeSourceKey,
+} from './cockpitFileSources';
 import type { StreamEntry } from '@/utils/agentStream';
 
 interface CockpitScreenProps {
@@ -110,7 +113,15 @@ export function CockpitScreen({
     () => buildCockpitAgentRows({ members: team.members, runtimes, streams: agentStreams }),
     [agentStreams, runtimes, team.members],
   );
-  const worktreeTasks = tasks.filter((task) => task.worktree?.status === 'created' && task.worktree.path);
+  const selectedTaskSourceKey = selectedTaskWorktreeSourceKey(selectedTask);
+  const fileSourceOptions = useMemo(
+    () => buildCockpitFileSourceOptions({
+      tasks,
+      selectedTaskId: selectedTask?.id ?? null,
+      projectLabel: activeProject?.name ?? 'Project root',
+    }),
+    [activeProject?.name, selectedTask?.id, tasks],
+  );
   const fileSource = useMemo(() => sourceKeyToIdeSource(fileSourceKey), [fileSourceKey]);
   const codeTree = useMemo(() => buildCodeTree(fileTree?.entries ?? []), [fileTree?.entries]);
   const filteredTree = useMemo(() => filterCodeTree(codeTree, fileQuery), [codeTree, fileQuery]);
@@ -192,6 +203,11 @@ export function CockpitScreen({
     void refreshFiles();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teamId, fileSourceKey, activeProject?.id]);
+
+  useEffect(() => {
+    if (fileSourceOptions.some((option) => option.key === fileSourceKey)) return;
+    setFileSourceKey('project');
+  }, [fileSourceKey, fileSourceOptions]);
 
   async function runSelectedTaskValidation() {
     if (!selectedTask || testRunning) return;
@@ -317,16 +333,26 @@ export function CockpitScreen({
                 <Icon name="folder" size={12} />
                 Open folder
               </button>
+              {selectedTaskSourceKey && fileSourceKey !== selectedTaskSourceKey && (
+                <button
+                  className="btn btn-sm"
+                  type="button"
+                  onClick={() => setFileSourceKey(selectedTaskSourceKey)}
+                  title="Switch the file tree and editor to the selected task worktree"
+                >
+                  <Icon name="kanban" size={12} />
+                  Selected task files
+                </button>
+              )}
               <select
                 className="field-input mono"
                 value={fileSourceKey}
                 aria-label="File source"
                 onChange={(event) => setFileSourceKey(event.target.value)}
               >
-                <option value="project">Project root</option>
-                {worktreeTasks.map((task) => (
-                  <option key={task.id} value={`task:${task.id}`}>
-                    {task.id}
+                {fileSourceOptions.map((option) => (
+                  <option key={option.key} value={option.key}>
+                    {option.isSelectedTask ? '* ' : ''}{option.label}
                   </option>
                 ))}
               </select>
@@ -422,18 +448,16 @@ export function CockpitScreen({
       </aside>
 
       <section className="cockpit-center" aria-label="Code editor and diff viewer">
-        <CodeScreen
-          teamId={teamId}
-          tasks={tasks}
-          projects={projects}
-          activeProject={activeProject}
-          onSelectProject={onSelectProject}
-          onSelectFolder={onSelectFolder}
+        <IdeEditorPane
+          source={fileSource}
           actor={actor}
           driftData={driftData}
-          runtimes={runtimes}
-          mode="cockpit"
+          activeAgentsInWorktree={activeAgentsInWorktree}
           externalOpenRequest={externalOpenRequest}
+          onRefreshTreeRequest={(path) => {
+            if (path) setActiveFilePath(path);
+            void refreshFiles();
+          }}
         />
       </section>
 

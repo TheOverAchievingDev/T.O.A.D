@@ -532,6 +532,11 @@
   background: var(--bg);
 }
 
+.cockpit-center > .code-editor-pane {
+  height: 100%;
+  background: var(--bg-input);
+}
+
 .cockpit-center .code-header {
   min-height: 52px;
   padding: 9px 12px;
