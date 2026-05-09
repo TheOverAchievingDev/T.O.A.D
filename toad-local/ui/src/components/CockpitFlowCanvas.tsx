@@ -64,6 +64,38 @@ export function CockpitFlowCanvas({
     }
     return next;
   }, [activeTasks]);
+  // Pre-compute the latest visible activity blurb per member so the JSX
+  // doesn't filter+at(-1) the messages and streams arrays once per node.
+  // O(messages * members) before, O(messages + members) after.
+  const latestByAgent = useMemo(() => {
+    const map = new Map<string, string>();
+    const memberIds = new Set(team.members.map((member) => member.id));
+    for (const id of memberIds) {
+      const streamEntries = agentStreams[id];
+      if (streamEntries) {
+        for (let i = streamEntries.length - 1; i >= 0; i -= 1) {
+          const body = streamEntries[i].body.trim();
+          if (body) {
+            map.set(id, body);
+            break;
+          }
+        }
+      }
+    }
+    // Walk messages newest-first so the first match per agent IS the latest.
+    // Stop early once every member is covered.
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (map.size === memberIds.size) break;
+      const message = messages[i];
+      const peer = memberIds.has(message.from) ? message.from
+                 : memberIds.has(message.to)   ? message.to
+                 : null;
+      if (peer && !map.has(peer)) {
+        map.set(peer, message.body);
+      }
+    }
+    return map;
+  }, [team.members, messages, agentStreams]);
   const lead = team.members.find((member) => member.role === 'lead') ?? team.members[0] ?? null;
   const liveCount = runtimes.filter((runtime) => runtime.status === 'live' || runtime.status === 'launching').length;
   const reviewCount = activeTasks.filter((task) => task.status === 'review').length;
@@ -118,7 +150,7 @@ export function CockpitFlowCanvas({
             <span className="agent-avatar">{lead.avatar}</span>
             <div>
               <strong>{lead.name}</strong>
-              <span>{lead.activity?.label ?? latestAgentText(lead.id, messages, agentStreams) ?? 'Delegating and monitoring the plan'}</span>
+              <span>{lead.activity?.label ?? latestByAgent.get(lead.id) ?? 'Delegating and monitoring the plan'}</span>
             </div>
           </div>
           <div className="flow-lead-line" />
@@ -138,7 +170,7 @@ export function CockpitFlowCanvas({
                   <span>{focusedAgent.role} / {runtimeLabel(focusedRuntime)}</span>
                 </div>
               </div>
-              <p>{focusedAgent.activity?.label ?? latestAgentText(focusedAgent.id, messages, agentStreams) ?? 'No recent runtime activity.'}</p>
+              <p>{focusedAgent.activity?.label ?? latestByAgent.get(focusedAgent.id) ?? 'No recent runtime activity.'}</p>
               <div className="flow-focus-chips">
                 <span>{focusedAgentTasks.length} active</span>
                 <span>{focusedAgent.tasksDone} done</span>
@@ -242,7 +274,7 @@ export function CockpitFlowCanvas({
                       <strong>{member.name}</strong>
                       <em>{member.role}</em>
                     </span>
-                    <span>{member.activity?.label ?? latestAgentText(member.id, messages, agentStreams) ?? runtimeLabel(runtime)}</span>
+                    <span>{member.activity?.label ?? latestByAgent.get(member.id) ?? runtimeLabel(runtime)}</span>
                     <span className="flow-agent-work">
                       {owned.length === 0 ? 'No assigned active tasks' : `${owned.length} active task${owned.length === 1 ? '' : 's'}`}
                     </span>
@@ -339,14 +371,3 @@ function formatTokenUse(tokens: number, tokenLimit: number): string {
   return `${percent}% tokens`;
 }
 
-function latestAgentText(
-  agentId: string,
-  messages: Message[],
-  streams: Record<string, StreamEntry[]>,
-): string | null {
-  const streamEntry = streams[agentId]?.filter((entry) => entry.body.trim()).at(-1);
-  if (streamEntry) return streamEntry.body.trim();
-
-  const message = messages.filter((candidate) => candidate.from === agentId || candidate.to === agentId).at(-1);
-  return message?.body ?? null;
-}
