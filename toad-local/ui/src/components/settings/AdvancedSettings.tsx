@@ -4,6 +4,8 @@ import { SettingsSectionHeader, SettingsCard } from './SettingsLayout';
 import { useSectionDraft } from './useSectionDraft';
 import { SaveBar, SectionMeta } from './SectionShell';
 import { callTool, ToadApiError, type Actor } from '@/api/client';
+import type { Tweaks } from '@/types';
+import type { SetTweak } from '../TweaksPanel';
 
 const DEFAULT_ACTOR: Actor = { teamId: 'default', agentId: 'ui-client', agentName: 'ui', role: 'human' };
 
@@ -32,7 +34,12 @@ type BackendResetState =
   | { kind: 'done'; what: 'settings' | 'risk' }
   | { kind: 'error'; message: string };
 
-export function AdvancedSettings() {
+interface AdvancedSettingsProps {
+  tweaks: Tweaks;
+  setTweak: SetTweak;
+}
+
+export function AdvancedSettings({ tweaks, setTweak }: AdvancedSettingsProps) {
   const draft = useSectionDraft<AdvancedDraft>({ section: 'advanced', scope: 'global', defaults: DEFAULTS });
   const [resetConfirm, setResetConfirm] = useState(false);
   const [backendReset, setBackendReset] = useState<BackendResetState>({ kind: 'idle' });

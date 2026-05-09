@@ -32,7 +32,7 @@ export function SettingsScreen({ tweaks, setTweak, onClose }: SettingsScreenProp
       {active === 'risk' && <RiskPolicySettings />}
       {active === 'mcp' && <McpServersSettings />}
       {active === 'notifications' && <NotificationsSettings />}
-      {active === 'advanced' && <AdvancedSettings />}
+      {active === 'advanced' && <AdvancedSettings tweaks={tweaks} setTweak={setTweak} />}
       {active === 'about' && <AboutSettings />}
     </SettingsLayout>
   );
