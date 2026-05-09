@@ -95,7 +95,7 @@ export function CockpitScreen({
   onRefreshData,
 }: CockpitScreenProps) {
   const [leftTab, setLeftTab] = useState<LeftTab>('tasks');
-  const [centerTab, setCenterTab] = useState<CenterTab>('flow');
+  const [centerTab, setCenterTab] = useState<CenterTab>(developerMode ? 'code' : 'flow');
   const [rightTab, setRightTab] = useState<RightTab>('inspect');
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(tasks[0]?.id ?? null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(team.members[0]?.id ?? null);
