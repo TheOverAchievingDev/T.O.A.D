@@ -497,7 +497,7 @@
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(260px, 320px) minmax(420px, 1fr) minmax(280px, 360px);
-  grid-template-rows: minmax(0, 1fr) 54px;
+  grid-template-rows: minmax(0, 1fr) 68px;
   background: var(--bg);
   overflow: hidden;
 }
@@ -1385,8 +1385,9 @@
   grid-template-columns: 220px minmax(0, 1fr);
   align-items: stretch;
   gap: 12px;
-  padding: 8px 14px;
+  padding: 6px 14px;
   overflow: hidden;
+  min-height: 0;
 }
 
 .cockpit-bottom.collapsed {
