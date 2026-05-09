@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Actor } from '@/api/client';
 import { callTool } from '@/api/client';
-import type { Message, Runtime, Team, UiTask, ValidationKind, UiValidationRun } from '@/types';
+import type { Message, Runtime, Team, UiTask, UiValidationRun } from '@/types';
 import type { ProjectEntry } from '@/hooks/useProjects';
 import type { DriftRunResult } from '@/hooks/useDrift';
 import { roleStyle } from '@/data/roles';
@@ -24,11 +24,8 @@ import {
   flattenVisibleCodeTree,
 } from './codeTreeNavigator';
 import {
-  VALIDATION_KINDS,
-  formatValidationDuration,
   formatValidationTime,
   sortValidationRuns,
-  validationOutputLines,
   validationSummary,
 } from './cockpitValidation';
 import { buildCockpitOutputEntries } from './cockpitOutput';
@@ -97,10 +94,7 @@ export function CockpitScreen({
   const [rightTab, setRightTab] = useState<RightTab>('inspect');
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(tasks[0]?.id ?? null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(team.members[0]?.id ?? null);
-  const [terminalExpanded, setTerminalExpanded] = useState(false);
   const [testRunning, setTestRunning] = useState(false);
-  const [testMessage, setTestMessage] = useState<string | null>(null);
-  const [validationKind, setValidationKind] = useState<ValidationKind>('test');
   const [fileSourceKey, setFileSourceKey] = useState('project');
   const [fileTree, setFileTree] = useState<IdeTreeResult | null>(null);
   const [fileTreeError, setFileTreeError] = useState<string | null>(null);
@@ -168,9 +162,6 @@ export function CockpitScreen({
     () => sortValidationRuns(selectedTask?.validations ?? []),
     [selectedTask?.validations],
   );
-  const latestValidation = validationRuns[0] ?? null;
-  const latestValidationOutput = validationOutputLines(latestValidation);
-  const selectedKindLatestValidation = selectedTask?.latestValidation?.[validationKind] ?? null;
   const reviewSummary = summarizeCockpitReview({
     review: selectedTask?.review ?? null,
     validations: selectedTask?.validations ?? [],
@@ -280,18 +271,17 @@ export function CockpitScreen({
   async function runSelectedTaskValidation() {
     if (!selectedTask || testRunning) return;
     setTestRunning(true);
-    setTestMessage(null);
     try {
-      const result = await callTool<UiValidationRun>({
+      await callTool<UiValidationRun>({
         actor,
         method: 'validation_run',
-        idempotencyKey: `cockpit-validation-${selectedTask.id}-${validationKind}-${Date.now()}`,
-        args: { taskId: selectedTask.id, kind: validationKind },
+        idempotencyKey: `cockpit-validation-${selectedTask.id}-test-${Date.now()}`,
+        args: { taskId: selectedTask.id, kind: 'test' },
       });
-      setTestMessage(`${validationKind} ${result.verdict ?? 'recorded'}${typeof result.exitCode === 'number' ? `, exit ${result.exitCode}` : ''}`);
       onRefreshData();
-    } catch (err) {
-      setTestMessage(err instanceof Error ? err.message : String(err));
+    } catch {
+      // ReviewPane surfaces verdict via the validationRuns list once
+      // onRefreshData repopulates it; no inline error display needed.
     } finally {
       setTestRunning(false);
     }
@@ -317,7 +307,7 @@ export function CockpitScreen({
   }
 
   return (
-    <main className={`cockpit-screen ${terminalExpanded ? 'terminal-expanded' : ''}`}>
+    <main className="cockpit-screen">
       <aside className="cockpit-left" aria-label="Cockpit task and agent status">
         <div className="cockpit-pane-head">
           <div>
@@ -905,68 +895,6 @@ export function CockpitScreen({
           </div>
         )}
       </aside>
-
-      <section className={`cockpit-bottom ${terminalExpanded ? 'expanded' : 'collapsed'}`} aria-label="Integrated terminal and test runner">
-        <div className="cockpit-bottom-title">
-          <Icon name="terminal" size={14} />
-          <div>
-            <strong>Terminal / Test Runner</strong>
-            <span className="dim">
-              {selectedTask ? `${selectedTask.id} · ${validationSummary(validationRuns)}` : 'No task selected'}
-            </span>
-          </div>
-          <button
-            className="btn btn-sm cockpit-terminal-toggle"
-            type="button"
-            onClick={() => setTerminalExpanded((expanded) => !expanded)}
-          >
-            <Icon name={terminalExpanded ? 'chevronDown' : 'chevronUp'} size={12} />
-            {terminalExpanded ? 'Collapse' : 'Expand'}
-          </button>
-        </div>
-        <div className="cockpit-terminal">
-          <div className="cockpit-validation-bar">
-            <select
-              className="field-input mono cockpit-validation-kind"
-              value={validationKind}
-              onChange={(event) => setValidationKind(event.target.value as ValidationKind)}
-              aria-label="Validation kind"
-            >
-              {VALIDATION_KINDS.map((kind) => (
-                <option key={kind} value={kind}>
-                  {kind}
-                </option>
-              ))}
-            </select>
-            <button className="btn btn-sm" type="button" onClick={() => void runSelectedTaskValidation()} disabled={!selectedTask || testRunning}>
-              <Icon name="play" size={12} />
-              {testRunning ? 'Running' : selectedKindLatestValidation ? 'Re-run' : 'Run'}
-            </button>
-            {testMessage && <span className="mono cockpit-test-message">{testMessage}</span>}
-          </div>
-          <div className="cockpit-validation-history" aria-label="Validation history">
-            {validationRuns.length === 0 ? (
-              <span className="dim">No validation runs yet.</span>
-            ) : validationRuns.slice(0, 4).map((run) => (
-              <span key={`${run.kind}-${run.createdAt ?? run.command ?? 'run'}`} className={`cockpit-validation-chip ${run.verdict}`}>
-                {run.kind}
-                <strong>{run.verdict}</strong>
-                {formatValidationDuration(run.durationMs) && <em>{formatValidationDuration(run.durationMs)}</em>}
-              </span>
-            ))}
-          </div>
-          <pre className="cockpit-terminal-output">
-            {latestValidation
-              ? [
-                  `$ ${latestValidation.command ?? `${latestValidation.kind} command not configured`}`,
-                  `verdict=${latestValidation.verdict}${latestValidation.exitCode !== null ? ` exit=${latestValidation.exitCode}` : ''}${formatValidationTime(latestValidation.createdAt) ? ` at ${formatValidationTime(latestValidation.createdAt)}` : ''}`,
-                  ...latestValidationOutput.slice(0, 12),
-                  latestValidationOutput.length > 12 ? `... ${latestValidationOutput.length - 12} more lines` : '',
-                ].filter(Boolean).join('\n')
-              : 'Select a task and run a validation to see command output here.'}
-          </pre>
-        </div>
-      </section>
     </main>
   );
 }
