@@ -134,12 +134,16 @@ export function CockpitFlowCanvas({
           <p>{team.description || 'Agents coordinate around task ownership, review, drift, and validation.'}</p>
         </div>
         <div className="flow-stats" aria-label="Team flow stats">
-          <FlowStat label="Live" value={`${liveCount}/${runtimes.length}`} />
-          <FlowStat label="Open" value={String(activeTasks.length)} />
-          <FlowStat label="Review" value={String(reviewCount)} />
-          <FlowStat label="Done" value={String(doneCount)} />
-          <FlowStat label="Blocked" value={String(blockedCount)} tone={blockedCount > 0 ? 'warn' : undefined} />
-          <FlowStat label="Drift" value={driftData ? `${driftData.teamScore}%` : '-'} />
+          <div className="flow-stats-primary">
+            <FlowStat label="Live" value={`${liveCount}/${runtimes.length}`} />
+            <FlowStat label="Open" value={String(activeTasks.length)} />
+            <FlowStat label="Drift" value={driftData ? `${driftData.teamScore}%` : '-'} />
+          </div>
+          <div className="flow-stats-secondary">
+            <FlowStat label="Review" value={String(reviewCount)} />
+            <FlowStat label="Done" value={String(doneCount)} />
+            <FlowStat label="Blocked" value={String(blockedCount)} tone={blockedCount > 0 ? 'warn' : undefined} />
+          </div>
         </div>
       </div>
 

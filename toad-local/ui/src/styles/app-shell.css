@@ -828,6 +828,13 @@
 }
 
 .flow-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.flow-stats-primary,
+.flow-stats-secondary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
@@ -851,6 +858,21 @@
   margin-top: 3px;
   color: var(--fg);
   font-size: 16px;
+}
+
+.flow-stats-secondary .flow-stat {
+  padding: 6px 8px;
+  background: color-mix(in oklab, var(--bg-panel) 70%, transparent);
+}
+
+.flow-stats-secondary .flow-stat span {
+  font-size: 9.5px;
+}
+
+.flow-stats-secondary .flow-stat strong {
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--fg-muted);
 }
 
 .flow-stat.warn {
@@ -1318,11 +1340,14 @@
     grid-template-columns: 1fr;
   }
 
-  .flow-stats {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-  }
-
   .flow-focus-panel {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1200px) {
+  .flow-board {
+    min-width: 0;
     grid-template-columns: 1fr;
   }
 }
