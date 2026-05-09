@@ -56,7 +56,23 @@ The vibe-coder ships v1, then six months later wants to fix a bug. Today: openin
 - Diff-against-current-state drift — not against the original spec
 
 ### Foundry slice F.1: CLI-mediated planning
-Foundry currently uses LLM API for doc generation. The rest of Symphony uses CLI subscriptions (Claude Pro, Codex, Gemini Pro) — Foundry is the only piece that violates the "your subscription, not API" promise. Migrate to spawn `claude -p ...` like the runtime tier does. Closes the cost-story hole.
+Foundry currently uses LLM API for doc generation. The rest of Symphony uses CLI subscriptions (Claude Pro, Codex, Gemini Pro) — Foundry is the only piece that violates the "your subscription, not API" promise. Migrate to spawn `claude` as a persistent subprocess (matching how `RuntimeSupervisor.js` already runs runtime-tier agents) — NOT one-shot per turn. Closes the cost-story hole.
+
+### Foundry slice F.2: provider-aware Foundry
+After F.1 ships Claude-only, evaluate adding Codex/Gemini support to Foundry. Each CLI's flags differ (Claude `-p` + stream-json; Codex `--output-format json`; Gemini `--prompt-file`); needs the per-provider abstraction the drift LLM judge already pioneered. Operator picks per-session or per-project which provider to plan with. Lands once usage data shows which providers vibe coders actually use for planning.
+
+### Foundry slice F.3+: planning-quality enhancements
+Patterns worth borrowing from external planning tools (`/deep-plan`, spec-kit, planning-with-files) but built as Symphony-native tools/skills, not third-party plugin adoptions:
+
+1. **Cross-LLM critique loop** (from `/deep-plan` by Pierce Lamb): post-doc-generation, send the 7 docs to a different provider for "find what we missed" review. Mirrors drift slice 2's Opus-tier escalation pattern. Blocks on F.2's multi-provider work. Triples LLM cost per refinement; only worth shipping if real Foundry-quality data justifies.
+
+2. **AskUserQuestion-style structured interviews** (from `/deep-plan`): instead of free-text "any other questions?", a Symphony MCP tool the planning agent calls to capture explicit Q+A pairs. Trackable across turns, surfaces which decisions are still open. Better Foundry hygiene than free-text exchange.
+
+3. **Phase artifact pipeline formalization** (from GitHub spec-kit): make the brief.md → tech_spec.md → roadmap.md → tasks.md dependency explicit instead of implicit. Each phase reads prior phase's artifact as input rather than relying on conversation context. Tightens output quality and reduces "the model forgot what we agreed in turn 2" failures.
+
+4. **Hook-based plan re-reading** (from planning-with-files by OthmanAdi): when an agent in the runtime tier is mid-task, hook makes them re-read tasks.md and steering.md before tool calls. Catches drift early before code ships. **Belongs in runtime tier, NOT Foundry** — different slice entirely. Probably a hardening item once IDE Phase 4 lands.
+
+Each is a candidate for a future slice driven by observed need, not pre-emptive scope expansion. F.1 explicitly does NOT include any of these — it's a pure migration with identical behavior to today's API path.
 
 ### ASPE — Activity Stream Plain English
 A low-priority background agent (Haiku-class) watches each agent's tool-call stream and emits plain-English summaries: "this agent just refactored useDrift.ts to extract the linkage filter; here's a one-line summary." Closes the gap that drove the project's origin story (copy-pasting agent output into another session to translate).
