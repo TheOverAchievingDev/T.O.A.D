@@ -49,6 +49,7 @@ interface CockpitScreenProps {
   messages: Message[];
   agentStreams?: Record<string, StreamEntry[]>;
   teamId: string | null;
+  developerMode: boolean;
   actor: Actor;
   projects: ProjectEntry[];
   activeProject: ProjectEntry | null;
@@ -75,6 +76,7 @@ export function CockpitScreen({
   messages,
   agentStreams = {},
   teamId,
+  developerMode,
   actor,
   projects,
   activeProject,

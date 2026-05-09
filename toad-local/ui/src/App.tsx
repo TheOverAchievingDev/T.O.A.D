@@ -558,6 +558,7 @@ function AppInner() {
               messages={messages}
               agentStreams={agentStreams}
               teamId={team.name || activeTeamId}
+              developerMode={tweaks.developerMode === true}
               actor={{
                 teamId: team.name || activeTeamId || 'system',
                 agentId: 'ui-client',
