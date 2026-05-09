@@ -95,6 +95,24 @@ export function AdvancedSettings({ tweaks, setTweak }: AdvancedSettingsProps) {
       <SectionMeta draft={draft} />
 
       <SettingsCard
+        title="Developer mode"
+        description="Reveals power-user surfaces: integrated terminal/test runner in cockpit, code-first cockpit default. More controls as future slices ship."
+      >
+        <div className="field" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <input
+            id="developer-mode-toggle"
+            type="checkbox"
+            checked={tweaks.developerMode === true}
+            onChange={(e) => setTweak('developerMode', e.target.checked)}
+            style={{ width: 16, height: 16 }}
+          />
+          <label htmlFor="developer-mode-toggle" style={{ fontSize: 12 }}>
+            {tweaks.developerMode ? 'Developer mode is ON' : 'Developer mode is OFF'}
+          </label>
+        </div>
+      </SettingsCard>
+
+      <SettingsCard
         title="DB path override"
         description="Where TOAD opens its SQLite file. Leaving this blank uses .toad/toad.db inside the active project. Changes apply on next API restart."
       >
