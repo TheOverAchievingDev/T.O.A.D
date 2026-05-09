@@ -207,6 +207,19 @@ export class SqliteFoundryStore {
     return { sessionId: normalizedSessionId, rootDir: root, files };
   }
 
+  setCliSessionId({ sessionId, cliSessionId } = {}) {
+    if (typeof sessionId !== 'string' || sessionId.length === 0) {
+      throw new TypeError('setCliSessionId: sessionId is required');
+    }
+    if (typeof cliSessionId !== 'string' || cliSessionId.length === 0) {
+      throw new TypeError('setCliSessionId: cliSessionId is required');
+    }
+    const now = new Date().toISOString();
+    this.db.prepare(
+      'UPDATE foundry_sessions SET cli_session_id = ?, updated_at = ? WHERE session_id = ?'
+    ).run(cliSessionId, now, sessionId);
+  }
+
   close() {
     this.db.close();
   }
@@ -242,6 +255,7 @@ function rowToSession(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     metadata: jsonParseObject(row.metadata_json, {}),
+    cliSessionId: row.cli_session_id ?? null,
   };
 }
 

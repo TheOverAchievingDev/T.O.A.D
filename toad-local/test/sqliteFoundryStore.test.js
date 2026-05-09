@@ -112,3 +112,42 @@ test('SqliteFoundryStore rejects artifact export path traversal', (t) => {
   );
   store.close();
 });
+
+test('SqliteFoundryStore.setCliSessionId stamps cli_session_id on the session row', (t) => {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'toad-foundry-cli-'));
+  const dbPath = join(tmpDir, 'toad.db');
+  t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+
+  const store = new SqliteFoundryStore({ filePath: dbPath });
+  const session = store.createSession({ title: 'Test session' });
+  store.setCliSessionId({ sessionId: session.sessionId, cliSessionId: 'claude-uuid-1' });
+  const fetched = store.getSession(session.sessionId);
+  assert.equal(fetched.session.cliSessionId, 'claude-uuid-1');
+  store.close();
+});
+
+test('SqliteFoundryStore.getSession exposes cliSessionId as null when unset', (t) => {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'toad-foundry-cli-'));
+  const dbPath = join(tmpDir, 'toad.db');
+  t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+
+  const store = new SqliteFoundryStore({ filePath: dbPath });
+  const session = store.createSession({ title: 'Test session' });
+  const fetched = store.getSession(session.sessionId);
+  assert.equal(fetched.session.cliSessionId, null);
+  store.close();
+});
+
+test('SqliteFoundryStore.setCliSessionId is idempotent', (t) => {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'toad-foundry-cli-'));
+  const dbPath = join(tmpDir, 'toad.db');
+  t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+
+  const store = new SqliteFoundryStore({ filePath: dbPath });
+  const session = store.createSession({ title: 'Test session' });
+  store.setCliSessionId({ sessionId: session.sessionId, cliSessionId: 'claude-uuid-1' });
+  store.setCliSessionId({ sessionId: session.sessionId, cliSessionId: 'claude-uuid-1' });
+  const fetched = store.getSession(session.sessionId);
+  assert.equal(fetched.session.cliSessionId, 'claude-uuid-1');
+  store.close();
+});
