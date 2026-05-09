@@ -497,9 +497,13 @@
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(260px, 320px) minmax(420px, 1fr) minmax(280px, 360px);
-  grid-template-rows: minmax(0, 1fr) minmax(132px, 18vh);
+  grid-template-rows: minmax(0, 1fr) 54px;
   background: var(--bg);
   overflow: hidden;
+}
+
+.cockpit-screen.terminal-expanded {
+  grid-template-rows: minmax(0, 1fr) minmax(180px, 24vh);
 }
 
 .cockpit-left,
@@ -525,6 +529,8 @@
   grid-row: 1;
   min-width: 0;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
 
@@ -532,9 +538,793 @@
   background: var(--bg);
 }
 
-.cockpit-center > .code-editor-pane {
+.cockpit-center .code-editor-pane {
   height: 100%;
   background: var(--bg-input);
+}
+
+.cockpit-center-tabs {
+  flex: 0 0 42px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-panel);
+}
+
+.cockpit-center-tabs button {
+  height: 28px;
+  min-width: 82px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.cockpit-center-tabs button:hover,
+.cockpit-center-tabs button.active {
+  color: var(--fg);
+  border-color: var(--border-soft);
+  background: var(--bg-hover);
+}
+
+.cockpit-center-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.flow-canvas {
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background:
+    linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px),
+    var(--bg);
+  background-size: 36px 36px;
+  padding: 18px;
+}
+
+.cockpit-review-pane {
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg);
+  padding: 18px;
+}
+
+.cockpit-review-pane.empty {
+  display: grid;
+  place-items: center;
+}
+
+.cockpit-review-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 14px;
+}
+
+.cockpit-review-hero h2 {
+  margin: 4px 0;
+  color: var(--fg);
+  font-size: 20px;
+  letter-spacing: 0;
+}
+
+.cockpit-review-hero p {
+  max-width: 760px;
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.cockpit-review-actions,
+.cockpit-review-chip-row,
+.cockpit-inspect-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cockpit-review-actions {
+  justify-content: flex-end;
+}
+
+.cockpit-review-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.cockpit-review-metric,
+.cockpit-review-summary-card,
+.cockpit-review-panel,
+.cockpit-review-diff {
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-panel);
+}
+
+.cockpit-review-metric {
+  padding: 9px;
+}
+
+.cockpit-review-metric.good {
+  border-color: color-mix(in oklab, var(--ok) 32%, var(--border-soft));
+}
+
+.cockpit-review-metric.bad {
+  border-color: color-mix(in oklab, var(--err) 36%, var(--border-soft));
+}
+
+.cockpit-review-metric span,
+.cockpit-review-summary-card span:first-child {
+  display: block;
+  color: var(--fg-dim);
+  font-size: 10.5px;
+}
+
+.cockpit-review-metric strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--fg);
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: capitalize;
+}
+
+.cockpit-review-summary-card {
+  padding: 12px;
+  margin-bottom: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.cockpit-review-summary-card.ready {
+  border-color: color-mix(in oklab, var(--ok) 28%, var(--border-soft));
+}
+
+.cockpit-review-summary-card.blocked {
+  border-color: color-mix(in oklab, var(--err) 34%, var(--border-soft));
+}
+
+.cockpit-review-summary-card strong {
+  display: block;
+  margin-top: 5px;
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.cockpit-review-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.cockpit-review-panel {
+  min-width: 0;
+  padding: 10px;
+}
+
+.cockpit-review-file-list,
+.cockpit-review-validation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cockpit-review-file-list code {
+  display: block;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--fg-muted);
+  padding: 6px 7px;
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cockpit-review-file-list.drift code {
+  border-color: color-mix(in oklab, var(--err) 34%, var(--border-soft));
+}
+
+.cockpit-review-diff {
+  min-height: 240px;
+  padding: 10px;
+}
+
+.cockpit-review-diff pre {
+  max-height: 460px;
+  min-height: 180px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  background: var(--bg-canvas);
+  color: var(--fg-muted);
+  padding: 10px;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre;
+}
+
+.flow-canvas.empty {
+  display: grid;
+  place-items: center;
+}
+
+.flow-empty {
+  width: min(420px, 100%);
+  border: 1px dashed var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  color: var(--fg-muted);
+  padding: 28px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.flow-empty h2 {
+  margin: 0;
+  color: var(--fg);
+  font-size: 17px;
+  letter-spacing: 0;
+}
+
+.flow-empty p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.flow-hero {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(360px, 520px);
+  gap: 18px;
+  align-items: start;
+  margin-bottom: 16px;
+}
+
+.flow-hero h2 {
+  margin: 4px 0;
+  color: var(--fg);
+  font-size: 20px;
+  letter-spacing: 0;
+}
+
+.flow-hero p {
+  max-width: 720px;
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.flow-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.flow-stat {
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  background: var(--bg-panel);
+  padding: 8px;
+}
+
+.flow-stat span {
+  display: block;
+  color: var(--fg-dim);
+  font-size: 10.5px;
+}
+
+.flow-stat strong {
+  display: block;
+  margin-top: 3px;
+  color: var(--fg);
+  font-size: 16px;
+}
+
+.flow-stat.warn {
+  border-color: color-mix(in oklab, var(--warn) 38%, var(--border-soft));
+}
+
+.flow-lead-band {
+  margin-bottom: 16px;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+}
+
+.flow-node,
+.flow-agent-node,
+.flow-task-node {
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--accent-bg, rgba(255,255,255,0.03)) 45%, var(--bg-panel));
+  color: var(--fg);
+}
+
+.lead-node {
+  width: min(520px, 100%);
+  min-height: 70px;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: auto 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border-color: color-mix(in oklab, var(--accent) 36%, var(--border-soft));
+}
+
+.lead-node .agent-avatar {
+  width: 34px;
+  height: 34px;
+}
+
+.lead-node strong,
+.lead-node span:last-child {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lead-node span:last-child {
+  margin-top: 3px;
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+
+.flow-lead-line {
+  width: 1px;
+  height: 24px;
+  background: var(--border);
+}
+
+.flow-focus-panel {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.9fr) minmax(320px, 1.1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.flow-focus-card {
+  min-width: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  padding: 12px;
+}
+
+.flow-focus-card.primary {
+  border-color: color-mix(in oklab, var(--accent) 28%, var(--border-soft));
+  background: color-mix(in oklab, var(--accent-bg, rgba(255,255,255,0.03)) 34%, var(--bg-panel));
+}
+
+.flow-focus-kicker {
+  margin-bottom: 8px;
+  color: var(--fg-dim);
+  font-size: 10px;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.flow-focus-agent {
+  display: grid;
+  grid-template-columns: auto 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+}
+
+.flow-focus-agent .agent-avatar {
+  width: 34px;
+  height: 34px;
+}
+
+.flow-focus-agent strong,
+.flow-focus-agent span:last-child,
+.flow-focus-task-title strong,
+.flow-focus-card p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.flow-focus-agent strong,
+.flow-focus-task-title strong {
+  display: block;
+  color: var(--fg);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.flow-focus-agent span:last-child {
+  display: block;
+  margin-top: 2px;
+  color: var(--fg-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.flow-focus-card p {
+  margin: 9px 0 0;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.flow-focus-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.flow-focus-chips > span {
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: rgba(255,255,255,0.025);
+  color: var(--fg-muted);
+  padding: 3px 7px;
+  font-size: 10px;
+}
+
+.flow-focus-task-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.flow-focus-card .btn {
+  margin-top: 10px;
+}
+
+.flow-relations {
+  min-width: 0;
+  margin-bottom: 16px;
+}
+
+.flow-relation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.flow-relation-row {
+  min-width: 0;
+  min-height: 44px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.018);
+  display: grid;
+  grid-template-columns: minmax(170px, 220px) 52px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 7px;
+}
+
+.flow-relation-row.active {
+  border-color: color-mix(in oklab, var(--accent) 36%, var(--border-soft));
+  background: color-mix(in oklab, var(--accent-bg, rgba(255,255,255,0.03)) 28%, transparent);
+}
+
+.flow-relation-agent {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.flow-relation-agent .agent-avatar {
+  width: 28px;
+  height: 28px;
+  font-size: 11px;
+}
+
+.flow-relation-agent strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.flow-relation-line {
+  height: 1px;
+  background: linear-gradient(90deg, var(--accent), var(--border-soft));
+  position: relative;
+}
+
+.flow-relation-line::after {
+  content: '';
+  position: absolute;
+  right: -1px;
+  top: -3px;
+  width: 7px;
+  height: 7px;
+  border-top: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  transform: rotate(45deg);
+}
+
+.flow-relation-tasks {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.flow-relation-task,
+.flow-relation-more,
+.flow-relation-empty {
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 28px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--bg-panel);
+  color: var(--fg-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  font-size: 10.5px;
+}
+
+.flow-relation-task {
+  cursor: pointer;
+}
+
+.flow-relation-task.active,
+.flow-relation-task:hover {
+  color: var(--fg);
+  border-color: color-mix(in oklab, var(--accent) 38%, var(--border-soft));
+}
+
+.flow-relation-task em {
+  color: var(--fg-dim);
+  font-style: normal;
+}
+
+.flow-relation-empty {
+  border-style: dashed;
+  color: var(--fg-dim);
+}
+
+.flow-board {
+  min-width: 860px;
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(620px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.flow-agent-column,
+.flow-task-board {
+  min-width: 0;
+}
+
+.flow-section-head {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.flow-agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.flow-agent-node {
+  width: 100%;
+  min-width: 0;
+  min-height: 74px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: auto 30px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.flow-agent-node:disabled {
+  cursor: default;
+  opacity: 0.74;
+}
+
+.flow-agent-node .agent-avatar {
+  width: 30px;
+  height: 30px;
+}
+
+.flow-agent-main,
+.flow-agent-title {
+  min-width: 0;
+}
+
+.flow-agent-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.flow-agent-title,
+.flow-agent-main > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-agent-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.flow-agent-title strong {
+  font-size: 12.5px;
+}
+
+.flow-agent-title em {
+  color: var(--accent);
+  font-size: 9.5px;
+  font-style: normal;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.flow-agent-main > span {
+  color: var(--fg-muted);
+  font-size: 10.5px;
+}
+
+.flow-agent-work {
+  color: var(--fg-dim) !important;
+}
+
+.flow-lanes {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(148px, 1fr));
+  gap: 10px;
+}
+
+.flow-lane {
+  min-width: 0;
+  min-height: 340px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.018);
+  padding: 8px;
+}
+
+.flow-lane-head {
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--fg-muted);
+  font-size: 10.5px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.flow-lane-head strong {
+  min-width: 20px;
+  height: 18px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-dim);
+  font-size: 10px;
+}
+
+.flow-lane-empty {
+  min-height: 72px;
+  border: 1px dashed var(--border-soft);
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+.flow-task-node {
+  width: 100%;
+  min-width: 0;
+  margin-top: 8px;
+  padding: 9px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.flow-task-node.active {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 12%, var(--bg-panel));
+}
+
+.flow-task-top,
+.flow-task-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.flow-task-top {
+  justify-content: space-between;
+  margin-bottom: 7px;
+}
+
+.flow-task-node > strong {
+  display: block;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.flow-task-meta {
+  margin-top: 8px;
+  flex-wrap: wrap;
+  color: var(--fg-muted);
+  font-size: 10.5px;
+}
+
+@media (max-width: 1320px) {
+  .flow-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .flow-stats {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .flow-focus-panel {
+    grid-template-columns: 1fr;
+  }
 }
 
 .cockpit-center .code-header {
@@ -570,7 +1360,21 @@
   grid-template-columns: 220px minmax(0, 1fr);
   align-items: stretch;
   gap: 12px;
-  padding: 10px 14px;
+  padding: 8px 14px;
+  overflow: hidden;
+}
+
+.cockpit-bottom.collapsed {
+  align-items: center;
+}
+
+.cockpit-bottom.collapsed .cockpit-terminal {
+  grid-template-rows: 32px;
+}
+
+.cockpit-bottom.collapsed .cockpit-validation-history,
+.cockpit-bottom.collapsed .cockpit-terminal-output {
+  display: none;
 }
 
 .cockpit-pane-head {
@@ -969,6 +1773,115 @@
   font-size: 16px;
 }
 
+.cockpit-inspect-card {
+  min-width: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.025);
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+.cockpit-inspect-card:first-of-type {
+  border-color: color-mix(in oklab, var(--accent) 30%, var(--border-soft));
+  background: color-mix(in oklab, var(--accent-bg, rgba(255,255,255,0.03)) 34%, transparent);
+}
+
+.cockpit-inspect-card.task h3 {
+  margin: 8px 0 10px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.cockpit-inspect-agent {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 10px;
+}
+
+.cockpit-inspect-agent .agent-avatar {
+  width: 34px;
+  height: 34px;
+}
+
+.cockpit-inspect-agent strong,
+.cockpit-inspect-agent span:last-child {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cockpit-inspect-agent strong {
+  color: var(--fg);
+  font-size: 13px;
+}
+
+.cockpit-inspect-agent span:last-child {
+  margin-top: 2px;
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+
+.cockpit-inspect-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-bottom: 10px;
+}
+
+.cockpit-inspect-grid .cockpit-metric {
+  padding: 7px;
+}
+
+.cockpit-inspect-grid .cockpit-metric strong {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cockpit-inspect-task-head,
+.cockpit-inspect-row,
+.cockpit-inspect-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cockpit-inspect-task-head,
+.cockpit-inspect-row {
+  justify-content: space-between;
+}
+
+.cockpit-inspect-row {
+  border-top: 1px solid var(--border-soft);
+  padding: 7px 0;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+}
+
+.cockpit-inspect-row strong {
+  max-width: 160px;
+  color: var(--fg);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cockpit-inspect-chips {
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.cockpit-inspect-actions {
+  margin-top: 10px;
+}
+
 .cockpit-message,
 .cockpit-output-entry,
 .cockpit-finding {
@@ -1141,6 +2054,11 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
+}
+
+.cockpit-terminal-toggle {
+  margin-left: auto;
+  flex: 0 0 auto;
 }
 
 .cockpit-bottom-title strong,

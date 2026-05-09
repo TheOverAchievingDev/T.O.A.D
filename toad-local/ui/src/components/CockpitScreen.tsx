@@ -10,6 +10,8 @@ import { TaskRiskBadge } from './TaskRiskBadge';
 import { DriftBadge } from './DriftBadge';
 import { IdeFileTree } from './IdeFileTree';
 import { IdeEditorPane } from './IdeEditorPane';
+import { CockpitFlowCanvas } from './CockpitFlowCanvas';
+import { CockpitReviewPane } from './CockpitReviewPane';
 import {
   sourceKeyToIdeSource,
   type IdeStatusResult,
@@ -66,7 +68,8 @@ interface CockpitScreenProps {
 }
 
 type LeftTab = 'tasks' | 'files' | 'agents';
-type RightTab = 'output' | 'review' | 'drift';
+type CenterTab = 'flow' | 'code' | 'review';
+type RightTab = 'inspect' | 'output' | 'review' | 'drift';
 
 export function CockpitScreen({
   team,
@@ -90,8 +93,11 @@ export function CockpitScreen({
   onRefreshData,
 }: CockpitScreenProps) {
   const [leftTab, setLeftTab] = useState<LeftTab>('tasks');
-  const [rightTab, setRightTab] = useState<RightTab>('output');
+  const [centerTab, setCenterTab] = useState<CenterTab>('flow');
+  const [rightTab, setRightTab] = useState<RightTab>('inspect');
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(tasks[0]?.id ?? null);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(team.members[0]?.id ?? null);
+  const [terminalExpanded, setTerminalExpanded] = useState(false);
   const [testRunning, setTestRunning] = useState(false);
   const [testMessage, setTestMessage] = useState<string | null>(null);
   const [validationKind, setValidationKind] = useState<ValidationKind>('test');
@@ -112,6 +118,11 @@ export function CockpitScreen({
     if (selectedTaskId) return tasks.find((task) => task.id === selectedTaskId) ?? tasks[0] ?? null;
     return tasks[0] ?? null;
   }, [selectedTaskId, tasks]);
+  const selectedAgent = useMemo(() => {
+    if (selectedAgentId) return team.members.find((member) => member.id === selectedAgentId) ?? null;
+    if (selectedTask?.assignee) return team.members.find((member) => member.id === selectedTask.assignee) ?? null;
+    return team.members.find((member) => member.role === 'lead') ?? team.members[0] ?? null;
+  }, [selectedAgentId, selectedTask?.assignee, team.members]);
 
   const liveRuntimes = runtimes.filter((runtime) => runtime.status === 'live' || runtime.status === 'launching');
   const reviewTasks = tasks.filter((task) => task.status === 'review');
@@ -164,6 +175,13 @@ export function CockpitScreen({
     review: selectedTask?.review ?? null,
     validations: selectedTask?.validations ?? [],
   });
+  const selectedAgentRuntime = selectedAgent ? runtimes.find((runtime) => runtime.agent === selectedAgent.id) ?? null : null;
+  const selectedAgentTasks = selectedAgent
+    ? activeTasks.filter((task) => task.assignee === selectedAgent.id)
+    : [];
+  const selectedAgentOutputEntries = selectedAgent
+    ? outputEntries.filter((entry) => entry.agentId === selectedAgent.id).slice(0, 5)
+    : [];
 
   const activeAgentsInWorktree = useMemo(() => {
     if (!fileSourceKey.startsWith('task:')) return [];
@@ -254,6 +272,11 @@ export function CockpitScreen({
     setFileSourceKey('project');
   }, [fileSourceKey, fileSourceOptions]);
 
+  useEffect(() => {
+    if (selectedAgentId && team.members.some((member) => member.id === selectedAgentId)) return;
+    setSelectedAgentId(team.members.find((member) => member.role === 'lead')?.id ?? team.members[0]?.id ?? null);
+  }, [selectedAgentId, team.members]);
+
   async function runSelectedTaskValidation() {
     if (!selectedTask || testRunning) return;
     setTestRunning(true);
@@ -274,8 +297,27 @@ export function CockpitScreen({
     }
   }
 
+  function selectTaskInCockpit(taskId: string) {
+    const task = tasks.find((candidate) => candidate.id === taskId) ?? null;
+    setSelectedTaskId(taskId);
+    setSelectedAgentId(task?.assignee || selectedAgentId);
+    setRightTab('inspect');
+  }
+
+  function selectAgentInCockpit(agentId: string) {
+    setSelectedAgentId(agentId);
+    setRightTab('inspect');
+  }
+
+  function openSelectedTaskFilesInCode() {
+    if (!selectedTaskSourceKey) return;
+    setFileSourceKey(selectedTaskSourceKey);
+    setLeftTab('files');
+    setCenterTab('code');
+  }
+
   return (
-    <main className="cockpit-screen">
+    <main className={`cockpit-screen ${terminalExpanded ? 'terminal-expanded' : ''}`}>
       <aside className="cockpit-left" aria-label="Cockpit task and agent status">
         <div className="cockpit-pane-head">
           <div>
@@ -327,7 +369,7 @@ export function CockpitScreen({
                         type="button"
                         className={`cockpit-task ${selectedTask?.id === task.id ? 'active' : ''}`}
                         style={roleStyle(member?.role ?? 'developer')}
-                        onClick={() => setSelectedTaskId(task.id)}
+                        onClick={() => selectTaskInCockpit(task.id)}
                         onDoubleClick={() => onOpenTask(task.id)}
                         title="Double-click to open full task detail"
                       >
@@ -518,8 +560,8 @@ export function CockpitScreen({
                     type="button"
                     className="cockpit-agent"
                     style={roleStyle(member.role)}
-                    onClick={() => row.canOpenLogs && runtime && onOpenLogs(runtime.id)}
-                    disabled={!row.canOpenLogs}
+                    onClick={() => selectAgentInCockpit(member.id)}
+                    onDoubleClick={() => row.canOpenLogs && runtime && onOpenLogs(runtime.id)}
                   >
                     <span className={`status-dot ${row.status}`} />
                     <span className="agent-avatar">{member.avatar}</span>
@@ -542,22 +584,83 @@ export function CockpitScreen({
         )}
       </aside>
 
-      <section className="cockpit-center" aria-label="Code editor and diff viewer">
-        <IdeEditorPane
-          source={fileSource}
-          actor={actor}
-          driftData={driftData}
-          activeAgentsInWorktree={activeAgentsInWorktree}
-          externalOpenRequest={externalOpenRequest}
-          onRefreshTreeRequest={(path) => {
-            if (path) setActiveFilePath(path);
-            void refreshFiles();
-          }}
-        />
+      <section className="cockpit-center" aria-label="Flow canvas and code editor">
+        <div className="cockpit-center-tabs" role="tablist" aria-label="Cockpit center view">
+          <button
+            type="button"
+            className={centerTab === 'flow' ? 'active' : ''}
+            onClick={() => setCenterTab('flow')}
+          >
+            <Icon name="workflow" size={13} />
+            Flow
+          </button>
+          <button
+            type="button"
+            className={centerTab === 'code' ? 'active' : ''}
+            onClick={() => setCenterTab('code')}
+          >
+            <Icon name="code" size={13} />
+            Code
+          </button>
+          <button
+            type="button"
+            className={centerTab === 'review' ? 'active' : ''}
+            onClick={() => setCenterTab('review')}
+          >
+            <Icon name="eye" size={13} />
+            Review
+          </button>
+        </div>
+        <div className="cockpit-center-body">
+          {centerTab === 'flow' ? (
+            <CockpitFlowCanvas
+              team={team}
+              tasks={tasks}
+              runtimes={runtimes}
+              messages={messages}
+              agentStreams={agentStreams}
+              selectedTaskId={selectedTask?.id ?? null}
+              selectedAgentId={selectedAgent?.id ?? null}
+              driftData={driftData}
+              onSelectTask={selectTaskInCockpit}
+              onSelectAgent={selectAgentInCockpit}
+              onOpenTask={onOpenTask}
+              onOpenLogs={onOpenLogs}
+              onCreateTask={onCreateTask}
+            />
+          ) : centerTab === 'review' ? (
+            <CockpitReviewPane
+              task={selectedTask}
+              validationRuns={validationRuns}
+              reviewSummary={reviewSummary}
+              driftData={driftData}
+              canOpenTaskFiles={Boolean(selectedTaskSourceKey)}
+              onOpenTask={onOpenTask}
+              onOpenTaskFiles={openSelectedTaskFilesInCode}
+              onRunValidation={() => void runSelectedTaskValidation()}
+              validationRunning={testRunning}
+            />
+          ) : (
+            <IdeEditorPane
+              source={fileSource}
+              actor={actor}
+              driftData={driftData}
+              activeAgentsInWorktree={activeAgentsInWorktree}
+              externalOpenRequest={externalOpenRequest}
+              onRefreshTreeRequest={(path) => {
+                if (path) setActiveFilePath(path);
+                void refreshFiles();
+              }}
+            />
+          )}
+        </div>
       </section>
 
       <aside className="cockpit-right" aria-label="Agent output, review notes, and drift">
         <div className="cockpit-seg">
+          <button type="button" className={rightTab === 'inspect' ? 'active' : ''} onClick={() => setRightTab('inspect')}>
+            Inspect
+          </button>
           <button type="button" className={rightTab === 'output' ? 'active' : ''} onClick={() => setRightTab('output')}>
             Output
           </button>
@@ -569,6 +672,113 @@ export function CockpitScreen({
             Drift
           </button>
         </div>
+
+        {rightTab === 'inspect' && (
+          <div className="cockpit-right-body">
+            <div className="cockpit-panel-title">
+              <h3>Inspector</h3>
+              {selectedTask && (
+                <button className="btn btn-sm" type="button" onClick={() => onOpenTask(selectedTask.id)}>
+                  Open task
+                </button>
+              )}
+            </div>
+
+            {selectedAgent ? (
+              <section className="cockpit-inspect-card" style={roleStyle(selectedAgent.role)}>
+                <div className="cockpit-inspect-agent">
+                  <span className={`status-dot ${runtimeStatusClass(selectedAgentRuntime?.status ?? selectedAgent.status)}`} />
+                  <span className="agent-avatar">{selectedAgent.avatar}</span>
+                  <div>
+                    <strong>{selectedAgent.name}</strong>
+                    <span>{selectedAgent.role} / {selectedAgent.provider} {selectedAgent.model}</span>
+                  </div>
+                </div>
+                <div className="cockpit-inspect-grid">
+                  <Metric label="Runtime" value={selectedAgentRuntime?.status ?? selectedAgent.status} />
+                  <Metric label="Assigned" value={String(selectedAgentTasks.length)} />
+                  <Metric label="Done" value={String(selectedAgent.tasksDone)} />
+                  <Metric label="Tokens" value={formatTokenUse(selectedAgent.tokens, selectedAgent.tokenLimit)} />
+                </div>
+                {selectedAgentRuntime && (
+                  <button className="btn btn-sm" type="button" onClick={() => onOpenLogs(selectedAgentRuntime.id)}>
+                    <Icon name="terminal" size={12} />
+                    Open logs
+                  </button>
+                )}
+              </section>
+            ) : (
+              <div className="cockpit-empty small">Select an agent to inspect runtime context.</div>
+            )}
+
+            {selectedTask ? (
+              <section className="cockpit-inspect-card task">
+                <div className="cockpit-inspect-task-head">
+                  <span className="task-id">{selectedTask.id}</span>
+                  <span className={`cockpit-status ${selectedTask.status}`}>{selectedTask.status}</span>
+                </div>
+                <h3>{selectedTask.title}</h3>
+                <div className="cockpit-inspect-row">
+                  <span>Assignee</span>
+                  <strong>{selectedTask.assignee || 'unassigned'}</strong>
+                </div>
+                <div className="cockpit-inspect-row">
+                  <span>Validations</span>
+                  <strong>{validationSummary(validationRuns)}</strong>
+                </div>
+                <div className="cockpit-inspect-row">
+                  <span>Review</span>
+                  <strong>{reviewSummary.state}</strong>
+                </div>
+                <div className="cockpit-inspect-row">
+                  <span>Drift</span>
+                  <strong>{driftData?.perTaskScores?.[selectedTask.id] ?? '-'}</strong>
+                </div>
+                <div className="cockpit-inspect-chips">
+                  {selectedTask.riskLevel && (
+                    <TaskRiskBadge
+                      level={selectedTask.riskLevel}
+                      requiresHumanApproval={selectedTask.requiresHumanApproval}
+                      humanApproved={selectedTask.humanApproved}
+                      matchedRules={selectedTask.matchedRules}
+                    />
+                  )}
+                  <DriftBadge score={driftData?.perTaskScores?.[selectedTask.id]} />
+                </div>
+                <div className="cockpit-inspect-actions">
+                  <button className="btn btn-sm" type="button" onClick={() => setCenterTab('review')}>
+                    <Icon name="eye" size={12} />
+                    Review center
+                  </button>
+                  <button className="btn btn-sm" type="button" onClick={openSelectedTaskFilesInCode} disabled={!selectedTaskSourceKey}>
+                    <Icon name="code" size={12} />
+                    Task files
+                  </button>
+                </div>
+              </section>
+            ) : (
+              <div className="cockpit-empty small">Select a task on the Flow canvas to inspect delivery state.</div>
+            )}
+
+            <section className="cockpit-inspect-card">
+              <div className="cockpit-panel-title">
+                <h3>Focused output</h3>
+              </div>
+              {selectedAgentOutputEntries.length === 0 ? (
+                <div className="cockpit-empty small">No output for the selected agent yet.</div>
+              ) : selectedAgentOutputEntries.map((entry) => (
+                <div key={entry.id} className={`cockpit-output-entry ${entry.kind}`}>
+                  <div className="cockpit-output-meta">
+                    <span className="mono">{entry.time || '--:--:--'}</span>
+                    <strong>{entry.agentId}</strong>
+                    <em>{entry.label}</em>
+                  </div>
+                  <p>{entry.body}</p>
+                </div>
+              ))}
+            </section>
+          </div>
+        )}
 
         {rightTab === 'output' && (
           <div className="cockpit-right-body">
@@ -696,7 +906,7 @@ export function CockpitScreen({
         )}
       </aside>
 
-      <section className="cockpit-bottom" aria-label="Integrated terminal and test runner">
+      <section className={`cockpit-bottom ${terminalExpanded ? 'expanded' : 'collapsed'}`} aria-label="Integrated terminal and test runner">
         <div className="cockpit-bottom-title">
           <Icon name="terminal" size={14} />
           <div>
@@ -705,6 +915,14 @@ export function CockpitScreen({
               {selectedTask ? `${selectedTask.id} · ${validationSummary(validationRuns)}` : 'No task selected'}
             </span>
           </div>
+          <button
+            className="btn btn-sm cockpit-terminal-toggle"
+            type="button"
+            onClick={() => setTerminalExpanded((expanded) => !expanded)}
+          >
+            <Icon name={terminalExpanded ? 'chevronDown' : 'chevronUp'} size={12} />
+            {terminalExpanded ? 'Collapse' : 'Expand'}
+          </button>
         </div>
         <div className="cockpit-terminal">
           <div className="cockpit-validation-bar">
@@ -760,6 +978,18 @@ function Metric({ label, value }: { label: string; value: string }) {
       <strong>{value}</strong>
     </div>
   );
+}
+
+function runtimeStatusClass(status: Runtime['status'] | Team['members'][number]['status']): string {
+  if (status === 'live') return 'live active';
+  if (status === 'launching' || status === 'thinking') return 'thinking active';
+  if (status === 'error') return 'err active';
+  return 'idle';
+}
+
+function formatTokenUse(tokens: number, tokenLimit: number): string {
+  if (!tokenLimit) return `${tokens.toLocaleString()}`;
+  return `${Math.round((tokens / tokenLimit) * 100)}%`;
 }
 
 function getInitialExpandedPaths(entries: { path: string; kind: 'file' | 'directory' }[], selectedPath: string | null): Set<string> {
