@@ -194,4 +194,6 @@ export interface Tweaks {
   showRuntimes: boolean;
   showDiagnostics: boolean;
   showTweaks: boolean;
+  /** Developer mode opt-in — reveals power-user surfaces. Default false. */
+  developerMode: boolean;
 }
