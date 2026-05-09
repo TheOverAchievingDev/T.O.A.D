@@ -45,6 +45,8 @@ function applyMigrations(db) {
       ' ON drift_findings(correction_task_id) WHERE correction_task_id IS NOT NULL'
     );
   } catch {}
+  // Foundry Slice F.1: persistent CLI session UUID per Foundry session.
+  try { db.exec('ALTER TABLE foundry_sessions ADD COLUMN cli_session_id TEXT'); } catch {}
 }
 
 export function jsonStringify(value) {

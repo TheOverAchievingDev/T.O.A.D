@@ -184,13 +184,14 @@ CREATE TABLE IF NOT EXISTS team_configs (
 );
 
 CREATE TABLE IF NOT EXISTS foundry_sessions (
-  session_id    TEXT PRIMARY KEY,
-  title         TEXT NOT NULL,
-  status        TEXT NOT NULL,
-  project_path  TEXT,
-  created_at    TEXT NOT NULL,
-  updated_at    TEXT NOT NULL,
-  metadata_json TEXT NOT NULL DEFAULT '{}'
+  session_id      TEXT PRIMARY KEY,
+  title           TEXT NOT NULL,
+  status          TEXT NOT NULL,
+  project_path    TEXT,
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL,
+  metadata_json   TEXT NOT NULL DEFAULT '{}',
+  cli_session_id  TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_foundry_sessions_updated
