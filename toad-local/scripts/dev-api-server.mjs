@@ -86,6 +86,7 @@ if (driftDb) {
   );
   foundryRuntime = new FoundryRuntime({
     instructionsPath: foundryInstructionsPath,
+    projectCwdResolver: () => runtime.toolFacade?.projectCwd || process.cwd(),
   });
   if (runtime.toolFacade) {
     runtime.toolFacade.foundryRuntime = foundryRuntime;
