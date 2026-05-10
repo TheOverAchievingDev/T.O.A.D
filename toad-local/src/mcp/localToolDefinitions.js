@@ -611,6 +611,11 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
       title: { type: 'string', minLength: 1 },
       projectPath: { type: 'string', minLength: 1 },
       metadata: { type: 'object' },
+      provider: {
+        type: 'string',
+        enum: ['anthropic', 'openai'],
+        description: 'Which CLI provider to use for planning. Defaults to anthropic.',
+      },
     },
   }),
   makeTool({

@@ -6306,3 +6306,85 @@ test('LocalToolFacade foundry_chat_turn rejects when foundryRuntime is not confi
     /foundryRuntime not configured/i,
   );
 });
+
+test('LocalToolFacade foundry_session_create accepts provider arg', () => {
+  const broker = new InMemoryBroker();
+  const taskBoard = new InMemoryTaskBoard();
+  const foundryStore = new SqliteFoundryStore();
+  const facade = new LocalToolFacade({ broker, taskBoard, foundryStore, projectCwd: 'C:/project' });
+
+  facade.execute({
+    commandName: COMMANDS.FOUNDRY_SESSION_CREATE,
+    idempotencyKey: 'foundry-provider-explicit',
+    actor: { teamId: 't', agentId: 'ui-client', role: 'human' },
+    args: { title: 'Codex plan', provider: 'openai' },
+  });
+
+  const sessions = foundryStore.listSessions();
+  assert.equal(sessions.length, 1);
+  assert.equal(sessions[0].provider, 'openai');
+  foundryStore.close();
+});
+
+test('LocalToolFacade foundry_session_create defaults provider to anthropic when omitted', () => {
+  const broker = new InMemoryBroker();
+  const taskBoard = new InMemoryTaskBoard();
+  const foundryStore = new SqliteFoundryStore();
+  const facade = new LocalToolFacade({ broker, taskBoard, foundryStore, projectCwd: 'C:/project' });
+
+  facade.execute({
+    commandName: COMMANDS.FOUNDRY_SESSION_CREATE,
+    idempotencyKey: 'foundry-provider-default',
+    actor: { teamId: 't', agentId: 'ui-client', role: 'human' },
+    args: { title: 'Default plan' },
+  });
+
+  const sessions = foundryStore.listSessions();
+  assert.equal(sessions.length, 1);
+  assert.equal(sessions[0].provider, 'anthropic');
+  foundryStore.close();
+});
+
+test('LocalToolFacade foundry_chat_turn passes session.provider to runtime.send', async () => {
+  const taskBoard = new InMemoryTaskBoard();
+  const broker = new InMemoryBroker();
+  const sessionId = 'foundry-session-provider';
+  const fakeFoundryStore = {
+    createSession: ({ sessionId: sid }) => ({ sessionId: sid }),
+    getSession: (id) => id === sessionId ? {
+      session: { sessionId, cliSessionId: null, title: 't', provider: 'openai' },
+      messages: [],
+      artifacts: [],
+    } : null,
+    addMessage: ({ sessionId: sid, role, text, metadata }) => ({
+      messageId: `m-${role}-${Date.now()}`,
+      sessionId: sid,
+      role, text, metadata,
+    }),
+    setCliSessionId: function ({ sessionId: sid, cliSessionId }) {
+      this._lastSetCliSessionId = { sid, cliSessionId };
+    },
+  };
+  const sendCalls = [];
+  const fakeFoundryRuntime = {
+    send: async (sendArgs) => {
+      sendCalls.push(sendArgs);
+      return { text: 'reply', sessionUuid: 'u', model: null, eventCount: 1 };
+    },
+  };
+  const facade = new LocalToolFacade({
+    broker, taskBoard,
+    foundryStore: fakeFoundryStore,
+    foundryRuntime: fakeFoundryRuntime,
+  });
+
+  await facade.execute({
+    commandName: COMMANDS.FOUNDRY_CHAT_TURN,
+    actor: { teamId: 't', agentId: 'ui-client', role: 'human' },
+    args: { sessionId, text: 'hello' },
+    idempotencyKey: 'foundry-provider-chat-1',
+  });
+
+  assert.equal(sendCalls.length, 1);
+  assert.equal(sendCalls[0].provider, 'openai');
+});

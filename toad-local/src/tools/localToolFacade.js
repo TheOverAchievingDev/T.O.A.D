@@ -2513,11 +2513,15 @@ export class LocalToolFacade {
 
   #foundrySessionCreate(args) {
     const store = this.#requireFoundryStore();
+    const provider = typeof args?.provider === 'string' && args.provider.length > 0
+      ? args.provider
+      : 'anthropic';
     return store.createSession({
       sessionId: typeof args?.sessionId === 'string' ? args.sessionId : undefined,
       title: requireString(args?.title, 'args.title'),
       projectPath: typeof args?.projectPath === 'string' ? args.projectPath : this.projectCwd,
       metadata: args?.metadata && typeof args.metadata === 'object' ? args.metadata : {},
+      provider,
     });
   }
 
@@ -2563,6 +2567,7 @@ export class LocalToolFacade {
       foundrySessionId: sessionId,
       text,
       cliSessionId: snapshot.session?.cliSessionId ?? null,
+      provider: snapshot.session?.provider ?? 'anthropic',
     });
 
     // First turn: persist the new CLI session UUID so subsequent turns can find it.
