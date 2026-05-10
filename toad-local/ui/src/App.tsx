@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Titlebar } from '@/components/Titlebar';
 import { SidebarNav, type SidebarKey } from '@/components/SidebarNav';
 import { Workspace } from '@/components/Workspace';
@@ -250,20 +250,35 @@ function AppInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // First-run UX: brand-new users (firstRunComplete === false) land
-  // directly in Foundry chat with a welcome banner — no project picker,
-  // no wizard. Once they engage (send a message OR dismiss the banner),
-  // firstRunComplete flips and the existing picker redirect takes over
-  // for users who delete all their projects later.
+  // First-run redirect — runs ONCE on initial mount via the ref guard.
+  // Brand-new users (firstRunComplete === false, no projects) get
+  // routed to Foundry so the welcome banner can do its job. After
+  // mount, the user can navigate freely; the picker redirect below
+  // takes over once they've engaged (firstRunComplete flips).
+  //
+  // The ref-guard pattern matters: putting tweaks.screen in the deps
+  // creates a re-route loop when the user clicks the sidebar — the
+  // screen change re-triggers the effect, which re-routes back to
+  // Foundry, blinking the UI.
+  const firstRunRedirectDone = useRef(false);
   useEffect(() => {
+    if (firstRunRedirectDone.current) return;
+    firstRunRedirectDone.current = true;
     if (!tweaks.firstRunComplete && projectRegistry.projects.length === 0) {
-      // Settings is an allowed escape hatch so a first-run user who
-      // opens settings doesn't get yanked back to Foundry on every render.
       if (tweaks.screen !== 'foundry' && tweaks.screen !== 'settings') {
         setTweak('screen', 'foundry');
       }
-      return;
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Picker redirect — for returning users who've completed first-run
+  // and have an empty registry (e.g. they deleted all projects). Skips
+  // entirely while firstRunComplete is false so first-run users can
+  // explore the sidebar without being yanked to picker before they've
+  // engaged with the welcome banner.
+  useEffect(() => {
+    if (!tweaks.firstRunComplete) return;
     if (projectRegistry.projects.length === 0 && tweaks.screen !== 'picker' && tweaks.screen !== 'create' && tweaks.screen !== 'settings' && tweaks.screen !== 'foundry' && tweaks.screen !== 'code' && tweaks.screen !== 'drift') {
       setTweak('screen', 'picker');
     }
