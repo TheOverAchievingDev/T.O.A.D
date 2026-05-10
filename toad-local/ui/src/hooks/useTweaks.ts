@@ -17,6 +17,7 @@ export const TWEAK_DEFAULTS: Tweaks = {
   showDiagnostics: false,
   showTweaks: false,
   developerMode: false,
+  firstRunComplete: false,
 };
 
 function readStored(): Partial<Tweaks> {

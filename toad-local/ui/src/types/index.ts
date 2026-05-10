@@ -183,7 +183,6 @@ export interface Tweaks {
     | 'drift'
     | 'picker'
     | 'empty'
-    | 'onboarding'
     | 'create'
     | 'launching'
     | 'task';
@@ -196,4 +195,9 @@ export interface Tweaks {
   showTweaks: boolean;
   /** Developer mode opt-in — reveals power-user surfaces. Default false. */
   developerMode: boolean;
+  /** First-run flag — false until the user sends their first Foundry
+   *  message or dismisses the welcome banner. Persisted in localStorage
+   *  via useTweaks. Used by App.tsx to route brand-new users directly
+   *  to Foundry chat instead of the project picker. */
+  firstRunComplete: boolean;
 }
