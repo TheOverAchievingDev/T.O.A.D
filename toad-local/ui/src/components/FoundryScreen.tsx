@@ -529,6 +529,19 @@ export function FoundryScreen({
               <FoundryMessageBody text={item.text} />
             </div>
           ))}
+          {(busy === 'message' || busy === 'create') && (
+            <div className="foundry-message assistant foundry-pending" aria-live="polite">
+              <div className="foundry-message-meta">
+                {(detail?.session.provider ?? newSessionProvider) === 'openai' ? 'Codex' : 'Claude'} is thinking
+              </div>
+              <div className="foundry-pending-dots" aria-hidden="true">
+                <span></span><span></span><span></span>
+              </div>
+              <div className="foundry-pending-note">
+                CLI agents typically take 30-60 seconds per turn. Hang tight.
+              </div>
+            </div>
+          )}
         </div>
         <div className="foundry-compose">
           <textarea
