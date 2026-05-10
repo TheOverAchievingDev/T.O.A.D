@@ -38,6 +38,7 @@ test('ClaudeFoundryAdapter.send spawns claude with the locked flag set on first 
   const child = makeFakeChild();
   const spawn = makeFakeSpawn([child]);
   const adapter = new ClaudeFoundryAdapter({
+    resolveCliImpl: (name) => name, // identity so test assertions on call.cmd stay platform-independent
     spawnImpl: spawn,
     instructionsPath: '/tmp/inst.txt',
   });
@@ -80,6 +81,7 @@ test('ClaudeFoundryAdapter.send rejects when subprocess crashes before assistant
   const child = makeFakeChild();
   const spawn = makeFakeSpawn([child]);
   const adapter = new ClaudeFoundryAdapter({
+    resolveCliImpl: (name) => name, // identity so test assertions on call.cmd stay platform-independent
     spawnImpl: spawn,
     instructionsPath: '/tmp/inst.txt',
   });
@@ -96,6 +98,7 @@ test('ClaudeFoundryAdapter.send reuses the existing process for the same foundry
   const child = makeFakeChild();
   const spawn = makeFakeSpawn([child]);
   const adapter = new ClaudeFoundryAdapter({
+    resolveCliImpl: (name) => name, // identity so test assertions on call.cmd stay platform-independent
     spawnImpl: spawn,
     instructionsPath: '/tmp/inst.txt',
   });
@@ -120,6 +123,7 @@ test('ClaudeFoundryAdapter.send spawns separate processes for different foundryS
   const child2 = makeFakeChild();
   const spawn = makeFakeSpawn([child1, child2]);
   const adapter = new ClaudeFoundryAdapter({
+    resolveCliImpl: (name) => name, // identity so test assertions on call.cmd stay platform-independent
     spawnImpl: spawn,
     instructionsPath: '/tmp/inst.txt',
   });
@@ -143,6 +147,7 @@ test('ClaudeFoundryAdapter.isAttached reflects registry state', async () => {
   const child = makeFakeChild();
   const spawn = makeFakeSpawn([child]);
   const adapter = new ClaudeFoundryAdapter({
+    resolveCliImpl: (name) => name, // identity so test assertions on call.cmd stay platform-independent
     spawnImpl: spawn,
     instructionsPath: '/tmp/inst.txt',
   });
@@ -161,6 +166,7 @@ test('ClaudeFoundryAdapter.close kills the subprocess and removes it from the re
   const child = makeFakeChild();
   const spawn = makeFakeSpawn([child]);
   const adapter = new ClaudeFoundryAdapter({
+    resolveCliImpl: (name) => name, // identity so test assertions on call.cmd stay platform-independent
     spawnImpl: spawn,
     instructionsPath: '/tmp/inst.txt',
   });
@@ -177,6 +183,7 @@ test('ClaudeFoundryAdapter.close kills the subprocess and removes it from the re
 
 test('ClaudeFoundryAdapter.close is idempotent (safe to call when no process exists)', async () => {
   const adapter = new ClaudeFoundryAdapter({
+    resolveCliImpl: (name) => name, // identity so test assertions on call.cmd stay platform-independent
     spawnImpl: makeFakeSpawn(),
     instructionsPath: '/tmp/inst.txt',
   });
@@ -189,6 +196,7 @@ test('ClaudeFoundryAdapter.closeAll kills every live subprocess', async () => {
   const child2 = makeFakeChild();
   const spawn = makeFakeSpawn([child1, child2]);
   const adapter = new ClaudeFoundryAdapter({
+    resolveCliImpl: (name) => name, // identity so test assertions on call.cmd stay platform-independent
     spawnImpl: spawn,
     instructionsPath: '/tmp/inst.txt',
   });
@@ -214,6 +222,7 @@ test('ClaudeFoundryAdapter.send removes registry entry when subprocess closes un
   const child = makeFakeChild();
   const spawn = makeFakeSpawn([child]);
   const adapter = new ClaudeFoundryAdapter({
+    resolveCliImpl: (name) => name, // identity so test assertions on call.cmd stay platform-independent
     spawnImpl: spawn,
     instructionsPath: '/tmp/inst.txt',
   });
@@ -234,6 +243,7 @@ test('ClaudeFoundryAdapter.send with cliSessionId spawns claude with --resume', 
   const child = makeFakeChild();
   const spawn = makeFakeSpawn([child]);
   const adapter = new ClaudeFoundryAdapter({
+    resolveCliImpl: (name) => name, // identity so test assertions on call.cmd stay platform-independent
     spawnImpl: spawn,
     instructionsPath: '/tmp/inst.txt',
   });
@@ -256,6 +266,7 @@ test('ClaudeFoundryAdapter.send without cliSessionId does NOT pass --resume', as
   const child = makeFakeChild();
   const spawn = makeFakeSpawn([child]);
   const adapter = new ClaudeFoundryAdapter({
+    resolveCliImpl: (name) => name, // identity so test assertions on call.cmd stay platform-independent
     spawnImpl: spawn,
     instructionsPath: '/tmp/inst.txt',
   });

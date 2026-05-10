@@ -1,6 +1,7 @@
 import { spawn as defaultSpawn } from 'node:child_process';
 import { readFileSync as defaultReadFileSync } from 'node:fs';
 import { FoundryProviderAdapter } from './FoundryProviderAdapter.js';
+import { resolveCli } from './resolveCli.js';
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 min per turn
 
@@ -25,6 +26,7 @@ export class CodexFoundryAdapter extends FoundryProviderAdapter {
   constructor({
     spawnImpl = defaultSpawn,
     readFileImpl = (path) => defaultReadFileSync(path, 'utf8'),
+    resolveCliImpl = resolveCli,
     instructionsPath,
     projectCwdResolver,
     timeoutMs = DEFAULT_TIMEOUT_MS,
@@ -38,6 +40,7 @@ export class CodexFoundryAdapter extends FoundryProviderAdapter {
     }
     this.spawnImpl = spawnImpl;
     this.readFileImpl = readFileImpl;
+    this.resolveCliImpl = resolveCliImpl;
     this.instructionsPath = instructionsPath;
     this.projectCwdResolver = projectCwdResolver;
     this.timeoutMs = timeoutMs;
@@ -68,7 +71,12 @@ export class CodexFoundryAdapter extends FoundryProviderAdapter {
       args = ['exec', '--json', '--skip-git-repo-check', '-C', cwd, prompt];
     }
 
-    const child = this.spawnImpl('codex', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    // resolveCli walks PATH for codex.cmd / codex.exe / codex.bat on
+    // Windows because Node's spawn doesn't honor PATHEXT. Returns the
+    // bare name as-is on Unix and as a fallback when nothing is found
+    // (so ENOENT still surfaces normally for the "not installed" path).
+    // Tests inject identity to keep assertions platform-independent.
+    const child = this.spawnImpl(this.resolveCliImpl('codex'), args, { stdio: ['pipe', 'pipe', 'pipe'] });
 
     return this.#consumeStream({ child });
   }

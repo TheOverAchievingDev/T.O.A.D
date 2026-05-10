@@ -47,6 +47,7 @@ function emitTurnSuccess(child, { threadId = 'thr-1', text = 'OK' } = {}) {
 
 test('CodexFoundryAdapter providerId is openai', () => {
   const adapter = new CodexFoundryAdapter({
+    resolveCliImpl: (name) => name, // identity so test assertions on call.cmd stay platform-independent
     spawnImpl: makeFakeSpawn(),
     instructionsPath: FAKE_INSTRUCTIONS_PATH,
     projectCwdResolver: () => '/proj',
@@ -59,6 +60,7 @@ test('CodexFoundryAdapter.send first turn spawns codex exec --json with prepende
   const child = makeFakeChild();
   const spawn = makeFakeSpawn([child]);
   const adapter = new CodexFoundryAdapter({
+    resolveCliImpl: (name) => name, // identity so test assertions on call.cmd stay platform-independent
     spawnImpl: spawn,
     instructionsPath: FAKE_INSTRUCTIONS_PATH,
     projectCwdResolver: () => '/proj/x',
@@ -87,6 +89,7 @@ test('CodexFoundryAdapter.send resume turn spawns codex exec resume without syst
   const child = makeFakeChild();
   const spawn = makeFakeSpawn([child]);
   const adapter = new CodexFoundryAdapter({
+    resolveCliImpl: (name) => name, // identity so test assertions on call.cmd stay platform-independent
     spawnImpl: spawn,
     instructionsPath: FAKE_INSTRUCTIONS_PATH,
     projectCwdResolver: () => '/proj/x',
@@ -114,6 +117,7 @@ test('CodexFoundryAdapter.send resume turn spawns codex exec resume without syst
 test('CodexFoundryAdapter concatenates multiple agent_message item.completed events', async () => {
   const child = makeFakeChild();
   const adapter = new CodexFoundryAdapter({
+    resolveCliImpl: (name) => name, // identity so test assertions on call.cmd stay platform-independent
     spawnImpl: makeFakeSpawn([child]),
     instructionsPath: FAKE_INSTRUCTIONS_PATH,
     projectCwdResolver: () => '/proj',
@@ -133,6 +137,7 @@ test('CodexFoundryAdapter concatenates multiple agent_message item.completed eve
 test('CodexFoundryAdapter ignores non-agent_message item.completed events', async () => {
   const child = makeFakeChild();
   const adapter = new CodexFoundryAdapter({
+    resolveCliImpl: (name) => name, // identity so test assertions on call.cmd stay platform-independent
     spawnImpl: makeFakeSpawn([child]),
     instructionsPath: FAKE_INSTRUCTIONS_PATH,
     projectCwdResolver: () => '/proj',
@@ -152,6 +157,7 @@ test('CodexFoundryAdapter ignores non-agent_message item.completed events', asyn
 test('CodexFoundryAdapter throws when turn.completed arrives without any agent_message', async () => {
   const child = makeFakeChild();
   const adapter = new CodexFoundryAdapter({
+    resolveCliImpl: (name) => name, // identity so test assertions on call.cmd stay platform-independent
     spawnImpl: makeFakeSpawn([child]),
     instructionsPath: FAKE_INSTRUCTIONS_PATH,
     projectCwdResolver: () => '/proj',
@@ -168,6 +174,7 @@ test('CodexFoundryAdapter throws when turn.completed arrives without any agent_m
 test('CodexFoundryAdapter skips non-JSON lines silently', async () => {
   const child = makeFakeChild();
   const adapter = new CodexFoundryAdapter({
+    resolveCliImpl: (name) => name, // identity so test assertions on call.cmd stay platform-independent
     spawnImpl: makeFakeSpawn([child]),
     instructionsPath: FAKE_INSTRUCTIONS_PATH,
     projectCwdResolver: () => '/proj',
@@ -184,6 +191,7 @@ test('CodexFoundryAdapter skips non-JSON lines silently', async () => {
 
 test('CodexFoundryAdapter.isAttached always returns false', () => {
   const adapter = new CodexFoundryAdapter({
+    resolveCliImpl: (name) => name, // identity so test assertions on call.cmd stay platform-independent
     spawnImpl: makeFakeSpawn(),
     instructionsPath: FAKE_INSTRUCTIONS_PATH,
     projectCwdResolver: () => '/proj',
@@ -194,6 +202,7 @@ test('CodexFoundryAdapter.isAttached always returns false', () => {
 
 test('CodexFoundryAdapter.close and closeAll are no-ops', async () => {
   const adapter = new CodexFoundryAdapter({
+    resolveCliImpl: (name) => name, // identity so test assertions on call.cmd stay platform-independent
     spawnImpl: makeFakeSpawn(),
     instructionsPath: FAKE_INSTRUCTIONS_PATH,
     projectCwdResolver: () => '/proj',
@@ -207,6 +216,7 @@ test('CodexFoundryAdapter.close and closeAll are no-ops', async () => {
 test('CodexFoundryAdapter timeout kills the child and rejects', async () => {
   const child = makeFakeChild();
   const adapter = new CodexFoundryAdapter({
+    resolveCliImpl: (name) => name, // identity so test assertions on call.cmd stay platform-independent
     spawnImpl: makeFakeSpawn([child]),
     instructionsPath: FAKE_INSTRUCTIONS_PATH,
     projectCwdResolver: () => '/proj',
@@ -223,6 +233,7 @@ test('CodexFoundryAdapter timeout kills the child and rejects', async () => {
 test('CodexFoundryAdapter rejects when child emits an ENOENT error (codex binary missing)', async () => {
   const child = makeFakeChild();
   const adapter = new CodexFoundryAdapter({
+    resolveCliImpl: (name) => name, // identity so test assertions on call.cmd stay platform-independent
     spawnImpl: makeFakeSpawn([child]),
     instructionsPath: FAKE_INSTRUCTIONS_PATH,
     projectCwdResolver: () => '/proj',

@@ -1,6 +1,7 @@
 import { spawn as defaultSpawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { FoundryProviderAdapter } from './FoundryProviderAdapter.js';
+import { resolveCli } from './resolveCli.js';
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 min per turn
 
@@ -25,6 +26,7 @@ export class ClaudeFoundryAdapter extends FoundryProviderAdapter {
 
   constructor({
     spawnImpl = defaultSpawn,
+    resolveCliImpl = resolveCli,
     instructionsPath,
     timeoutMs = DEFAULT_TIMEOUT_MS,
     onCrash = null,
@@ -34,6 +36,7 @@ export class ClaudeFoundryAdapter extends FoundryProviderAdapter {
       throw new TypeError('ClaudeFoundryAdapter: instructionsPath is required');
     }
     this.spawnImpl = spawnImpl;
+    this.resolveCliImpl = resolveCliImpl;
     this.instructionsPath = instructionsPath;
     this.timeoutMs = timeoutMs;
     this.onCrash = typeof onCrash === 'function' ? onCrash : null;
@@ -89,7 +92,11 @@ export class ClaudeFoundryAdapter extends FoundryProviderAdapter {
     if (cliSessionId) {
       args.push('--resume', cliSessionId);
     }
-    const child = this.spawnImpl('claude', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    // resolveCli walks PATH for claude.cmd / claude.exe / claude.bat on
+    // Windows so npm-installed Claude wrappers resolve. On Unix and when
+    // claude.exe is the canonical install (typical), this is a passthrough.
+    // Tests inject identity to keep assertions platform-independent.
+    const child = this.spawnImpl(this.resolveCliImpl('claude'), args, { stdio: ['pipe', 'pipe', 'pipe'] });
     const entry = { child, sessionUuid, lineBuffer: '' };
 
     child.on('close', (code) => {
