@@ -80,7 +80,12 @@ export class CodexFoundryAdapter extends FoundryProviderAdapter {
     let useStdin;
     if (cliSessionId) {
       prompt = text;
-      args = ['exec', 'resume', cliSessionId, '--json', '--skip-git-repo-check', '-C', cwd, prompt];
+      // `codex exec resume` accepts only [OPTIONS] [SESSION_ID] [PROMPT].
+      // It rejects `-C` and `--skip-git-repo-check` (those are only valid
+      // on `codex exec`). The session's working directory and git-repo
+      // permissiveness were locked in at creation time on the first turn,
+      // so resume doesn't need them re-stated.
+      args = ['exec', 'resume', '--json', cliSessionId, prompt];
       useStdin = false;
     } else {
       const systemPrompt = this.readFileImpl(this.instructionsPath);
