@@ -4,6 +4,7 @@ import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { openToadDatabase, jsonParseObject, jsonStringify } from '../storage/sqlite.js';
 
 const SESSION_STATUSES = Object.freeze(['draft', 'ready', 'exported', 'archived']);
+const SESSION_PROVIDERS = Object.freeze(['anthropic', 'openai']);
 const MESSAGE_ROLES = Object.freeze(['user', 'assistant', 'system']);
 const ARTIFACT_STATUSES = Object.freeze(['draft', 'approved', 'exported']);
 
@@ -18,6 +19,7 @@ export class SqliteFoundryStore {
     projectPath = null,
     status = 'draft',
     metadata = {},
+    provider = 'anthropic',
   } = {}) {
     const now = new Date().toISOString();
     const normalized = {
@@ -28,11 +30,12 @@ export class SqliteFoundryStore {
       createdAt: now,
       updatedAt: now,
       metadata: normalizeObject(metadata),
+      provider: requireEnum(provider, SESSION_PROVIDERS, 'provider'),
     };
     this.db.prepare(`
       INSERT INTO foundry_sessions (
-        session_id, title, status, project_path, created_at, updated_at, metadata_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        session_id, title, status, project_path, created_at, updated_at, metadata_json, provider
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       normalized.sessionId,
       normalized.title,
@@ -40,7 +43,8 @@ export class SqliteFoundryStore {
       normalized.projectPath,
       normalized.createdAt,
       normalized.updatedAt,
-      jsonStringify(normalized.metadata)
+      jsonStringify(normalized.metadata),
+      normalized.provider,
     );
     return normalized;
   }
@@ -256,6 +260,7 @@ function rowToSession(row) {
     updatedAt: row.updated_at,
     metadata: jsonParseObject(row.metadata_json, {}),
     cliSessionId: row.cli_session_id ?? null,
+    provider: row.provider ?? 'anthropic',
   };
 }
 

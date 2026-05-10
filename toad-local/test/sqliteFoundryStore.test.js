@@ -151,3 +151,28 @@ test('SqliteFoundryStore.setCliSessionId is idempotent', (t) => {
   assert.equal(fetched.session.cliSessionId, 'claude-uuid-1');
   store.close();
 });
+
+test('SqliteFoundryStore.createSession persists provider when given', () => {
+  const store = new SqliteFoundryStore();
+  const session = store.createSession({ title: 'Test', provider: 'openai' });
+  assert.equal(session.provider, 'openai');
+  const fetched = store.getSession(session.sessionId);
+  assert.equal(fetched.session.provider, 'openai');
+  store.close();
+});
+
+test('SqliteFoundryStore.createSession defaults provider to anthropic', () => {
+  const store = new SqliteFoundryStore();
+  const session = store.createSession({ title: 'Test' });
+  assert.equal(session.provider, 'anthropic');
+  store.close();
+});
+
+test('SqliteFoundryStore.createSession rejects unknown provider', () => {
+  const store = new SqliteFoundryStore();
+  assert.throws(
+    () => store.createSession({ title: 'Test', provider: 'grok' }),
+    /provider/i,
+  );
+  store.close();
+});
