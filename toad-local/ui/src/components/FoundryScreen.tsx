@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { callTool, ToadApiError, type Actor } from '@/api/client';
+import { useSettings } from '@/hooks/useSettings';
 import { Icon } from './Icon';
+
+type FoundryProvider = 'anthropic' | 'openai';
 
 interface FoundrySessionSummary {
   sessionId: string;
@@ -11,6 +14,7 @@ interface FoundrySessionSummary {
   updatedAt: string;
   messageCount: number;
   artifactCount: number;
+  provider?: FoundryProvider;
 }
 
 interface FoundryMessage {
@@ -122,10 +126,22 @@ export function FoundryScreen({
     agentName: 'Foundry',
     role: 'human',
   }), [teamId]);
+  const { settings: globalSettings } = useSettings(actor);
+  const globalDefaultProvider = useMemo<FoundryProvider>(() => {
+    const foundry = globalSettings.foundry;
+    if (foundry && typeof foundry === 'object' && !Array.isArray(foundry)) {
+      const value = (foundry as { defaultProvider?: unknown }).defaultProvider;
+      if (value === 'openai' || value === 'anthropic') return value;
+    }
+    return 'anthropic';
+  }, [globalSettings]);
+
   const [sessions, setSessions] = useState<FoundrySessionSummary[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [detail, setDetail] = useState<FoundrySessionDetail | null>(null);
   const [title, setTitle] = useState('New project plan');
+  const [newSessionProvider, setNewSessionProvider] = useState<FoundryProvider>(globalDefaultProvider);
+  const [providerTouched, setProviderTouched] = useState(false);
   const [message, setMessage] = useState('');
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
   const [artifactDraft, setArtifactDraft] = useState('');
@@ -133,6 +149,15 @@ export function FoundryScreen({
   const [error, setError] = useState<string | null>(null);
   const [exported, setExported] = useState<FoundryExportResult | null>(null);
   const [materialized, setMaterialized] = useState<FoundryMaterializeResult | null>(null);
+
+  // Sync the new-session provider picker with the global default once it
+  // loads, unless the user has manually chosen a different value for the
+  // current "+ New" form.
+  useEffect(() => {
+    if (!providerTouched) {
+      setNewSessionProvider(globalDefaultProvider);
+    }
+  }, [globalDefaultProvider, providerTouched]);
 
   const loadSessions = useCallback(async () => {
     const result = await callTool<FoundrySessionSummary[]>({
@@ -220,7 +245,7 @@ export function FoundryScreen({
         actor,
         method: 'foundry_session_create',
         idempotencyKey: makeId('foundry-session'),
-        args: { title },
+        args: { title, provider: newSessionProvider },
       })
     );
     if (!created) return;
@@ -228,6 +253,9 @@ export function FoundryScreen({
     setMessage('');
     setExported(null);
     setMaterialized(null);
+    // Reset the picker to track the global default again now that the
+    // override has been applied to the created session.
+    setProviderTouched(false);
     await loadSessions();
     await loadDetail(created.sessionId);
   }
@@ -405,6 +433,19 @@ export function FoundryScreen({
             onChange={(event) => setTitle(event.target.value)}
             placeholder="Project name"
           />
+          <select
+            className="select select-sm"
+            value={newSessionProvider}
+            onChange={(event) => {
+              setNewSessionProvider(event.target.value as FoundryProvider);
+              setProviderTouched(true);
+            }}
+            title="Provider for this new plan"
+            aria-label="Provider for new plan"
+          >
+            <option value="anthropic">Claude</option>
+            <option value="openai">Codex</option>
+          </select>
           <button className="btn btn-primary" type="button" disabled={busy === 'create'} onClick={() => void createSession()}>
             <Icon name="plus" size={14} /> New
           </button>
@@ -416,21 +457,28 @@ export function FoundryScreen({
               <span>No plans yet</span>
             </div>
           )}
-          {sessions.map((session) => (
-            <button
-              key={session.sessionId}
-              type="button"
-              className={`foundry-session ${session.sessionId === activeSessionId ? 'active' : ''}`}
-              onClick={() => {
-                setActiveSessionId(session.sessionId);
-                setExported(null);
-                setMaterialized(null);
-              }}
-            >
-              <span className="foundry-session-title">{session.title}</span>
-              <span className="dim">{session.messageCount} notes · {session.artifactCount} files</span>
-            </button>
-          ))}
+          {sessions.map((session) => {
+            const providerLabel = session.provider === 'openai' ? 'Codex' : 'Claude';
+            return (
+              <button
+                key={session.sessionId}
+                type="button"
+                className={`foundry-session ${session.sessionId === activeSessionId ? 'active' : ''}`}
+                onClick={() => {
+                  setActiveSessionId(session.sessionId);
+                  setExported(null);
+                  setMaterialized(null);
+                }}
+              >
+                <span className="foundry-session-title">{session.title}</span>
+                <span className="dim">
+                  <span className="provider-chip" aria-label={`Provider: ${providerLabel}`}>{providerLabel}</span>
+                  {' · '}
+                  {session.messageCount} notes · {session.artifactCount} files
+                </span>
+              </button>
+            );
+          })}
         </div>
       </aside>
 

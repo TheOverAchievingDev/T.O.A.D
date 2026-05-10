@@ -195,13 +195,14 @@
 
 .foundry-create {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
   gap: 8px;
   padding: 14px;
   border-bottom: 1px solid var(--border-soft);
 }
 
 .foundry-create input,
+.foundry-create select,
 .foundry-compose textarea,
 .foundry-editor textarea {
   border: 1px solid var(--border);
@@ -215,6 +216,12 @@
   min-width: 0;
   height: 34px;
   padding: 0 10px;
+}
+
+.foundry-create select {
+  height: 34px;
+  padding: 0 8px;
+  font-size: 13px;
 }
 
 .foundry-session-list,
@@ -252,6 +259,11 @@
 .foundry-session-title {
   font-weight: 650;
   color: inherit;
+}
+
+.provider-chip {
+  font-weight: 600;
+  color: var(--fg);
 }
 
 .empty-mini,
