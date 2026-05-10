@@ -971,6 +971,24 @@ function AppInner() {
               onChange={(v) => setTweak('showDiagnostics', v)}
             />
           </TweakSection>
+          <TweakSection label="Onboarding">
+            <TweakToggle
+              label="First-run complete"
+              value={tweaks.firstRunComplete}
+              onChange={(v) => setTweak('firstRunComplete', v)}
+            />
+            <button
+              type="button"
+              className="btn btn-sm"
+              style={{ alignSelf: 'flex-start', marginTop: 6 }}
+              onClick={() => {
+                setTweak('firstRunComplete', false);
+                setTweak('screen', 'foundry');
+              }}
+            >
+              Reset & re-show welcome banner
+            </button>
+          </TweakSection>
         </TweaksPanel>
       )}
     </div>
