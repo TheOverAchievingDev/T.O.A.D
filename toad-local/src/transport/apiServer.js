@@ -261,9 +261,14 @@ export class ApiServer {
           idempotencyKey: payload.idempotencyKey
         };
         const result = await this.#toolFacade.execute(command);
-        
+
         writeJson(res, 200, { result });
       } catch (error) {
+        // Log the full error to stderr so the sidecar terminal shows a stack
+        // trace — the JSON response only carries error.message which strips
+        // stack/cause and makes debugging brutally opaque (see F.2 smoke).
+        // eslint-disable-next-line no-console
+        console.error('[api] /api/call command failed:', error);
         writeJson(res, 500, { error: error.message });
       }
     });
