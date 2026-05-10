@@ -56,19 +56,26 @@ export class CodexFoundryAdapter extends FoundryProviderAdapter {
 
     const cwd = this.projectCwdResolver() || process.cwd();
 
-    // Build argv. First turn: prepend system prompt to user message
-    // because `codex exec` has no --append-system-prompt-file flag.
-    // Resume turn: send only the new user message; Codex has the prior
-    // conversation (including original instructions) on disk.
+    // Build prompt + argv. The prompt is written to stdin (via Codex's
+    // `-` sentinel) rather than passed as a positional command-line arg
+    // because Windows' cmd.exe — used to invoke npm-installed codex.cmd
+    // wrappers — caps each command line at ~8KB. foundryInstructions.txt
+    // alone is ~10KB, so passing it positionally throws spawn ENAMETOOLONG.
+    // Stdin has no such cap, so it's the robust transport.
+    //
+    // First turn: prepend system prompt to user message because `codex exec`
+    // has no --append-system-prompt-file flag. Resume turn: only the new
+    // user message; Codex has the prior conversation (including original
+    // instructions) on disk.
     let prompt;
     let args;
     if (cliSessionId) {
       prompt = text;
-      args = ['exec', 'resume', cliSessionId, '--json', '--skip-git-repo-check', '-C', cwd, prompt];
+      args = ['exec', 'resume', cliSessionId, '--json', '--skip-git-repo-check', '-C', cwd, '-'];
     } else {
       const systemPrompt = this.readFileImpl(this.instructionsPath);
       prompt = `${systemPrompt}\n\n${text}`;
-      args = ['exec', '--json', '--skip-git-repo-check', '-C', cwd, prompt];
+      args = ['exec', '--json', '--skip-git-repo-check', '-C', cwd, '-'];
     }
 
     // resolveCli walks PATH for codex.cmd / codex.exe / codex.bat on
@@ -77,6 +84,17 @@ export class CodexFoundryAdapter extends FoundryProviderAdapter {
     // (so ENOENT still surfaces normally for the "not installed" path).
     // Tests inject identity to keep assertions platform-independent.
     const child = this.spawnImpl(this.resolveCliImpl('codex'), args, { stdio: ['pipe', 'pipe', 'pipe'] });
+
+    // Write the full prompt to stdin and close. Codex sees the `-` arg
+    // and reads its prompt from stdin until EOF.
+    try {
+      child.stdin?.write(prompt);
+      child.stdin?.end();
+    } catch (err) {
+      // Defensive — if stdin write fails (process already exited, etc.),
+      // the stream consumer's errorHandler/closeHandler will surface
+      // the real failure. Swallow here so we don't double-throw.
+    }
 
     return this.#consumeStream({ child });
   }

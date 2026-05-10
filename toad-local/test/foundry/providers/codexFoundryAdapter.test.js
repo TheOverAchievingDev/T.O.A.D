@@ -74,13 +74,17 @@ test('CodexFoundryAdapter.send first turn spawns codex exec --json with prepende
   assert.equal(spawn.calls.length, 1);
   const call = spawn.calls[0];
   assert.equal(call.cmd, 'codex');
+  // Prompt is sent via stdin (Codex's `-` sentinel) to dodge Windows
+  // cmd.exe's ~8KB command-line cap — see CodexFoundryAdapter.js comments.
   assert.deepEqual(call.args, [
     'exec',
     '--json',
     '--skip-git-repo-check',
     '-C', '/proj/x',
-    'SYSTEM PROMPT BODY\n\nhello world',
+    '-',
   ]);
+  assert.deepEqual(child.stdin.written, ['SYSTEM PROMPT BODY\n\nhello world']);
+  assert.equal(child.stdin.ended, true);
   assert.equal(result.text, 'hi');
   assert.equal(result.sessionUuid, 'thr-1');
 });
@@ -101,6 +105,8 @@ test('CodexFoundryAdapter.send resume turn spawns codex exec resume without syst
   const result = await sendPromise;
 
   const call = spawn.calls[0];
+  // Resume turn — only the new user message goes to stdin; the prior
+  // conversation (system prompt + history) lives in Codex's session file.
   assert.deepEqual(call.args, [
     'exec',
     'resume',
@@ -108,8 +114,10 @@ test('CodexFoundryAdapter.send resume turn spawns codex exec resume without syst
     '--json',
     '--skip-git-repo-check',
     '-C', '/proj/x',
-    'follow-up',
+    '-',
   ]);
+  assert.deepEqual(child.stdin.written, ['follow-up']);
+  assert.equal(child.stdin.ended, true);
   assert.equal(result.text, 'response');
   assert.equal(result.sessionUuid, 'thr-existing');
 });
