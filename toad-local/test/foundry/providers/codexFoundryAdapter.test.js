@@ -105,8 +105,11 @@ test('CodexFoundryAdapter.send resume turn spawns codex exec resume without syst
   const result = await sendPromise;
 
   const call = spawn.calls[0];
-  // Resume turn — only the new user message goes to stdin; the prior
-  // conversation (system prompt + history) lives in Codex's session file.
+  // Resume turn passes the prompt POSITIONALLY (no `-` stdin sentinel).
+  // `codex exec resume` does not appear to support the stdin sentinel
+  // (empirical: F.2 smoke showed codex exiting code=2). The resume-turn
+  // prompt is short — just the user message, no system prompt prepended
+  // — so cmd.exe's ~8KB cap isn't a concern.
   assert.deepEqual(call.args, [
     'exec',
     'resume',
@@ -114,9 +117,10 @@ test('CodexFoundryAdapter.send resume turn spawns codex exec resume without syst
     '--json',
     '--skip-git-repo-check',
     '-C', '/proj/x',
-    '-',
+    'follow-up',
   ]);
-  assert.deepEqual(child.stdin.written, ['follow-up']);
+  // stdin gets closed immediately on resume so codex doesn't wait on it.
+  assert.deepEqual(child.stdin.written, []);
   assert.equal(child.stdin.ended, true);
   assert.equal(result.text, 'response');
   assert.equal(result.sessionUuid, 'thr-existing');
@@ -254,4 +258,43 @@ test('CodexFoundryAdapter rejects when child emits an ENOENT error (codex binary
   child.emit('error', enoent);
 
   await assert.rejects(sendPromise, /ENOENT|spawn codex/i);
+});
+
+test('CodexFoundryAdapter includes captured stderr in error when codex exits non-zero', async () => {
+  const child = makeFakeChild();
+  const adapter = new CodexFoundryAdapter({
+    resolveCliImpl: (name) => name,
+    spawnImpl: makeFakeSpawn([child]),
+    instructionsPath: FAKE_INSTRUCTIONS_PATH,
+    projectCwdResolver: () => '/proj',
+    readFileImpl: () => 'SYSTEM',
+  });
+
+  const sendPromise = adapter.send({ foundrySessionId: 's1', text: 'go' });
+  // Codex prints an error to stderr, then exits non-zero before
+  // emitting turn.completed.
+  child.stderr.emit('data', Buffer.from('Error: thread not found: thr-bogus\n'));
+  child.emit('close', 2);
+
+  await assert.rejects(
+    sendPromise,
+    /codex exited \(code=2\).*thread not found/is,
+  );
+});
+
+test('CodexFoundryAdapter close error notes "no stderr output" when stderr was silent', async () => {
+  const child = makeFakeChild();
+  const adapter = new CodexFoundryAdapter({
+    resolveCliImpl: (name) => name,
+    spawnImpl: makeFakeSpawn([child]),
+    instructionsPath: FAKE_INSTRUCTIONS_PATH,
+    projectCwdResolver: () => '/proj',
+    readFileImpl: () => 'SYSTEM',
+  });
+
+  const sendPromise = adapter.send({ foundrySessionId: 's1', text: 'go' });
+  // No stderr; just close with non-zero.
+  child.emit('close', 3);
+
+  await assert.rejects(sendPromise, /no stderr output/i);
 });

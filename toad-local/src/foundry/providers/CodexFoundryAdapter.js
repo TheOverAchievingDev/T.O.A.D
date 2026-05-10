@@ -56,26 +56,37 @@ export class CodexFoundryAdapter extends FoundryProviderAdapter {
 
     const cwd = this.projectCwdResolver() || process.cwd();
 
-    // Build prompt + argv. The prompt is written to stdin (via Codex's
-    // `-` sentinel) rather than passed as a positional command-line arg
-    // because Windows' cmd.exe — used to invoke npm-installed codex.cmd
-    // wrappers — caps each command line at ~8KB. foundryInstructions.txt
-    // alone is ~10KB, so passing it positionally throws spawn ENAMETOOLONG.
-    // Stdin has no such cap, so it's the robust transport.
+    // Build prompt + argv. Transport differs between first-turn and
+    // resume-turn:
     //
-    // First turn: prepend system prompt to user message because `codex exec`
-    // has no --append-system-prompt-file flag. Resume turn: only the new
-    // user message; Codex has the prior conversation (including original
-    // instructions) on disk.
+    //  - First turn: prompt = foundryInstructions.txt (~10KB) + user
+    //    message. That exceeds Windows cmd.exe's ~8KB command-line cap,
+    //    so we use Codex's `-` stdin sentinel and write the prompt to
+    //    stdin.
+    //  - Resume turn: prompt = just the user message (short). The `-`
+    //    stdin sentinel is documented for `codex exec` but appears NOT
+    //    to be supported by `codex exec resume` — empirical observation
+    //    during F.2 smoke showed Codex exiting code=2 when resume was
+    //    invoked with `-`. The user message stays short here, so passing
+    //    it positionally is safe (no cmd.exe length concern) and avoids
+    //    the resume+`-` incompatibility.
+    //
+    // First-turn `codex exec` has no --append-system-prompt-file flag so
+    // we prepend the system prompt to the user message. Resume turns
+    // don't need to re-send the system prompt — Codex has the prior
+    // conversation (including original instructions) on disk.
     let prompt;
     let args;
+    let useStdin;
     if (cliSessionId) {
       prompt = text;
-      args = ['exec', 'resume', cliSessionId, '--json', '--skip-git-repo-check', '-C', cwd, '-'];
+      args = ['exec', 'resume', cliSessionId, '--json', '--skip-git-repo-check', '-C', cwd, prompt];
+      useStdin = false;
     } else {
       const systemPrompt = this.readFileImpl(this.instructionsPath);
       prompt = `${systemPrompt}\n\n${text}`;
       args = ['exec', '--json', '--skip-git-repo-check', '-C', cwd, '-'];
+      useStdin = true;
     }
 
     // resolveCli walks PATH for codex.cmd / codex.exe / codex.bat on
@@ -96,10 +107,14 @@ export class CodexFoundryAdapter extends FoundryProviderAdapter {
       windowsHide: true,
     });
 
-    // Write the full prompt to stdin and close. Codex sees the `-` arg
-    // and reads its prompt from stdin until EOF.
+    // For first-turn (`codex exec -`), write the full prompt to stdin
+    // and close it so Codex sees EOF and starts processing. For resume
+    // turns the prompt is positional, so close stdin immediately so
+    // Codex doesn't wait on it.
     try {
-      child.stdin?.write(prompt);
+      if (useStdin) {
+        child.stdin?.write(prompt);
+      }
       child.stdin?.end();
     } catch (err) {
       // Defensive — if stdin write fails (process already exited, etc.),
@@ -122,6 +137,18 @@ export class CodexFoundryAdapter extends FoundryProviderAdapter {
       let assistantText = '';
       let threadId = null;
       let eventCount = 0;
+      // Capture stderr so non-zero exits self-diagnose. Without this,
+      // codex's own error messages (auth failures, invalid session ids,
+      // protocol errors, etc.) are lost and the operator sees only the
+      // exit code. Cap at 8KB to avoid runaway memory if codex spams
+      // warnings on stderr.
+      let stderrBuf = '';
+      const STDERR_CAP = 8 * 1024;
+      const stderrHandler = (chunk) => {
+        if (stderrBuf.length < STDERR_CAP) {
+          stderrBuf += chunk.toString('utf8').slice(0, STDERR_CAP - stderrBuf.length);
+        }
+      };
 
       const dataHandler = (chunk) => {
         lineBuffer += chunk.toString('utf8');
@@ -163,7 +190,10 @@ export class CodexFoundryAdapter extends FoundryProviderAdapter {
         if (resolved) return;
         resolved = true;
         cleanup();
-        reject(new Error(`CodexFoundryAdapter: codex exited (code=${code}) before turn.completed`));
+        const stderrSuffix = stderrBuf.length > 0
+          ? `\n--- codex stderr ---\n${stderrBuf.trim()}\n---`
+          : ' (no stderr output)';
+        reject(new Error(`CodexFoundryAdapter: codex exited (code=${code}) before turn.completed.${stderrSuffix}`));
       };
 
       const errorHandler = (err) => {
@@ -185,12 +215,14 @@ export class CodexFoundryAdapter extends FoundryProviderAdapter {
         clearTimeout(timer);
         if (child.stdout?.off) child.stdout.off('data', dataHandler);
         else if (child.stdout?.removeListener) child.stdout.removeListener('data', dataHandler);
+        if (child.stderr?.off) child.stderr.off('data', stderrHandler);
+        else if (child.stderr?.removeListener) child.stderr.removeListener('data', stderrHandler);
         child.off?.('close', closeHandler);
         child.off?.('error', errorHandler);
       }
 
-      // Drain stderr (warnings) so the pipe never blocks.
-      child.stderr?.on('data', () => { /* drain */ });
+      // Capture stderr (instead of draining) so non-zero exits self-diagnose.
+      child.stderr?.on('data', stderrHandler);
       child.stdout.on('data', dataHandler);
       child.on('close', closeHandler);
       child.on('error', errorHandler);
