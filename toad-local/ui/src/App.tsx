@@ -513,6 +513,8 @@ function AppInner() {
             <FoundryScreen
               teamId={team.name || activeTeamId || 'foundry'}
               hasActiveProject={projectRegistry.activeId !== null}
+              firstRun={!tweaks.firstRunComplete}
+              onFirstRunDismiss={() => setTweak('firstRunComplete', true)}
               onPickProjectFolder={async () => {
                 // Foundry "Create team" pre-flight when no project is
                 // loaded: pops the native folder picker, respawns the

@@ -91,6 +91,14 @@ interface FoundryScreenProps {
    *  preserves the legacy auto-create behavior. */
   onMaterializePlan?: (plan: FoundryPlanResult) => void;
   onMaterialized?: (teamId: string) => void;
+  /** When true, the Foundry chat shows a first-run welcome banner
+   *  above the thread. Flips off after the user dismisses or sends
+   *  their first message. */
+  firstRun?: boolean;
+  /** Called when the user dismisses the welcome banner OR sends
+   *  their first chat turn successfully. Parent flips
+   *  tweaks.firstRunComplete in response. */
+  onFirstRunDismiss?: () => void;
 }
 
 const ACTOR_AGENT = 'ui-foundry';
@@ -105,6 +113,8 @@ export function FoundryScreen({
   onPickProjectFolder,
   onMaterializePlan,
   onMaterialized,
+  firstRun = false,
+  onFirstRunDismiss,
 }: FoundryScreenProps) {
   const actor = useMemo<Actor>(() => ({
     teamId: teamId || 'foundry',
@@ -223,14 +233,34 @@ export function FoundryScreen({
   }
 
   async function sendChatTurn() {
-    if (!activeSessionId || !message.trim()) return;
+    if (!message.trim()) return;
+
+    // First-run auto-session: when the user is sending a message but
+    // no session exists yet (brand-new install), create one inline so
+    // the welcome banner doesn't need to nag the user to click "New".
+    let sessionId = activeSessionId;
+    if (!sessionId) {
+      const created = await runAction('create', () =>
+        callTool<FoundrySessionSummary>({
+          actor,
+          method: 'foundry_session_create',
+          idempotencyKey: makeId('foundry-session'),
+          args: { title: 'My first project' },
+        })
+      );
+      if (!created) return;
+      sessionId = created.sessionId;
+      setActiveSessionId(sessionId);
+      await loadSessions();
+    }
+
     const added = await runAction('message', () =>
       callTool<{ assistant: FoundryMessage }>({
         actor,
         method: 'foundry_chat_turn',
         idempotencyKey: makeId('foundry-chat'),
         args: {
-          sessionId: activeSessionId,
+          sessionId,
           text: message.trim(),
         },
       })
@@ -238,7 +268,10 @@ export function FoundryScreen({
     if (!added) return;
     setMessage('');
     await loadSessions();
-    await loadDetail(activeSessionId);
+    await loadDetail(sessionId);
+    // First message landed — the user has clearly engaged. Flip the
+    // first-run flag so the welcome banner stays gone going forward.
+    onFirstRunDismiss?.();
   }
 
   async function generateArtifacts() {
@@ -418,7 +451,25 @@ export function FoundryScreen({
         </div>
         {error && <div className="banner banner-warn foundry-error">{error}</div>}
         <div className="foundry-thread">
-          {!detail && (
+          {firstRun && (!detail || detail.messages.length === 0) && (
+            <div className="foundry-welcome">
+              <h3>Welcome to Symphony.</h3>
+              <p>
+                Tell me what you want to build, and a team of AI agents will plan,
+                code, and ship it. Start with one sentence — &ldquo;a meal planner for
+                picky eaters,&rdquo; &ldquo;a habit tracker for my partner,&rdquo;
+                whatever. I&rsquo;ll ask follow-ups.
+              </p>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => onFirstRunDismiss?.()}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+          {!firstRun && !detail && (
             <div className="foundry-empty">
               <Icon name="sparkle" size={22} />
               <h3>Select or create a plan</h3>

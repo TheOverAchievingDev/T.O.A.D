@@ -277,6 +277,35 @@
   color: var(--fg);
 }
 
+.foundry-welcome {
+  margin: 24px;
+  padding: 20px 24px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 640px;
+}
+
+.foundry-welcome h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--fg);
+}
+
+.foundry-welcome p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg-dim);
+}
+
+.foundry-welcome .btn {
+  align-self: flex-start;
+}
+
 .foundry-error {
   margin: 12px 20px 0;
   padding: 8px 10px;
