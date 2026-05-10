@@ -309,7 +309,6 @@ export function TweaksPanel({
           { value: 'settings', label: 'Settings' },
           { value: 'picker', label: 'Picker' },
           { value: 'empty', label: 'Empty' },
-          { value: 'onboarding', label: 'Onboarding' },
           { value: 'create', label: 'Create' },
           { value: 'task', label: 'Task' },
         ] as const}

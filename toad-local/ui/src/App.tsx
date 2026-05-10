@@ -12,7 +12,6 @@ import { AddProjectModal } from '@/components/AddProjectModal';
 import { useProjects } from '@/hooks/useProjects';
 import { ApprovalsDrawer } from '@/components/ApprovalsDrawer';
 import { EmptyWorkspace } from '@/components/EmptyWorkspace';
-import { OnboardingScreen } from '@/components/OnboardingScreen';
 import { ProjectPicker } from '@/components/ProjectPicker';
 import { SetupProjectDialog } from '@/components/SetupProjectDialog';
 import { ProvidersModal } from '@/components/ProvidersModal';
@@ -420,7 +419,6 @@ function AppInner() {
 
   const isOverlayScreen =
     tweaks.screen === 'empty' ||
-    tweaks.screen === 'onboarding' ||
     tweaks.screen === 'picker';
 
   return (
@@ -481,9 +479,6 @@ function AppInner() {
           {/* Primary screen — workspace or one of the alt screens. */}
           {tweaks.screen === 'empty' && (
             <EmptyWorkspace onCreateTeam={() => setTweak('screen', 'create')} />
-          )}
-          {tweaks.screen === 'onboarding' && (
-            <OnboardingScreen onDone={() => setTweak('screen', 'cockpit')} />
           )}
           {tweaks.screen === 'picker' && (
             <ProjectPicker
@@ -927,7 +922,6 @@ function AppInner() {
                 { value: 'drift', label: 'Drift monitor' },
                 { value: 'picker', label: 'Project picker' },
                 { value: 'empty', label: 'Empty workspace' },
-                { value: 'onboarding', label: 'Onboarding' },
                 { value: 'create', label: 'Create team' },
                 { value: 'launching', label: 'Team launching' },
                 { value: 'task', label: 'Task detail' },
