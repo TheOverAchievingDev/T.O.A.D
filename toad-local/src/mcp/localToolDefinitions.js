@@ -650,7 +650,7 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
   makeTool({
     name: COMMANDS.FOUNDRY_CHAT_TURN,
     title: 'Run Foundry Chat Turn',
-    description: 'Append an operator message, call OpenAI through the saved OpenAI provider API key, and store the assistant reply in the Foundry session.',
+    description: 'Append an operator message, dispatch to the session\'s configured CLI agent (Claude or Codex per session.provider), and store the assistant reply in the Foundry session.',
     required: ['sessionId', 'text'],
     properties: {
       sessionId: { type: 'string', minLength: 1 },

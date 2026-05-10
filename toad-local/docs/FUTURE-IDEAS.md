@@ -55,11 +55,14 @@ The vibe-coder ships v1, then six months later wants to fix a bug. Today: openin
 - "Fix bug" task type — bypasses planning gates, agents go straight to investigation + fix
 - Diff-against-current-state drift — not against the original spec
 
-### Foundry slice F.1: CLI-mediated planning
-Foundry currently uses LLM API for doc generation. The rest of Symphony uses CLI subscriptions (Claude Pro, Codex, Gemini Pro) — Foundry is the only piece that violates the "your subscription, not API" promise. Migrate to spawn `claude` as a persistent subprocess (matching how `RuntimeSupervisor.js` already runs runtime-tier agents) — NOT one-shot per turn. Closes the cost-story hole.
+### Foundry slice F.1: CLI-mediated planning — SHIPPED
+Foundry was migrated from API to persistent Claude CLI subprocess. Spawns `claude --verbose --input-format stream-json --output-format stream-json --append-system-prompt-file --disallowedTools "*" --session-id <uuid>` per Foundry session and holds the process alive across all turns. Closes the cost-story hole — the bouncer-givers-up audience uses their Claude Pro subscription, not API tokens. Shipped commit `6acecc1`.
 
-### Foundry slice F.2: provider-aware Foundry
-After F.1 ships Claude-only, evaluate adding Codex/Gemini support to Foundry. Each CLI's flags differ (Claude `-p` + stream-json; Codex `--output-format json`; Gemini `--prompt-file`); needs the per-provider abstraction the drift LLM judge already pioneered. Operator picks per-session or per-project which provider to plan with. Lands once usage data shows which providers vibe coders actually use for planning.
+### Foundry slice F.2: provider-aware Foundry — SHIPPED
+Adapter pattern: `FoundryProviderAdapter` base + `ClaudeFoundryAdapter` (port of F.1) + `CodexFoundryAdapter` (new). Codex uses `codex exec --json` per turn with `codex exec resume <id>` for subsequent turns — Codex preserves session state on disk between calls so we never replay tokens. Settings has `foundry.defaultProvider`; FoundryScreen lets users override per-session at create time. Ship marker on F.2 ship commit. Defers Gemini to F.2.5.
+
+### Foundry slice F.2.5: Gemini support
+Drop in a `GeminiFoundryAdapter` following the same shape as the Codex adapter. Gemini CLI's documented "persistent JSON output modes for consistent, structured data formats" suggests it has the equivalent of Codex's `exec --json` event stream — research the actual flag and event shape (probably `gemini --prompt-file` or similar plus a JSON-output flag). Same per-turn-with-resume pattern, same normalized event interface. Lands once F.2 usage data shows real demand for a third provider.
 
 ### Foundry slice F.3+: planning-quality enhancements
 Patterns worth borrowing from external planning tools (`/deep-plan`, spec-kit, planning-with-files) but built as Symphony-native tools/skills, not third-party plugin adoptions:
