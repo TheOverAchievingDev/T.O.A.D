@@ -451,7 +451,7 @@ export function FoundryScreen({
         </div>
         {error && <div className="banner banner-warn foundry-error">{error}</div>}
         <div className="foundry-thread">
-          {firstRun && (!detail || detail.messages.length === 0) && (
+          {firstRun && (
             <div className="foundry-welcome">
               <h3>Welcome to Symphony.</h3>
               <p>
