@@ -251,14 +251,24 @@ function AppInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // First-run UX: when no project has been opened yet, force the picker
-  // screen. Without this the user lands on the workspace with no real
-  // data and no obvious "where do I start" affordance.
+  // First-run UX: brand-new users (firstRunComplete === false) land
+  // directly in Foundry chat with a welcome banner — no project picker,
+  // no wizard. Once they engage (send a message OR dismiss the banner),
+  // firstRunComplete flips and the existing picker redirect takes over
+  // for users who delete all their projects later.
   useEffect(() => {
+    if (!tweaks.firstRunComplete && projectRegistry.projects.length === 0) {
+      // Settings is an allowed escape hatch so a first-run user who
+      // opens settings doesn't get yanked back to Foundry on every render.
+      if (tweaks.screen !== 'foundry' && tweaks.screen !== 'settings') {
+        setTweak('screen', 'foundry');
+      }
+      return;
+    }
     if (projectRegistry.projects.length === 0 && tweaks.screen !== 'picker' && tweaks.screen !== 'create' && tweaks.screen !== 'settings' && tweaks.screen !== 'foundry' && tweaks.screen !== 'code' && tweaks.screen !== 'drift') {
       setTweak('screen', 'picker');
     }
-  }, [projectRegistry.projects.length, tweaks.screen, setTweak]);
+  }, [projectRegistry.projects.length, tweaks.screen, tweaks.firstRunComplete, setTweak]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', tweaks.theme);
