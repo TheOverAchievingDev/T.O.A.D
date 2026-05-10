@@ -1,5 +1,7 @@
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { LocalToadRuntime } from '../src/app/LocalToadRuntime.js';
+import { FoundryRuntime } from '../src/foundry/foundryRuntime.js';
 import { SqliteDriftStore } from '../src/drift/driftStore.js';
 import { DriftEngine } from '../src/drift/driftEngine.js';
 import { ALL_CHECKS } from '../src/drift/checks/index.js';
@@ -38,6 +40,7 @@ const driftDb =
   runtime.taskBoard?.db ||
   null;
 let driftMonitor = null;
+let foundryRuntime = null;
 if (driftDb) {
   const driftStore = new SqliteDriftStore({ db: driftDb });
   // Read drift settings from the project's settings store at startup.
@@ -76,6 +79,18 @@ if (driftDb) {
   if (runtime.toolFacade) {
     runtime.toolFacade.driftEngine = driftEngine;
   }
+
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const foundryInstructionsPath = join(
+    __dirname, '..', 'src', 'foundry', 'foundryInstructions.txt',
+  );
+  foundryRuntime = new FoundryRuntime({
+    instructionsPath: foundryInstructionsPath,
+  });
+  if (runtime.toolFacade) {
+    runtime.toolFacade.foundryRuntime = foundryRuntime;
+  }
+
   driftMonitor = new DriftMonitor({
     engine: driftEngine,
     listLiveTeams: () => {
@@ -147,7 +162,11 @@ async function shutdown() {
   process.exit(0);
 }
 
+const closeFoundryRuntime = () => { try { if (foundryRuntime) void foundryRuntime.closeAll(); } catch { /* best effort */ } };
 process.on('SIGINT', shutdown);
+process.on('SIGINT', closeFoundryRuntime);
 process.on('SIGTERM', shutdown);
+process.on('SIGTERM', closeFoundryRuntime);
+process.on('exit', closeFoundryRuntime);
 
 process.stdin.resume();
