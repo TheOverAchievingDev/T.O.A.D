@@ -60,6 +60,24 @@ export class FoundryRuntime {
     return this.#runTurn({ entry, text });
   }
 
+  async close({ foundrySessionId } = {}) {
+    if (typeof foundrySessionId !== 'string' || foundrySessionId.length === 0) {
+      return;
+    }
+    const entry = this.#processes.get(foundrySessionId);
+    if (!entry) return;
+    entry._intentionalClose = true;
+    this.#processes.delete(foundrySessionId);
+    try { entry.child.kill('SIGTERM'); } catch { /* already dead */ }
+  }
+
+  async closeAll() {
+    const sessionIds = Array.from(this.#processes.keys());
+    for (const id of sessionIds) {
+      await this.close({ foundrySessionId: id });
+    }
+  }
+
   #spawn({ cliSessionId }) {
     const sessionUuid = cliSessionId || randomUUID();
     const args = [
@@ -74,7 +92,25 @@ export class FoundryRuntime {
       args.push('--resume', cliSessionId);
     }
     const child = this.spawnImpl('claude', args, { stdio: ['pipe', 'pipe', 'pipe'] });
-    return { child, sessionUuid, lineBuffer: '' };
+    const entry = { child, sessionUuid, lineBuffer: '' };
+
+    // Purge registry entry on subprocess close. The per-turn dataHandler/
+    // closeHandler in #runTurn handles promise resolution; THIS handler
+    // is the cross-turn cleanup so a crashed-between-turns subprocess
+    // doesn't leak in the registry forever.
+    child.on('close', (code) => {
+      for (const [id, e] of this.#processes.entries()) {
+        if (e === entry) {
+          this.#processes.delete(id);
+          if (this.onCrash && code !== 0 && !e._intentionalClose) {
+            try { this.onCrash({ foundrySessionId: id, exitCode: code }); } catch { /* ignore */ }
+          }
+          break;
+        }
+      }
+    });
+
+    return entry;
   }
 
   async #runTurn({ entry, text }) {
