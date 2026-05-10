@@ -1,3 +1,11 @@
+export class FoundryProviderAdapterError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = 'FoundryProviderAdapterError';
+    this.details = details;
+  }
+}
+
 /**
  * Abstract base class for Foundry CLI adapters. One subclass per provider.
  *
@@ -24,7 +32,7 @@ export class FoundryProviderAdapter {
    * @returns {Promise<{ text: string, sessionUuid: string, model?: string|null, eventCount: number }>}
    */
   async send(_args) {
-    throw new Error(`${this.providerId}: send() not implemented`);
+    throw new FoundryProviderAdapterError(`${this.providerId}: send() not implemented`, { providerId: this.providerId });
   }
 
   /** True when the adapter holds in-memory state that close() would tear down. */

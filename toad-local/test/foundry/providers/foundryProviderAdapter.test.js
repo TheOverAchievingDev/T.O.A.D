@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FoundryProviderAdapter } from '../../../src/foundry/providers/FoundryProviderAdapter.js';
+import { FoundryProviderAdapter, FoundryProviderAdapterError } from '../../../src/foundry/providers/FoundryProviderAdapter.js';
 
 test('FoundryProviderAdapter cannot be instantiated directly', () => {
   assert.throws(() => new FoundryProviderAdapter('test'), /abstract/i);
@@ -38,4 +38,18 @@ test('FoundryProviderAdapter exposes providerId', () => {
   }
   const stub = new Stub();
   assert.equal(stub.providerId, 'stub-provider');
+});
+
+test('FoundryProviderAdapter.send default throws FoundryProviderAdapterError with providerId in details', async () => {
+  class Stub extends FoundryProviderAdapter {
+    constructor() { super('stub'); }
+  }
+  const stub = new Stub();
+  try {
+    await stub.send({ foundrySessionId: 's', text: 't' });
+    assert.fail('expected throw');
+  } catch (err) {
+    assert.equal(err.name, 'FoundryProviderAdapterError');
+    assert.equal(err.details.providerId, 'stub');
+  }
 });
