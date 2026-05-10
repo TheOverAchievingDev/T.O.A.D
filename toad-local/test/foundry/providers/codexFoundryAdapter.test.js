@@ -219,3 +219,20 @@ test('CodexFoundryAdapter timeout kills the child and rejects', async () => {
   await assert.rejects(sendPromise, /timed out/i);
   assert.equal(child._kill, 'SIGTERM');
 });
+
+test('CodexFoundryAdapter rejects when child emits an ENOENT error (codex binary missing)', async () => {
+  const child = makeFakeChild();
+  const adapter = new CodexFoundryAdapter({
+    spawnImpl: makeFakeSpawn([child]),
+    instructionsPath: FAKE_INSTRUCTIONS_PATH,
+    projectCwdResolver: () => '/proj',
+    readFileImpl: () => 'SYSTEM',
+  });
+
+  const sendPromise = adapter.send({ foundrySessionId: 's1', text: 'go' });
+  // Simulate spawn-time failure (codex binary not on PATH).
+  const enoent = Object.assign(new Error('spawn codex ENOENT'), { code: 'ENOENT' });
+  child.emit('error', enoent);
+
+  await assert.rejects(sendPromise, /ENOENT|spawn codex/i);
+});

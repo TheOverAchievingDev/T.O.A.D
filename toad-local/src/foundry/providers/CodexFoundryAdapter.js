@@ -74,7 +74,7 @@ export class CodexFoundryAdapter extends FoundryProviderAdapter {
   }
 
   // Stateless — no in-memory cross-turn state to attach/detach.
-  isAttached() { return false; }
+  isAttached(_args) { return false; }
   async close() { /* no-op */ }
   async closeAll() { /* no-op */ }
 
