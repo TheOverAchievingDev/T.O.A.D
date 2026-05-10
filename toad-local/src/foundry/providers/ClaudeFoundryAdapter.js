@@ -96,7 +96,17 @@ export class ClaudeFoundryAdapter extends FoundryProviderAdapter {
     // Windows so npm-installed Claude wrappers resolve. On Unix and when
     // claude.exe is the canonical install (typical), this is a passthrough.
     // Tests inject identity to keep assertions platform-independent.
-    const child = this.spawnImpl(this.resolveCliImpl('claude'), args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const resolved = this.resolveCliImpl('claude');
+    // Node 16+ no longer auto-shells .cmd/.bat files on Windows (CVE-2024-
+    // 27980). spawn() returns EINVAL on direct .cmd invocation; we must
+    // opt into shell:true explicitly. For typical claude.exe installs this
+    // is a passthrough.
+    const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(resolved);
+    const child = this.spawnImpl(resolved, args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: needsShell,
+      windowsHide: true,
+    });
     const entry = { child, sessionUuid, lineBuffer: '' };
 
     child.on('close', (code) => {

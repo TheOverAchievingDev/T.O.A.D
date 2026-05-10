@@ -83,7 +83,18 @@ export class CodexFoundryAdapter extends FoundryProviderAdapter {
     // bare name as-is on Unix and as a fallback when nothing is found
     // (so ENOENT still surfaces normally for the "not installed" path).
     // Tests inject identity to keep assertions platform-independent.
-    const child = this.spawnImpl(this.resolveCliImpl('codex'), args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const resolved = this.resolveCliImpl('codex');
+    // Node 16+ no longer auto-shells .cmd/.bat files on Windows (CVE-2024-
+    // 27980). spawn() returns EINVAL on direct .cmd invocation; we must
+    // opt into shell:true explicitly. cmd.exe's command-line length cap
+    // isn't a concern here because the prompt goes via stdin — args stay
+    // short (just flags + `-` sentinel).
+    const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(resolved);
+    const child = this.spawnImpl(resolved, args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: needsShell,
+      windowsHide: true,
+    });
 
     // Write the full prompt to stdin and close. Codex sees the `-` arg
     // and reads its prompt from stdin until EOF.
