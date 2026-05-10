@@ -191,7 +191,8 @@ CREATE TABLE IF NOT EXISTS foundry_sessions (
   created_at      TEXT NOT NULL,
   updated_at      TEXT NOT NULL,
   metadata_json   TEXT NOT NULL DEFAULT '{}',
-  cli_session_id  TEXT
+  cli_session_id  TEXT,
+  provider        TEXT NOT NULL DEFAULT 'anthropic'
 );
 
 CREATE INDEX IF NOT EXISTS idx_foundry_sessions_updated

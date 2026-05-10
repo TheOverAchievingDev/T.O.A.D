@@ -47,6 +47,7 @@ function applyMigrations(db) {
   } catch {}
   // Foundry Slice F.1: persistent CLI session UUID per Foundry session.
   try { db.exec('ALTER TABLE foundry_sessions ADD COLUMN cli_session_id TEXT'); } catch {}
+  try { db.exec("ALTER TABLE foundry_sessions ADD COLUMN provider TEXT NOT NULL DEFAULT 'anthropic'"); } catch {}
 }
 
 export function jsonStringify(value) {
