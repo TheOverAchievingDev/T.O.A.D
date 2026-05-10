@@ -88,3 +88,29 @@ test('FoundryRuntime.closeAll fans out to all adapters', async () => {
   assert.equal(claude.calls.find((c) => c.method === 'closeAll') !== undefined, true);
   assert.equal(codex.calls.find((c) => c.method === 'closeAll') !== undefined, true);
 });
+
+test('FoundryRuntime.close without provider continues to second adapter when first throws', async () => {
+  const claude = makeFakeAdapter('anthropic');
+  const codex = makeFakeAdapter('openai');
+  // Make claude.close reject; codex.close should still be called.
+  claude.close = async () => { throw new Error('claude close exploded'); };
+  const rt = new FoundryRuntime({ adapters: { anthropic: claude, openai: codex } });
+  await rt.close({ foundrySessionId: 's1' });
+  // codex must have received the close call despite claude throwing.
+  assert.ok(
+    codex.calls.find((c) => c.method === 'close'),
+    'codex.close should have been called despite claude.close throwing',
+  );
+});
+
+test('FoundryRuntime.closeAll continues to second adapter when first throws', async () => {
+  const claude = makeFakeAdapter('anthropic');
+  const codex = makeFakeAdapter('openai');
+  claude.closeAll = async () => { throw new Error('claude closeAll exploded'); };
+  const rt = new FoundryRuntime({ adapters: { anthropic: claude, openai: codex } });
+  await rt.closeAll();
+  assert.ok(
+    codex.calls.find((c) => c.method === 'closeAll'),
+    'codex.closeAll should have been called despite claude.closeAll throwing',
+  );
+});

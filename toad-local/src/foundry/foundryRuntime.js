@@ -49,16 +49,18 @@ export class FoundryRuntime {
     if (provider) {
       return this.#requireAdapter(provider).close({ foundrySessionId });
     }
-    // Defensive: close on every adapter when provider unknown.
-    for (const adapter of Object.values(this.adapters)) {
-      await adapter.close({ foundrySessionId });
-    }
+    // Defensive: close on every adapter when provider unknown. Use
+    // allSettled so a throwing adapter doesn't prevent the others from
+    // closing — close failures should never cascade.
+    await Promise.allSettled(
+      Object.values(this.adapters).map((adapter) => adapter.close({ foundrySessionId })),
+    );
   }
 
   async closeAll() {
-    for (const adapter of Object.values(this.adapters)) {
-      await adapter.closeAll();
-    }
+    await Promise.allSettled(
+      Object.values(this.adapters).map((adapter) => adapter.closeAll()),
+    );
   }
 
   #requireAdapter(provider) {
