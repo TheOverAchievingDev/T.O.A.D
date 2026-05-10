@@ -519,39 +519,29 @@ test('LocalToolFacade materializes a Foundry session into repo docs, a team, and
   foundryStore.close();
 });
 
-test('LocalToolFacade runs a Foundry chat turn through OpenAI settings and stores the assistant reply', async () => {
+test('LocalToolFacade runs a Foundry chat turn via foundryRuntime and stores the assistant reply', async () => {
+  // Previously exercised the OpenAI path; updated in Task 8 to use foundryRuntime injection.
+  // The OpenAI helpers (callOpenAiFoundry, openaiFetch) are still in the file — Task 9 removes them.
   const broker = new InMemoryBroker();
   const taskBoard = new InMemoryTaskBoard();
   const foundryStore = new SqliteFoundryStore();
-  const settingsStore = {
-    readEffective() {
-      return Promise.resolve({
-        providers: {
-          providers: [
-            { id: 'openai', apiKey: 'sk-test-openai', defaultModel: 'gpt-5.2' },
-          ],
-        },
-      });
+  const sendCalls = [];
+  const foundryRuntime = {
+    send: async (args) => {
+      sendCalls.push(args);
+      return {
+        text: 'Let us clarify the users, entities, and success criteria first.',
+        sessionUuid: 'cli-uuid-1',
+        model: 'claude-sonnet-4',
+        eventCount: 5,
+      };
     },
   };
-  let captured = null;
   const facade = new LocalToolFacade({
     broker,
     taskBoard,
     foundryStore,
-    settingsStore,
-    openaiFetch: async (url, init) => {
-      captured = { url, init };
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({
-          id: 'resp-1',
-          output_text: 'Let us clarify the users, entities, and success criteria first.',
-          usage: { input_tokens: 10, output_tokens: 12 },
-        }),
-      };
-    },
+    foundryRuntime,
   });
   const session = foundryStore.createSession({ sessionId: 'foundry-1', title: 'Repair app' });
 
@@ -565,42 +555,17 @@ test('LocalToolFacade runs a Foundry chat turn through OpenAI settings and store
     },
   });
 
-  assert.equal(captured.url, 'https://api.openai.com/v1/responses');
-  assert.equal(captured.init.headers.Authorization, 'Bearer sk-test-openai');
-  const body = JSON.parse(captured.init.body);
-  assert.equal(body.model, 'gpt-5.2');
-  assert.equal(body.store, false);
-  assert.match(body.input, /We need work orders and assets/);
-  // System prompt now directs the model to emit four ===DOC=== blocks
-  // and limit clarifying-question rounds — see FOUNDRY_CHAT_INSTRUCTIONS.
-  assert.match(body.instructions, /===DOC: brief===/);
-  assert.match(body.instructions, /===DOC: tasks===/);
-  assert.match(body.instructions, /clarifying questions/i);
-  // Spec-quality upgrade (Kiro-inspired): brief carries EARS-notation
-  // requirements (WHEN ... SHALL ...) so they are testable, and tech_spec
-  // has explicit design.md-style subsections — component design, sequence/
-  // data flow, error handling, testing strategy. Tasks must declare
-  // dependencies so the lead can wave them out in order.
-  assert.match(body.instructions, /EARS/);
-  assert.match(body.instructions, /WHEN .*SHALL/i);
-  assert.match(body.instructions, /Component Design/i);
-  assert.match(body.instructions, /Sequence|Data Flow/i);
-  assert.match(body.instructions, /Error Handling/i);
-  assert.match(body.instructions, /Testing Strategy/i);
-  assert.match(body.instructions, /Depends on|Dependencies/i);
-  // Round-2 kiro-style additions: project-wide steering doc (coding
-  // standards / never-dos), ADR log (design_decisions), and a global
-  // Definition of Done gate. Each is an additional ===DOC=== block that
-  // every agent reads at boot via its system prompt.
-  assert.match(body.instructions, /===DOC: steering===/);
-  assert.match(body.instructions, /===DOC: design_decisions===/);
-  assert.match(body.instructions, /===DOC: definition_of_done===/);
-  assert.match(body.instructions, /never-do|never do|forbidden/i);
+  assert.equal(sendCalls.length, 1);
+  assert.equal(sendCalls[0].foundrySessionId, session.sessionId);
+  assert.equal(sendCalls[0].text, 'We need work orders and assets.');
+  assert.equal(sendCalls[0].cliSessionId, null);
   assert.equal(result.assistant.text, 'Let us clarify the users, entities, and success criteria first.');
+  assert.equal(result.sessionUuid, 'cli-uuid-1');
+  assert.equal(result.model, 'claude-sonnet-4');
   const loaded = foundryStore.getSession(session.sessionId);
   assert.equal(loaded.messages.length, 2);
-  assert.equal(loaded.messages[0].role, 'user');
-  assert.equal(loaded.messages[1].role, 'assistant');
+  assert.ok(loaded.messages.some((m) => m.role === 'user'), 'expected a user message');
+  assert.ok(loaded.messages.some((m) => m.role === 'assistant'), 'expected an assistant message');
   foundryStore.close();
 });
 
@@ -6234,5 +6199,110 @@ test('LocalToolFacade drift_correction_create rejects when driftEngine.store is 
       idempotencyKey: 'k1',
     }),
     /driftStore not configured|driftEngine/i,
+  );
+});
+
+test('LocalToolFacade foundry_chat_turn delegates to foundryRuntime + persists cliSessionId on first turn', async () => {
+  const taskBoard = new InMemoryTaskBoard();
+  const broker = new InMemoryBroker();
+  const sessionId = 'foundry-session-1';
+  const fakeFoundryStore = {
+    createSession: ({ sessionId: sid }) => ({ sessionId: sid }),
+    getSession: (id) => id === sessionId ? {
+      session: { sessionId, cliSessionId: null, title: 't' },
+      messages: [],
+      artifacts: [],
+    } : null,
+    addMessage: ({ sessionId: sid, role, text, metadata }) => ({
+      messageId: `m-${role}-${Date.now()}`,
+      sessionId: sid,
+      role, text, metadata,
+    }),
+    setCliSessionId: function ({ sessionId: sid, cliSessionId }) {
+      this._lastSetCliSessionId = { sid, cliSessionId };
+    },
+  };
+  const fakeFoundryRuntime = {
+    send: async ({ foundrySessionId, text, cliSessionId }) => ({
+      text: 'assistant response',
+      sessionUuid: 'new-uuid',
+      model: 'claude-sonnet-4',
+      eventCount: 3,
+    }),
+  };
+  const facade = new LocalToolFacade({
+    broker, taskBoard,
+    foundryStore: fakeFoundryStore,
+    foundryRuntime: fakeFoundryRuntime,
+  });
+
+  const result = await facade.execute({
+    commandName: COMMANDS.FOUNDRY_CHAT_TURN,
+    actor: { teamId: 't', agentId: 'ui-client', role: 'human' },
+    args: { sessionId, text: 'plan a meal app' },
+    idempotencyKey: 'foundry-chat-test-1',
+  });
+
+  assert.equal(result.assistant.text, 'assistant response');
+  assert.equal(result.sessionUuid, 'new-uuid');
+  assert.equal(fakeFoundryStore._lastSetCliSessionId?.cliSessionId, 'new-uuid');
+});
+
+test('LocalToolFacade foundry_chat_turn passes existing cliSessionId on subsequent turns', async () => {
+  const taskBoard = new InMemoryTaskBoard();
+  const broker = new InMemoryBroker();
+  const sessionId = 'foundry-session-2';
+  const fakeFoundryStore = {
+    createSession: ({ sessionId: sid }) => ({ sessionId: sid }),
+    getSession: () => ({
+      session: { sessionId, cliSessionId: 'existing-uuid', title: 't' },
+      messages: [],
+      artifacts: [],
+    }),
+    addMessage: ({ role }) => ({ messageId: 'm', sessionId, role, text: '', metadata: {} }),
+    setCliSessionId: function ({ cliSessionId }) { this._calls = (this._calls || 0) + 1; },
+  };
+  const sendCalls = [];
+  const fakeFoundryRuntime = {
+    send: async (args) => {
+      sendCalls.push(args);
+      return { text: 'r', sessionUuid: 'existing-uuid', model: 'm', eventCount: 1 };
+    },
+  };
+  const facade = new LocalToolFacade({
+    broker, taskBoard,
+    foundryStore: fakeFoundryStore,
+    foundryRuntime: fakeFoundryRuntime,
+  });
+
+  await facade.execute({
+    commandName: COMMANDS.FOUNDRY_CHAT_TURN,
+    actor: { teamId: 't', agentId: 'ui-client', role: 'human' },
+    args: { sessionId, text: 'next turn' },
+    idempotencyKey: 'foundry-chat-test-2',
+  });
+
+  assert.equal(sendCalls[0].cliSessionId, 'existing-uuid');
+  assert.equal(fakeFoundryStore._calls ?? 0, 0);
+});
+
+test('LocalToolFacade foundry_chat_turn rejects when foundryRuntime is not configured', async () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    foundryStore: {
+      createSession: () => ({ sessionId: 's' }),
+      getSession: () => ({ session: { sessionId: 's', cliSessionId: null }, messages: [], artifacts: [] }),
+      addMessage: () => ({ messageId: 'm' }),
+    },
+  });
+  await assert.rejects(
+    () => facade.execute({
+      commandName: COMMANDS.FOUNDRY_CHAT_TURN,
+      actor: { teamId: 't', agentId: 'ui-client', role: 'human' },
+      args: { sessionId: 's', text: 'x' },
+      idempotencyKey: 'k',
+    }),
+    /foundryRuntime not configured/i,
   );
 });

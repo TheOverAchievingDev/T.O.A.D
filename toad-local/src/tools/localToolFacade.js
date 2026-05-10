@@ -82,7 +82,7 @@ export class LocalToolFacade {
   #claudeQuotaCache = null;
   #claudeQuotaInflight = null;
 
-  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, foundryStore = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null, mergeIntegrator = null, remoteMergePolicy = null, riskPolicy = null, settingsStore = null, riskPolicyStore = null, githubFetch = null, githubClientId = null, providerAuthSpawn = null, providerAuthSpawnSync = null, providerAuthReadFile = null, providerAuthStat = null, claudeUsageProbe = null, driftEngine = null, runGit = null, openaiFetch = null, deliveryWorker = null, pluginAuthReadFile = null, pluginAuthStat = null, pluginAuthSpawn = null, pluginAuthSpawnSync = null, pluginResources = null, pluginJobs = null, railwayToolImpls = null, easToolImpls = null, vercelToolImpls = null }) {
+  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, foundryStore = null, foundryRuntime = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null, mergeIntegrator = null, remoteMergePolicy = null, riskPolicy = null, settingsStore = null, riskPolicyStore = null, githubFetch = null, githubClientId = null, providerAuthSpawn = null, providerAuthSpawnSync = null, providerAuthReadFile = null, providerAuthStat = null, claudeUsageProbe = null, driftEngine = null, runGit = null, openaiFetch = null, deliveryWorker = null, pluginAuthReadFile = null, pluginAuthStat = null, pluginAuthSpawn = null, pluginAuthSpawnSync = null, pluginResources = null, pluginJobs = null, railwayToolImpls = null, easToolImpls = null, vercelToolImpls = null }) {
     if (!broker) throw new TypeError('broker is required');
     if (!taskBoard) throw new TypeError('taskBoard is required');
     this.broker = broker;
@@ -105,6 +105,9 @@ export class LocalToolFacade {
     this.stopAgent = typeof stopAgent === 'function' ? stopAgent : null;
     this.teamConfigRegistry = teamConfigRegistry;
     this.foundryStore = foundryStore && typeof foundryStore.createSession === 'function' ? foundryStore : null;
+    this.foundryRuntime = foundryRuntime && typeof foundryRuntime.send === 'function'
+      ? foundryRuntime
+      : null;
     this.spawnValidation = typeof spawnValidation === 'function' ? spawnValidation : defaultSpawnValidation;
     this.dbPath = typeof dbPath === 'string' && dbPath.length > 0 ? dbPath : null;
     this.eventLog = eventLog && typeof eventLog.appendEvent === 'function' ? eventLog : null;
@@ -2546,36 +2549,46 @@ export class LocalToolFacade {
     const text = requireString(args?.text, 'args.text');
     const snapshot = store.getSession(sessionId);
     if (!snapshot) throw new Error(`foundry session not found: ${sessionId}`);
+    if (!this.foundryRuntime) {
+      throw new Error('foundry_chat_turn: foundryRuntime not configured for this facade');
+    }
+
     const user = store.addMessage({
       sessionId,
       role: 'user',
       text,
       metadata: { source: 'foundry_chat_turn' },
     });
-    const config = await this.#resolveOpenAiFoundryConfig(args);
-    const response = await callOpenAiFoundry({
-      fetchImpl: this.openaiFetch || globalThis.fetch,
-      apiKey: config.apiKey,
-      model: config.model,
-      session: store.getSession(sessionId),
+
+    const response = await this.foundryRuntime.send({
+      foundrySessionId: sessionId,
+      text,
+      cliSessionId: snapshot.session?.cliSessionId ?? null,
     });
+
+    // First turn: persist the new CLI session UUID so subsequent turns can find it.
+    if (!snapshot.session?.cliSessionId && response.sessionUuid) {
+      store.setCliSessionId({ sessionId, cliSessionId: response.sessionUuid });
+    }
+
     const assistant = store.addMessage({
       sessionId,
       role: 'assistant',
       text: response.text,
       metadata: {
-        source: 'openai_responses_api',
-        responseId: response.responseId,
-        model: config.model,
-        usage: response.usage,
+        source: 'claude_cli_subprocess',
+        sessionUuid: response.sessionUuid,
+        model: response.model,
+        eventCount: response.eventCount,
       },
     });
+
     return {
       sessionId,
       user,
       assistant,
-      responseId: response.responseId,
-      usage: response.usage,
+      sessionUuid: response.sessionUuid,
+      model: response.model,
     };
   }
 
