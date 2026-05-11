@@ -55,6 +55,16 @@ import { useDrift } from '@/hooks/useDrift';
 
 type ProjectOpenScreen = Extract<Tweaks['screen'], 'cockpit' | 'workspace' | 'code'>;
 
+interface ReopenContext {
+  teamId: string;
+  teamName: string;
+  isRunning: boolean;
+  lastActiveAt: string | null;
+  lastTask?: { taskId: string; subject: string; status: string };
+  lastDriftScore?: { teamScore: number; status: string; runId: string; createdAt: string };
+  lastCommit?: { sha: string; message: string; authoredAt: string | null };
+}
+
 export default function App() {
   return (
     <ToastProvider max={6}>
@@ -92,6 +102,7 @@ function AppInner() {
   const [addProjectOpen, setAddProjectOpen] = useState(false);
   const [logRuntimeId, setLogRuntimeId] = useState<string | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [reopenContext, setReopenContext] = useState<ReopenContext | null>(null);
   const projectRegistry = useProjects();
   // Single drift polling loop for the whole app — lifted from
   // Workspace + TasksScreen + DriftScreen so we don't triple-poll.
@@ -264,11 +275,37 @@ function AppInner() {
   useEffect(() => {
     if (firstRunRedirectDone.current) return;
     firstRunRedirectDone.current = true;
-    if (!tweaks.firstRunComplete && projectRegistry.projects.length === 0) {
-      if (tweaks.screen !== 'foundry' && tweaks.screen !== 'settings') {
-        setTweak('screen', 'foundry');
+    void (async () => {
+      try {
+        const state = await callToadApi({
+          actor: { teamId: 'system', agentId: 'ui-client', role: 'human' },
+          method: 'project_state_describe',
+        }) as { state: 'has_team' | 'half_foundried' | 'fresh'; reopenContext?: ReopenContext };
+        setReopenContext(state.reopenContext ?? null);
+        if (state.state === 'has_team' && state.reopenContext) {
+          setActiveTeamId(state.reopenContext.teamId);
+          if (tweaks.screen !== 'settings') setTweak('screen', 'cockpit');
+        } else if (state.state === 'half_foundried') {
+          if (tweaks.screen !== 'settings') setTweak('screen', 'foundry');
+        } else if (!tweaks.firstRunComplete) {
+          // fresh + first-run user → Foundry with welcome banner
+          if (tweaks.screen !== 'foundry' && tweaks.screen !== 'settings') {
+            setTweak('screen', 'foundry');
+          }
+        }
+        // Otherwise: fresh + returning user → respect last-stored screen.
+      } catch (err) {
+        // Sidecar offline / call failed — fall back to existing first-run
+        // behaviour so the UI doesn't soft-lock.
+        // eslint-disable-next-line no-console
+        console.warn('[app] project_state_describe failed; falling back to first-run logic:', err);
+        if (!tweaks.firstRunComplete && projectRegistry.projects.length === 0) {
+          if (tweaks.screen !== 'foundry' && tweaks.screen !== 'settings') {
+            setTweak('screen', 'foundry');
+          }
+        }
       }
-    }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -606,6 +643,21 @@ function AppInner() {
               driftError={drift.error}
               onRefreshDrift={drift.refresh}
               onRefreshData={refresh}
+              reopenContext={reopenContext}
+              onResumeTeam={() => {
+                if (!reopenContext?.teamId) return;
+                void callToadApi({
+                  actor: { teamId: reopenContext.teamId, agentId: 'ui-client', role: 'human' },
+                  method: 'team_launch',
+                  args: { teamId: reopenContext.teamId },
+                  idempotencyKey: `resume-${reopenContext.teamId}-${Date.now()}`,
+                })
+                  .then(() => refresh())
+                  .catch((err) => {
+                    // eslint-disable-next-line no-console
+                    console.warn('[app] team_launch (resume) failed:', err);
+                  });
+              }}
             />
           )}
           {tweaks.screen === 'code' && (

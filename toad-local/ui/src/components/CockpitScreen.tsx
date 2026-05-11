@@ -66,6 +66,12 @@ interface CockpitScreenProps {
   driftError: string | null;
   onRefreshDrift: () => Promise<void>;
   onRefreshData: () => void;
+  // TODO M.1a Task 4: refine into a concrete ReopenContext type + render
+  // the paused-team header when reopenContext is present and isRunning
+  // is false. Temporary loose typing keeps the typecheck gate green
+  // while Task 3 ships the routing change.
+  reopenContext?: unknown;
+  onResumeTeam?: () => void;
 }
 
 type LeftTab = 'tasks' | 'files' | 'agents';
