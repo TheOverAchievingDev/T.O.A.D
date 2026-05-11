@@ -322,8 +322,6 @@ export class LocalToolFacade {
         return this.#providerAuthLogin(args);
       case COMMANDS.PROVIDER_AUTH_LOGOUT:
         return this.#providerAuthLogout(args);
-      case COMMANDS.DRIFT_RUN:
-        return this.#driftRun(actor);
       case COMMANDS.PLUGIN_LIST_AVAILABLE:
         return this.#pluginListAvailable(actor, args);
       case COMMANDS.PLUGIN_LOGIN:

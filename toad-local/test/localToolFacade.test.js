@@ -5955,6 +5955,40 @@ test('LocalToolFacade drift_run delegates to driftEngine and returns DriftRunRes
   assert.equal(result.status, 'healthy');
 });
 
+test('LocalToolFacade drift_run honors args.teamId override (was dropped by duplicate switch case)', async () => {
+  // The switch statement in #execute had two `case COMMANDS.DRIFT_RUN`
+  // arms. JavaScript's switch matches the FIRST arm, which called
+  // `#driftRun(actor)` — silently dropping the args object. That made
+  // args.teamId / args.trigger overrides invisible: a UI client trying
+  // to run drift for team B while logged in as team A would always
+  // get team A's drift back.
+  const seen = [];
+  const fakeEngine = {
+    async runDrift({ teamId, trigger }) {
+      seen.push({ teamId, trigger });
+      return {
+        runId: 'run_x', asOf: '2026-05-04T10:00:00Z',
+        teamScore: 0, status: 'healthy', findings: [],
+        categoryScores: {}, perTaskScores: {},
+        history: [], trigger,
+      };
+    },
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    driftEngine: fakeEngine,
+  });
+  await facade.execute({
+    commandName: COMMANDS.DRIFT_RUN,
+    actor: { teamId: 'team-a', agentId: 'ui-client', role: 'human' },
+    args: { teamId: 'team-b', trigger: 'periodic' },
+  });
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].teamId, 'team-b', 'args.teamId override must reach driftEngine');
+  assert.equal(seen[0].trigger, 'periodic', 'args.trigger override must reach driftEngine');
+});
+
 test('LocalToolFacade drift_run rejects when no driftEngine is configured', async () => {
   const facade = new LocalToolFacade({
     broker: new InMemoryBroker(),
