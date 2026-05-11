@@ -228,3 +228,56 @@ test('readProjectDocs returns empty object when no docs exist', () => {
   });
   assert.deepEqual(docs, {});
 });
+
+// ---------------------------------------------------------------------------
+// buildSnapshot — compareAgainst branching
+// ---------------------------------------------------------------------------
+
+test('buildSnapshot default (compareAgainst foundry_docs) populates foundryDocs', async () => {
+  const snap = await buildSnapshot({
+    teamId: 'team-a',
+    deps: {
+      taskBoard: fakeTaskBoard(),
+      eventLog: fakeEventLog(),
+      foundryStore: fakeFoundryStore(),
+    },
+  });
+  assert.equal(snap.foundryDocs.architecture, '# Arch');
+  assert.equal(snap.foundryDocs.steering, '# Steering');
+  assert.equal(snap.currentStateContext, null);
+});
+
+test('buildSnapshot with compareAgainst=current_state populates currentStateContext, leaves foundryDocs empty', async () => {
+  const snap = await buildSnapshot({
+    teamId: 'team-a',
+    compareAgainst: 'current_state',
+    deps: {
+      taskBoard: fakeTaskBoard(),
+      eventLog: fakeEventLog(),
+      foundryStore: fakeFoundryStore(),
+      projectCwd: '/proj',
+      // Inject helpers so we don't touch real fs/git in tests
+      runGitImpl: () => ({ exitCode: 0, stdout: 'abc1 first commit (2026)\n' }),
+      existsSyncImpl: (p) => p.endsWith('README.md'),
+      readFileSyncImpl: () => 'readme content',
+    },
+  });
+  assert.deepEqual(snap.foundryDocs, {});
+  assert.ok(snap.currentStateContext);
+  assert.deepEqual(snap.currentStateContext.recentCommits, ['abc1 first commit (2026)']);
+  assert.equal(snap.currentStateContext.projectDocs['README.md'], 'readme content');
+});
+
+test('buildSnapshot with invalid compareAgainst falls back to foundry_docs path', async () => {
+  const snap = await buildSnapshot({
+    teamId: 'team-a',
+    compareAgainst: 'banana',
+    deps: {
+      taskBoard: fakeTaskBoard(),
+      eventLog: fakeEventLog(),
+      foundryStore: fakeFoundryStore(),
+    },
+  });
+  assert.equal(snap.foundryDocs.architecture, '# Arch');
+  assert.equal(snap.currentStateContext, null);
+});

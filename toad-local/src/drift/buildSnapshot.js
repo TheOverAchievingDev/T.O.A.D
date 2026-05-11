@@ -10,6 +10,7 @@ const PROJECT_DOC_CANDIDATES = Object.freeze([
   'CLAUDE.md',
   'CONTRIBUTING.md',
 ]);
+const VALID_COMPARE_MODES = Object.freeze(['foundry_docs', 'current_state']);
 
 /**
  * Fetch up to `count` recent commits via git log, formatted as
@@ -74,7 +75,7 @@ export function readProjectDocs({
  * worktree manager or foundry store isn't wired (e.g. very early projects
  * before the first Foundry session).
  */
-export async function buildSnapshot({ teamId, deps = {} } = {}) {
+export async function buildSnapshot({ teamId, deps = {}, compareAgainst = 'foundry_docs' } = {}) {
   if (typeof teamId !== 'string' || teamId.length === 0) {
     throw new TypeError('buildSnapshot: teamId required');
   }
@@ -86,6 +87,9 @@ export async function buildSnapshot({ teamId, deps = {} } = {}) {
     throw new TypeError('buildSnapshot: deps.eventLog with listEvents required');
   }
 
+  // Defensive fallback: anything outside the allowed set reverts to foundry_docs.
+  const mode = VALID_COMPARE_MODES.includes(compareAgainst) ? compareAgainst : 'foundry_docs';
+
   const tasks = safeArray(taskBoard.listTasks({ teamId }));
   const taskEvents = typeof taskBoard.listEvents === 'function'
     ? safeArray(taskBoard.listEvents({ teamId }))
@@ -93,7 +97,25 @@ export async function buildSnapshot({ teamId, deps = {} } = {}) {
   const runtimeEvents = safeArray(eventLog.listEvents({ teamId }));
 
   let foundryDocs = {};
-  if (foundryStore && typeof foundryStore.readDocs === 'function') {
+  let currentStateContext = null;
+
+  if (mode === 'current_state') {
+    // Skip foundryStore.readDocs — even if docs exist, we don't surface them.
+    const projectCwd = typeof deps.projectCwd === 'string' && deps.projectCwd.length > 0
+      ? deps.projectCwd
+      : null;
+    currentStateContext = {
+      recentCommits: getRecentCommits({
+        cwd: projectCwd,
+        runGitImpl: deps.runGitImpl,
+      }),
+      projectDocs: readProjectDocs({
+        cwd: projectCwd,
+        existsSyncImpl: deps.existsSyncImpl,
+        readFileSyncImpl: deps.readFileSyncImpl,
+      }),
+    };
+  } else if (foundryStore && typeof foundryStore.readDocs === 'function') {
     try {
       const docs = foundryStore.readDocs({ teamId }) || {};
       foundryDocs = pickStringFields(docs, [
@@ -150,6 +172,7 @@ export async function buildSnapshot({ teamId, deps = {} } = {}) {
     taskEvents,
     runtimeEvents,
     foundryDocs,
+    currentStateContext,
     worktrees,
     diffsByTask,
     teamConfig,
