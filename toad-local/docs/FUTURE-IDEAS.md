@@ -95,6 +95,28 @@ Order of operations: ship Drift hardening first (the polish slice that fixes Win
 
 References worth borrowing from when v2 lands: CodeRabbit's published prompt structures for LLM-driven code review; Open Policy Agent (OPA) for declarative rule-engine patterns; Terraform's "expected vs actual" vocabulary; DSPy/LangSmith for structured-output LLM eval patterns. Symphony's drift v2 will probably set the playbook for multi-agent code-consistency monitoring — nobody's solved this exact framing yet.
 
+### UI re-envisioning — surface what's hidden
+
+The project has shipped a deep set of capabilities — Foundry's chat-driven discovery, the runtime supervisor, the drift monitor, approvals, costs, diagnostics, the audit/code/review surfaces, plugin auth, GitHub auth, risk policies, settings tuning, the reopen flow, bug-fix task type, project picker — but the way you *reach* most of them today is either through the command palette (⌘K) or by knowing which sidebar icon happens to expose the thing you want. A new user staring at Cockpit has no way to discover that "Open Project picker" or "Open Providers modal" or any of the other ~30 command-palette entries even exist.
+
+Specific gaps observed so far (capture more as they're hit):
+
+- **No visible team / project switcher.** Once you're on a team, the only way to switch to another existing project is `⌘K → "Open Project picker"`. The picker screen itself is well-built; it's just invisible from inside the app. A "switch project" chip next to the team name in the Cockpit header, or a project list in the sidebar footer, would close this gap without adding new screens. **This is the immediate item to fix.**
+- **Settings is one flat list.** Drift, providers, risk policy, GitHub auth, themes, tweaks — all live in the same Settings screen with no obvious grouping for the casual user.
+- **Foundry → Cockpit handoff is fine, but coming back to an existing project goes through reopen logic that's invisible to the user.** The user doesn't know whether Symphony "remembered" their project or is starting fresh until they're already on a screen.
+- **Many actions live in modals invoked from the command palette only.** Providers, shortcuts, plugins, GitHub linking — none of these have a visible front door.
+- **Cockpit's bottom panel is cramped** (already captured under power-user mode notes). The validation runner, terminal, focused output all compete for the same horizontal strip.
+
+What a re-envisioning should produce:
+
+1. **A discoverability audit.** Walk every feature the engine exposes, ask "how would a brand-new user find this without reading docs?" — list the gaps.
+2. **A navigation model.** Today the left sidebar is the only nav; the top bar is search-only. The new model should make space for: (a) project context (which project / team you're on, switch action), (b) primary nav (the workspaces), (c) global actions (notifications, help, settings, runtime status), (d) the command palette as a power-user shortcut, not the only door.
+3. **A visual hierarchy refresh.** The current Cockpit is information-dense but flat — Cursor / Linear / Raycast all do better at making the operator's eye land on the right thing first.
+4. **Per-persona defaults.** Tie this to power-user mode (see top of doc): the "AI builds it FOR me" persona should land on a calmer, more guided Cockpit; the "WITH me" persona should land on a developer-mode layout with terminal + diff hunks + raw event log surfaced.
+5. **An onboarding overlay system.** First-run already exists; what's missing is contextual "did you know X exists?" prompts when a user has been on a screen for a while without using its features.
+
+Sequencing: do this AFTER the maintenance trilogy and drift hardening slice ship. The re-envisioning is a brainstorming → design → spec → implementation workstream of its own, not a punch-list item. Capture more "I can't find X" moments as we hit them so the brainstorm has concrete grievances to design against, not just abstract aspirations.
+
 ### ASPE — Activity Stream Plain English
 A low-priority background agent (Haiku-class) watches each agent's tool-call stream and emits plain-English summaries: "this agent just refactored useDrift.ts to extract the linkage filter; here's a one-line summary." Closes the gap that drove the project's origin story (copy-pasting agent output into another session to translate).
 
