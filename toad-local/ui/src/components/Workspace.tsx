@@ -439,6 +439,9 @@ export function Workspace({
                               >
                                 <div className="kanban-card-head">
                                   <span className="kanban-card-id">{task.id}</span>
+                                  {task.type === 'bug' && (
+                                    <span className="task-bug-badge" title="Bug fix">Bug</span>
+                                  )}
                                   {task.riskLevel && (
                                     <TaskRiskBadge
                                       level={task.riskLevel}

@@ -319,6 +319,9 @@ export function CockpitFlowCanvas({
                         <span className="flow-task-top">
                           <span className="task-id">{task.id}</span>
                           <span className={`cockpit-status ${task.status}`}>{task.status}</span>
+                          {task.type === 'bug' && (
+                            <span className="task-bug-badge" title="Bug fix">Bug</span>
+                          )}
                         </span>
                         <strong>{task.title}</strong>
                         <span className="flow-task-meta">

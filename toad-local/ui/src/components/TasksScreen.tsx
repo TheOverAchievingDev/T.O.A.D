@@ -142,6 +142,9 @@ export function TasksScreen({ team, tasks, onOpenTask, onCreateTask, perTaskDrif
                     >
                       <div className="kanban-card-head">
                         <span className="kanban-card-id">{t.id}</span>
+                        {t.type === 'bug' && (
+                          <span className="task-bug-badge" title="Bug fix">Bug</span>
+                        )}
                         {t.riskLevel && (
                           <TaskRiskBadge
                             level={t.riskLevel}
@@ -194,6 +197,9 @@ export function TasksScreen({ team, tasks, onOpenTask, onCreateTask, perTaskDrif
                     >
                       {STATUS_LABEL[t.status] ?? t.status}
                     </span>
+                    {t.type === 'bug' && (
+                      <span className="task-bug-badge" title="Bug fix">Bug</span>
+                    )}
                     {t.riskLevel && (
                       <TaskRiskBadge
                         level={t.riskLevel}
