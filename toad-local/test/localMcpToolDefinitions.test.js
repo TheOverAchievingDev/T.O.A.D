@@ -226,6 +226,19 @@ test('task_create MCP schema exposes task risk contract fields', () => {
   assert.deepEqual(properties.requiresHumanApproval, { type: 'boolean' });
 });
 
+test('task_create schema includes optional type enum', () => {
+  const def = getLocalMcpTool('task_create');
+  assert.ok(def, 'task_create should be registered');
+  assert.deepEqual(def.inputSchema.properties.type, {
+    type: 'string',
+    enum: ['feature', 'bug'],
+  });
+  assert.ok(
+    !(def.inputSchema.required ?? []).includes('type'),
+    'type should be optional',
+  );
+});
+
 test('callLocalMcpTool executes a local facade command and returns MCP content', async () => {
   const calls = [];
   const toolFacade = {

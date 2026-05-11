@@ -3939,6 +3939,58 @@ test('task_create rejects unsupported riskLevel values', () => {
   );
 });
 
+// --- M.1b: task type passthrough ---
+
+test('task_create with type=bug stores type in the CREATED event payload', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'type-bug-1',
+    actor: { teamId: 'demo', agentId: 'u', role: 'human' },
+    args: { taskId: 't_bug1', subject: 'Login crashes', type: 'bug' },
+  });
+  const events = facade.taskBoard.listEvents({ teamId: 'demo', taskId: 't_bug1' });
+  const created = events.find((e) => e.eventType === TASK_EVENT_TYPES.CREATED);
+  assert.ok(created, 'CREATED event should exist');
+  assert.equal(created.payload.type, 'bug');
+  const task = facade.taskBoard.getTask({ teamId: 'demo', taskId: 't_bug1' });
+  assert.equal(task.type, 'bug');
+});
+
+test('task_create without type defaults to feature in projection', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'type-feat-1',
+    actor: { teamId: 'demo', agentId: 'u', role: 'human' },
+    args: { taskId: 't_feat1', subject: 'Add a button' },
+  });
+  const task = facade.taskBoard.getTask({ teamId: 'demo', taskId: 't_feat1' });
+  assert.equal(task.type, 'feature');
+});
+
+test('task_create rejects invalid type values', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  assert.throws(
+    () => facade.execute({
+      commandName: COMMANDS.TASK_CREATE,
+      idempotencyKey: 'type-bad-1',
+      actor: { teamId: 'demo', agentId: 'u', role: 'human' },
+      args: { taskId: 't_bad', subject: 'X', type: 'banana' },
+    }),
+    /task_create: unsupported type banana/,
+  );
+});
+
 test('worktreeManager.createForTask receives task.baseRef from facade hook on ready→planned', () => {
   const seen = [];
   const fakeWorktreeManager = {

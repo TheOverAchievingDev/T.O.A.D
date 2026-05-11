@@ -125,6 +125,10 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
       testCommands: STRING_LIST_SCHEMA,
       expectedDeliverables: STRING_LIST_SCHEMA,
       dependencyTaskIds: STRING_LIST_SCHEMA,
+      type: {
+        type: 'string',
+        enum: ['feature', 'bug'],
+      },
     },
   }),
   makeTool({

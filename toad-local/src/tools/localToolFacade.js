@@ -6,6 +6,7 @@ import {
   TASK_EVENT_TYPES,
   TASK_RISK_LEVELS,
   TASK_STATUS,
+  TASK_TYPES,
 } from '../task/inMemoryTaskBoard.js';
 import { applyPermissionSuggestions } from '../runtime/claudeSettingsWriter.js';
 import { formatCrossTeamText, CROSS_TEAM_SOURCE, CROSS_TEAM_SENT_SOURCE } from '../protocol/crossTeam.js';
@@ -3616,6 +3617,17 @@ function normalizeTaskRiskContractArgs(args) {
       throw new Error(`task_create: unsupported assignedRole ${assignedRole}`);
     }
     payload.assignedRole = assignedRole;
+  }
+  // M.1b: optional task type ('feature' | 'bug'). Omit when absent so the
+  // projection defaults kick in (back-compat with legacy callers that pre-date
+  // this slice). Validate against the enum for defense-in-depth alongside the
+  // MCP schema check.
+  if (typeof args.type === 'string' && args.type.trim().length > 0) {
+    const type = args.type.trim();
+    if (!TASK_TYPES.includes(type)) {
+      throw new Error(`task_create: unsupported type ${type}`);
+    }
+    payload.type = type;
   }
   const testCommands = normalizeStringList(args.testCommands);
   if (testCommands) payload.testCommands = testCommands;
