@@ -77,6 +77,24 @@ Patterns worth borrowing from external planning tools (`/deep-plan`, spec-kit, p
 
 Each is a candidate for a future slice driven by observed need, not pre-emptive scope expansion. F.1 explicitly does NOT include any of these — it's a pure migration with identical behavior to today's API path.
 
+### Drift v2 — code-consistency monitor
+
+The current drift monitor catches **process drift** well — task lifecycle violations, role-permission breaches, missing test artifacts, etc. The 8 deterministic checks do their job. The LLM semantic check tries to catch **semantic drift** but is the noisiest part: open-ended prompt, Windows-spawn bugs (same root cause as F.2 — never ported the fixes), expensive (60s polling), hallucinated findings, brittle stable-ID design that fights LLM nondeterminism.
+
+What's missing is **code-consistency drift** — the failure mode where multiple providers and models touching different parts of the codebase produce a patchwork: agent A establishes a pattern in Claude, agent B implements similar code differently in Codex, agent C in Gemini reviews both and doesn't notice the inconsistency. This is the most insidious kind of drift in multi-agent work and the current monitor can't see it.
+
+Sketch of what Drift v2 would add (deferred until usage data shows what real drift looks like — don't pre-emptively design):
+
+1. **Pattern indexing** — scan the codebase for established patterns (error handling, naming, abstraction shapes) via AST/regex. Deterministically check new code against them. Fast, cheap, no hallucination.
+2. **Cross-task review continuity** — when a reviewer agent picks up task B, give it context about how similar task A was resolved. Drift *prevention*, not detection.
+3. **Codebase rules from AGENTS.md / CLAUDE.md as drift baselines** — already a convention in the project. Drift becomes "did this change violate a documented rule?"
+4. **Compaction-aware steering re-injection** — when an agent's session compacts, re-inject architecture decisions so they don't get forgotten between tasks.
+5. **Narrow LLM judge prompts** — instead of "find drift," ask "does the diff in task B follow the same error-handling pattern as `src/X/handler.js`?" Specific questions get specific answers.
+
+Order of operations: ship Drift hardening first (the polish slice that fixes Windows spawn + polling + duplicate-DRIFT_RUN bugs in the current monitor). Use that hardened version in production for weeks. Observe what kinds of drift the team actually produces. Then design v2 against that evidence, not against speculation.
+
+References worth borrowing from when v2 lands: CodeRabbit's published prompt structures for LLM-driven code review; Open Policy Agent (OPA) for declarative rule-engine patterns; Terraform's "expected vs actual" vocabulary; DSPy/LangSmith for structured-output LLM eval patterns. Symphony's drift v2 will probably set the playbook for multi-agent code-consistency monitoring — nobody's solved this exact framing yet.
+
 ### ASPE — Activity Stream Plain English
 A low-priority background agent (Haiku-class) watches each agent's tool-call stream and emits plain-English summaries: "this agent just refactored useDrift.ts to extract the linkage filter; here's a one-line summary." Closes the gap that drove the project's origin story (copy-pasting agent output into another session to translate).
 
