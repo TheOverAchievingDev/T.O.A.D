@@ -511,15 +511,17 @@ Each sidebar screen, the first time a user visits it, shows a one-paragraph "wha
 
 ---
 
-## 11. Visual language (intent, not specifics)
+## 11. Visual language — LOCKED via mockup (2026-05-11)
 
-Claude Design owns the visual treatment. Constraints to honor:
+Claude Design delivered a working clickable prototype (`Reference material/Claude Design Mockup/IDE_VIBE_extracted/`) and the user approved it as the visual direction. The locks below override the looser guidance the spec previously carried:
 
-- **Dark by default, light supported.** Current `--clay` accent (#d97757) reads as warm/human and pairs well with neutral grays. Keep the warm-accent direction.
-- **Information density: moderate.** Linear / Cursor density, not Notion (too loose) or Vim (too dense). The audience reads better than they navigate.
-- **Motion: minimal.** Drift score pulse, agent-card status dots, a subtle scale-up on screen transition. No big animations.
-- **Typography: monospace for code/data, sans for UI chrome.** Today's mix works; just lock it in.
-- **Icons: line-weight, single style.** Today's icon set (Lucide-ish) is fine — keep it consistent. No mixed icon styles.
+- **Typography: Geist (sans) + JetBrains Mono (code).** Originally drafted as Inter Display + IBM Plex Mono in §14; the mockup chose Geist + JetBrains Mono and the user approved on review. Geist leans slightly more modern/geometric than Inter — implementation must lean into Geist's character (used at display sizes for screen headings like "Your team is working on …") and reserve JetBrains Mono for file paths, task IDs, line/col, diff stats, validation status.
+- **Accent: `#d97757` clay.** Reserved for moments that earn it — drift score pulse, agent status dots, primary CTAs ("Resume team"), active screen rail in sidebar, active task name in headings. Never decorative.
+- **Theme: dark default, light supported.** Mockup ships both via the persona-toggle-adjacent theme switch. Light mode is a "doesn't break" check, not a co-equal direction.
+- **Information density: matches mockup.** Center column reads at magazine density (generous line-height, plain English), columns at IDE density (compact agent cards, dense Inspector chips, mono for numerics).
+- **Motion: minimal.** Drift score pulse, agent status dots, rotating placeholder text in the command palette (4.2s cadence per mockup). No screen-transition animation in the prototype; keep that.
+- **Icons: line-weight, single style.** Mockup uses inline SVG with consistent stroke weight. Real implementation can keep the existing Lucide-ish set or port the mockup's; either works as long as one style is enforced.
+- **Sample project name: `harvest` (CSA box subscriptions).** The mockup populated agent cards / task names / file paths around a CSA-box-subscription app called "harvest" instead of the `meal-planner` I'd suggested. User approved. This means: keep `harvest` as the seeded demo team's project theme so the prototype, docs, screenshots, and demo case study all tell one coherent story.
 
 ---
 
