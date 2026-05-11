@@ -626,6 +626,13 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
     properties: {},
   }),
   makeTool({
+    name: COMMANDS.PROJECT_STATE_DESCRIBE,
+    title: 'Describe Project State',
+    description: 'Read-only inspection of the loaded project. Returns one of three states (fresh / half_foundried / has_team) plus a reopenContext block when a team exists. Used by the UI to decide whether to route reopen to Cockpit or Foundry.',
+    required: [],
+    properties: {},
+  }),
+  makeTool({
     name: COMMANDS.FOUNDRY_SESSION_GET,
     title: 'Get Foundry Session',
     description: 'Read one Foundry session, including captured messages and generated artifacts.',

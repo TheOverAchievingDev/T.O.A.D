@@ -59,6 +59,7 @@ test('listLocalMcpTools exposes MCP-shaped local command tools', () => {
     'message_send',
     'plugin_job_get',
     'plugin_job_list',
+    'project_state_describe',
     'provider_auth_login',
     'provider_auth_logout',
     'provider_auth_status',
@@ -162,10 +163,16 @@ test('mutating MCP tools require idempotencyKey in their schemas', () => {
   }
 
   // Read-only tools
-  for (const name of ['task_list', 'agent_status', 'approval_list', 'runtime_events', 'cross_team_messages', 'tool_activity', 'health_status', 'team_list', 'review_list', 'stuck_runtime_list', 'foundry_session_list', 'foundry_session_get', 'ide_tree_list', 'ide_read_file', 'ide_get_status', 'ide_get_diff']) {
+  for (const name of ['task_list', 'agent_status', 'approval_list', 'runtime_events', 'cross_team_messages', 'tool_activity', 'health_status', 'team_list', 'review_list', 'stuck_runtime_list', 'foundry_session_list', 'foundry_session_get', 'project_state_describe', 'ide_tree_list', 'ide_read_file', 'ide_get_status', 'ide_get_diff']) {
     assert.ok(!getLocalMcpTool(name).inputSchema.required.includes('idempotencyKey'), name);
     assert.equal(getLocalMcpTool(name).annotations.readOnlyHint, true, `${name} should be readOnly`);
   }
+});
+
+test('localToolDefinitions includes project_state_describe with no required args', () => {
+  const def = getLocalMcpTool('project_state_describe');
+  assert.ok(def, 'project_state_describe should be registered');
+  assert.deepEqual(def.inputSchema.required ?? [], []);
 });
 
 test('ide MCP tools expose read-only file browser schemas', () => {

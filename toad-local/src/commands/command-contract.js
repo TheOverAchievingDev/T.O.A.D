@@ -81,6 +81,7 @@ export const COMMANDS = Object.freeze({
   AUDIT_LOG_QUERY: 'audit_log_query',
   FOUNDRY_SESSION_CREATE: 'foundry_session_create',
   FOUNDRY_SESSION_LIST: 'foundry_session_list',
+  PROJECT_STATE_DESCRIBE: 'project_state_describe',
   FOUNDRY_SESSION_GET: 'foundry_session_get',
   FOUNDRY_MESSAGE_ADD: 'foundry_message_add',
   FOUNDRY_CHAT_TURN: 'foundry_chat_turn',
