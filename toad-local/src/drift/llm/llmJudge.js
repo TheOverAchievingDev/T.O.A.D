@@ -1,4 +1,5 @@
 import { spawn as defaultSpawn } from 'node:child_process';
+import { resolveCli as defaultResolveCli } from '../../foundry/providers/resolveCli.js';
 
 const ALLOWED_CATEGORIES = new Set([
   'architecture', 'checklist', 'slice_scope', 'test_truth', 'risk',
@@ -9,21 +10,51 @@ const ALLOWED_SEVERITIES = new Set([
 const REQUIRED_STRING_FIELDS = ['title', 'expected', 'actual', 'recommendedCorrection'];
 
 /**
- * Build the argv each provider's CLI expects for a one-shot prompt run.
+ * Default shell decision. Node 16+ no longer auto-shells .cmd/.bat on
+ * Windows (CVE-2024-27980) — spawn() returns EINVAL on direct invocation
+ * of a .cmd wrapper, which is how npm-installed CLIs (claude, codex)
+ * typically ship. shell:true is the documented opt-in.
  *
- *   claude  --model <model> --print "<combined>"
- *   codex   exec --model <model> "<combined>"
- *   gemini  -m <model> -p "<combined>"
- *
- * The "combined" string is "<system>\n\n<user>" — most CLIs don't expose
- * a separate system-prompt flag in one-shot mode, so we paste the
- * system prompt as the first paragraph of the user prompt. The model
- * still treats the leading instructions as governing.
+ * For .exe binaries (the typical installer path) this is a passthrough
+ * and we avoid the cmd.exe-via-shell argv re-splitting hazard.
  */
-function argsFor(cli, model, combined) {
-  if (cli === 'claude') return ['--model', model, '--print', combined];
-  if (cli === 'codex') return ['exec', '--model', model, combined];
-  if (cli === 'gemini') return ['-m', model, '-p', combined];
+function defaultNeedsShell(resolved) {
+  return process.platform === 'win32' && /\.(cmd|bat)$/i.test(resolved);
+}
+
+/**
+ * Build the (args, stdinPayload) pair each provider's CLI expects for a
+ * one-shot prompt run.
+ *
+ *   claude  --model <m> --print           [prompt via stdin]
+ *   codex   exec --model <m> -            [prompt via stdin; '-' sentinel]
+ *   gemini  -m <m> -p "<combined>"        [prompt as positional — see note]
+ *
+ * Why stdin for claude/codex: a real drift prompt is system + tasks +
+ * events + foundry/code-context. That easily hits 10–20KB on a live
+ * project, blowing past Windows cmd.exe's ~8KB command-line cap when
+ * passed positionally. stdin transport sidesteps that AND the shell:true
+ * argv re-splitting hazard on .cmd wrappers (cmd.exe re-parses the args
+ * string by whitespace, mangling multi-word prompts).
+ *
+ * Why gemini stays positional: Gemini CLI's stdin support hasn't been
+ * empirically verified in this codebase yet. Drift judge defaults to
+ * the team's lead provider (claude/codex/gemini), so leaving gemini's
+ * existing behavior intact keeps the change low-risk. Long-prompt
+ * Windows users on Gemini will still hit ENAMETOOLONG; that gets
+ * addressed when Gemini support gets serious attention (see
+ * FUTURE-IDEAS Foundry F.2.5 entry).
+ */
+function buildInvocation(cli, model, combined) {
+  if (cli === 'claude') {
+    return { args: ['--model', model, '--print'], stdin: combined };
+  }
+  if (cli === 'codex') {
+    return { args: ['exec', '--model', model, '-'], stdin: combined };
+  }
+  if (cli === 'gemini') {
+    return { args: ['-m', model, '-p', combined], stdin: null };
+  }
   throw new TypeError(`llmJudge: unsupported cli "${cli}"`);
 }
 
@@ -71,8 +102,12 @@ function validateFinding(raw) {
  * collect stdout, parse JSON, validate findings, return.
  *
  * Throws on spawn failure, timeout, non-zero exit, or unparseable
- * response. Engine catches and emits a meta-finding describing the
- * failure (so the run continues).
+ * response. The thrown error includes captured stderr so the engine's
+ * judge_failed meta-finding is diagnosable (auth required, model
+ * unavailable, rate-limited, etc.) instead of opaque.
+ *
+ * Engine catches and emits a meta-finding describing the failure (so
+ * the run continues).
  */
 export async function llmJudge({
   cli,
@@ -81,6 +116,8 @@ export async function llmJudge({
   userPayload,
   timeoutMs = 30_000,
   spawnImpl,
+  resolveCliImpl,
+  needsShellImpl,
 } = {}) {
   if (typeof cli !== 'string' || cli.length === 0) {
     throw new TypeError('llmJudge: cli is required');
@@ -90,34 +127,71 @@ export async function llmJudge({
   }
 
   const spawnFn = spawnImpl || defaultSpawn;
+  const resolveCliFn = resolveCliImpl || defaultResolveCli;
+  const needsShellFn = needsShellImpl || defaultNeedsShell;
+
   const combined = `${systemPrompt}\n\n${userPayload}`;
-  const args = argsFor(cli, model, combined);
+  const { args, stdin: stdinPayload } = buildInvocation(cli, model, combined);
+
+  // resolveCli walks Windows PATHEXT (.cmd/.exe/.bat) since Node's spawn
+  // doesn't honor it; passthrough on Unix and as a fallback when nothing
+  // matches (so ENOENT still surfaces normally for "not installed").
+  const resolved = resolveCliFn(cli);
+  const shell = needsShellFn(resolved);
 
   const result = await new Promise((resolve, reject) => {
+    // stdio: piped stdin only when we'll actually write to it. Avoids
+    // leaking an open FD when the provider takes the prompt positionally.
+    const stdio = stdinPayload !== null
+      ? ['pipe', 'pipe', 'pipe']
+      : ['ignore', 'pipe', 'pipe'];
+
     let proc;
     try {
-      proc = spawnFn(cli, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      proc = spawnFn(resolved, args, { stdio, shell });
     } catch (err) {
       reject(new Error(`llmJudge: spawn_failed: ${err && err.message ? err.message : err}`));
       return;
     }
 
+    if (stdinPayload !== null && proc.stdin) {
+      try {
+        proc.stdin.write(stdinPayload);
+        proc.stdin.end();
+      } catch (err) {
+        // Defensive — if stdin write fails (process already exited), the
+        // exit handler below will surface the real failure with stderr.
+        // Swallow here so we don't double-throw.
+        // eslint-disable-next-line no-console
+        console.warn('llmJudge: stdin write failed (continuing):', err && err.message ? err.message : err);
+      }
+    }
+
     let stdoutBuf = '';
+    let stderrBuf = '';
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
       try { proc.kill('SIGKILL'); } catch { /* ignore */ }
-      reject(new Error(`llmJudge: timeout after ${timeoutMs}ms`));
+      reject(new Error(`llmJudge: timeout after ${timeoutMs}ms${stderrBuf ? `: ${stderrBuf.trim()}` : ''}`));
     }, timeoutMs);
 
     if (proc.stdout) {
       proc.stdout.on('data', (chunk) => { stdoutBuf += chunk.toString(); });
     }
+    if (proc.stderr) {
+      proc.stderr.on('data', (chunk) => { stderrBuf += chunk.toString(); });
+    }
     proc.on('exit', (code) => {
       if (timedOut) return;
       clearTimeout(timer);
       if (code !== 0) {
-        reject(new Error(`llmJudge: spawn_failed: exit code ${code}`));
+        const detail = stderrBuf.trim();
+        reject(new Error(
+          detail
+            ? `llmJudge: spawn_failed: exit code ${code}: ${detail}`
+            : `llmJudge: spawn_failed: exit code ${code}`
+        ));
         return;
       }
       resolve(stdoutBuf);
@@ -125,7 +199,12 @@ export async function llmJudge({
     proc.on('error', (err) => {
       if (timedOut) return;
       clearTimeout(timer);
-      reject(new Error(`llmJudge: spawn_failed: ${err.message}`));
+      const detail = stderrBuf.trim();
+      reject(new Error(
+        detail
+          ? `llmJudge: spawn_failed: ${err.message}: ${detail}`
+          : `llmJudge: spawn_failed: ${err.message}`
+      ));
     });
   });
 
