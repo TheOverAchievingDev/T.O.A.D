@@ -2743,3 +2743,17 @@
 .code-agent-banner strong {
   color: #fff;
 }
+
+.task-bug-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-input);
+  color: var(--clay, #d97757);
+  border: 1px solid var(--clay-border, rgba(217, 119, 87, 0.4));
+}
