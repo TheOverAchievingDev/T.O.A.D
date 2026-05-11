@@ -1,0 +1,100 @@
+/* ============================================================
+ * Symphony UI re-envisioning — design tokens (Phase 1)
+ *
+ * Ported verbatim from the Claude Design mockup at
+ * Reference material/Claude Design Mockup/styles.css. The mockup is
+ * the source of truth for the visual direction per
+ * docs/specs/2026-05-11-ui-re-envisioning-design.md §11.
+ *
+ * NEW TOKENS COEXIST WITH EXISTING:
+ * - Existing components keep using --bg-app / --bg-canvas / --fg /
+ *   --fg-muted / etc. from styles.css.
+ * - New chrome components (Menubar / Titlebar / Sidebar / Statusbar)
+ *   and Phase 2+ redesigned screens use the --bg-0..4 / --fg-0..3
+ *   scale defined here.
+ *
+ * Phase 3+ polish may collapse the two sets once every screen is
+ * migrated. Until then, both live in :root with no overlap.
+ * ============================================================ */
+
+:root {
+  /* ---- Type (mockup) ---- */
+  /* Geist is already loaded via the @import in styles.css; JetBrains
+   * Mono is added via <link> in index.html so both are available. */
+  --font-display: "Geist", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono-new: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace;
+
+  /* ---- Dark palette — warm-leaning neutrals (oklch) ---- */
+  --bg-0: oklch(0.16 0.005 60);     /* deepest — window */
+  --bg-1: oklch(0.19 0.005 60);     /* main surface */
+  --bg-2: oklch(0.22 0.006 60);     /* elevated panel */
+  --bg-3: oklch(0.26 0.007 60);     /* hover */
+  --bg-4: oklch(0.30 0.008 60);     /* selected */
+
+  --line-0: oklch(0.30 0.006 60);     /* divider (renamed from --line to avoid collision) */
+  --line-soft-new: oklch(0.25 0.005 60);
+  --line-strong-new: oklch(0.38 0.008 60);
+
+  --fg-0: oklch(0.97 0.005 60);     /* primary text */
+  --fg-1: oklch(0.82 0.006 60);     /* secondary */
+  --fg-2: oklch(0.62 0.006 60);     /* tertiary */
+  --fg-3: oklch(0.48 0.005 60);     /* muted */
+
+  /* ---- Accent — clay (same #d97757 as existing) ---- */
+  /* --clay is already in styles.css; we just add the new soft/line
+   * variants the mockup uses without colliding with existing
+   * --clay-soft / --clay-border (which are rgba variants). */
+  --clay-soft-new: oklch(0.66 0.13 42 / 0.16);
+  --clay-line-new: oklch(0.66 0.13 42 / 0.45);
+
+  /* ---- Signals (mockup) ---- */
+  /* Existing styles.css has --ok / --warn / --err. The mockup uses
+   * named semantics (--green / --amber / --red / --blue / --violet)
+   * with slightly different values. Coexist. */
+  --signal-green:  oklch(0.74 0.14 150);
+  --signal-amber:  oklch(0.78 0.14 75);
+  --signal-red:    oklch(0.68 0.18 25);
+  --signal-blue:   oklch(0.72 0.12 240);
+  --signal-violet: oklch(0.70 0.14 295);
+
+  /* ---- Elevation + radii ---- */
+  --shadow-pop: 0 12px 36px -8px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.35);
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  /* ---- Chrome dimensions (mockup) ---- */
+  /* These drive the CSS Grid layout for the new four-region shell:
+   *   menubar / titlebar / main(+sidebar+right+bottom) / statusbar.
+   * Used by Task 6 layout glue. */
+  --h-menubar: 30px;
+  --h-titlebar: 44px;
+  --h-statusbar: 24px;
+  --w-sidebar: 200px;
+  --h-bottom: 220px;
+  --w-right: 360px;
+}
+
+/* ---- Light palette ---- */
+/* The existing app already has [data-theme="light"] declarations in
+ * styles.css for the old token names. These overrides add the new
+ * mockup tokens for light mode without touching the old ones. */
+[data-theme="light"] {
+  --bg-0: oklch(0.99 0.003 70);
+  --bg-1: oklch(0.97 0.004 70);
+  --bg-2: oklch(0.94 0.005 70);
+  --bg-3: oklch(0.90 0.006 70);
+  --bg-4: oklch(0.86 0.008 70);
+
+  --line-0: oklch(0.86 0.006 70);
+  --line-soft-new: oklch(0.90 0.005 70);
+  --line-strong-new: oklch(0.78 0.008 70);
+
+  --fg-0: oklch(0.20 0.008 60);
+  --fg-1: oklch(0.36 0.008 60);
+  --fg-2: oklch(0.52 0.006 60);
+  --fg-3: oklch(0.62 0.005 60);
+
+  --clay-soft-new: oklch(0.66 0.13 42 / 0.12);
+  --clay-line-new: oklch(0.66 0.13 42 / 0.55);
+}

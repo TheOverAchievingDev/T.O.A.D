@@ -1,3 +1,6 @@
+/* tokens.css must load FIRST so every other stylesheet can use the
+ * Phase 1 design tokens (--bg-0..4 / --fg-0..3 / chrome dimensions). */
+@import './tokens.css';
 @import './styles.css';
 @import './chunk-a.css';
 @import './chunk-b.css';
