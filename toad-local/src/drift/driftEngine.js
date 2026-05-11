@@ -168,7 +168,18 @@ export class DriftEngine {
     }
 
     // Combine all findings (unfiltered, so UI can render correction-in-progress badges).
-    const allFindings = [...tier1Findings, ...tier2Findings];
+    // Dedupe by finding id — last-write-wins. The LLM judge sometimes
+    // returns multiple findings that hash to the same stableFindingId
+    // (same checkName + category + taskId + title), and the underlying
+    // SqliteDriftStore uses finding_id as primary key, so duplicates
+    // would crash the whole run with UNIQUE constraint failed. Dedup
+    // here keeps the run atomic; tier-2 findings (which run later) win
+    // over tier-1 dups because they're appended after.
+    const findingsById = new Map();
+    for (const f of [...tier1Findings, ...tier2Findings]) {
+      if (f && typeof f.id === 'string') findingsById.set(f.id, f);
+    }
+    const allFindings = Array.from(findingsById.values());
 
     // Step C: Score only the active (non-corrected) findings for the final result.
     const activeFindings = allFindings.filter(f => !f.correctionTaskId);
