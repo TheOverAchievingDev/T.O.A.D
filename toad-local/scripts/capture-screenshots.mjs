@@ -32,6 +32,10 @@ const UI_DIR = join(REPO_ROOT, 'ui');
 const OUT_DIR = join(REPO_ROOT, 'docs', 'screenshots');
 
 const VIEWPORT = { width: 1440, height: 900 };
+// 2x device pixel ratio for retina-quality screenshots. Quadruples the
+// pixel count of each PNG (file sizes ~4x) but produces crisp output
+// on Retina/4K displays — required for marketing surfaces.
+const DEVICE_SCALE_FACTOR = 2;
 const SIDECAR_HOST = '127.0.0.1';
 const SIDECAR_PORT = 3001;
 // Vite binds to "localhost" by default. On Windows, IPv4 vs IPv6 resolution
@@ -91,6 +95,19 @@ const SCREENS = [
       await page.click('button[title="Settings"]').catch(() => {});
       await sleep(400);
       await page.click('text=Providers').catch(() => {});
+    },
+    waitFor: '.titlebar',
+  },
+  {
+    name: 'settings-foundry',
+    description: 'Settings → Foundry (default-provider radio, F.2)',
+    navigate: async (page) => {
+      await page.click('button[title="Settings"]').catch(() => {});
+      await sleep(400);
+      // The Foundry section was added to the Settings sidebar in F.2's
+      // Task 10 (commit 49abcf5). The label text in the sidebar is
+      // "Foundry" alongside other section labels.
+      await page.click('text=Foundry').catch(() => {});
     },
     waitFor: '.titlebar',
   },
@@ -292,11 +309,28 @@ async function seedDemoData(token) {
   // Run twice so the sparkline has at least 2 points.
   await sleep(200);
   await apiCall('drift_run', { teamId: TEAM_ID, trigger: 'periodic' });
+
+  // 4. Foundry sessions — seed one Claude session and one Codex session
+  // so the FoundryScreen sidebar shows the F.2 provider chip variety.
+  // Idempotent via deterministic sessionId.
+  await apiCall('foundry_session_create', {
+    sessionId: 'fnd_demo_claude',
+    title: 'Habit tracker (Claude)',
+    provider: 'anthropic',
+  }, 'seed-foundry-claude');
+  await apiCall('foundry_session_create', {
+    sessionId: 'fnd_demo_codex',
+    title: 'Meal planner (Codex)',
+    provider: 'openai',
+  }, 'seed-foundry-codex');
 }
 
 async function captureScreens(playwright, { headed = false, token = null } = {}) {
   const browser = await playwright.chromium.launch({ headless: !headed });
-  const contextOpts = { viewport: VIEWPORT };
+  const contextOpts = {
+    viewport: VIEWPORT,
+    deviceScaleFactor: DEVICE_SCALE_FACTOR,
+  };
   // If the sidecar has auth on (TOAD_API_TOKEN env or persisted
   // .toad/api-token), Playwright stamps the same Bearer header on every
   // fetch the page makes — so the UI's tokenless XHRs become
