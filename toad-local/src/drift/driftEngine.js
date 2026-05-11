@@ -80,8 +80,13 @@ export class DriftEngine {
       ? this.store.getCorrectionLinkages({ teamId })
       : new Map();
 
-    const snapshot = await buildSnapshot({ teamId, deps: this.deps });
     const driftSettings = this.settings.drift ?? DEFAULT_SETTINGS.drift;
+    const compareAgainst = driftSettings.compareAgainst ?? 'foundry_docs';
+    const snapshot = await buildSnapshot({
+      teamId,
+      deps: this.deps,
+      compareAgainst,
+    });
     const llmEnabled = driftSettings.llmTierEnabled !== false;
 
     // Partition checks by tier.

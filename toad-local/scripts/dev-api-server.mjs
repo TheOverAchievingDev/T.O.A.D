@@ -66,6 +66,10 @@ if (driftDb) {
       foundryStore: runtime.foundryStore,
       worktreeManager: runtime.worktreeManager,
       teamConfigRegistry: runtime.teamConfigRegistry,
+      // projectCwd lets buildSnapshot's getRecentCommits / readProjectDocs
+      // operate against the actual project tree when compareAgainst is
+      // 'current_state'. Null in :memory: mode (no project linked).
+      projectCwd,
       // diffComputer not constructed in LocalToadRuntime — buildSnapshot
       // tolerates missing optional deps.
     },
