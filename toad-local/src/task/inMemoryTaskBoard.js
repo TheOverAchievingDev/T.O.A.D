@@ -36,6 +36,13 @@ export const REVIEW_STATE = Object.freeze({
 
 export const TASK_RISK_LEVELS = Object.freeze(['low', 'medium', 'high', 'critical']);
 
+// M.1b: task type discriminator. 'feature' (default) tasks go through the
+// plan-propose-approve cycle; 'bug' tasks skip planning and go straight to
+// reproduce → root-cause → fix → verify. Drives ROLE_GUIDANCE branches in
+// teamSystemPrompts.js — see the spec at
+// docs/specs/2026-05-10-maintenance-mode-m1b-bug-fix-task-type-design.md.
+export const TASK_TYPES = Object.freeze(['feature', 'bug']);
+
 export class InMemoryTaskBoard {
   #events = [];
   #idempotency = new Map();
@@ -148,6 +155,7 @@ export function projectTask(events) {
     forbiddenFiles: [],
     acceptanceCriteria: [],
     riskLevel: null,
+    type: 'feature',
     requiresHumanApproval: false,
     humanApproval: { approved: false },
     integration: null,
@@ -187,6 +195,11 @@ export function projectTask(events) {
       task.forbiddenFiles = normalizeStringList(event.payload.forbiddenFiles);
       task.acceptanceCriteria = normalizeStringList(event.payload.acceptanceCriteria);
       task.riskLevel = normalizeRiskLevel(event.payload.riskLevel);
+      // M.1b: task type. Invalid / missing values fall back to 'feature'
+      // (defensive default — legacy events created before this slice all
+      // project as 'feature' so back-compat is automatic).
+      const rawType = event.payload?.type;
+      task.type = TASK_TYPES.includes(rawType) ? rawType : 'feature';
       task.requiresHumanApproval = event.payload.requiresHumanApproval === true;
       // §1 follow-up: priority / assignedRole / testCommands /
       // expectedDeliverables / dependencyTaskIds — all optional.

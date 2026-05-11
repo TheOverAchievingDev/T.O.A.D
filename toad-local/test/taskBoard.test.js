@@ -845,3 +845,58 @@ test('InMemoryTaskBoard subscriber errors do NOT break appendEvent', () => {
     console.warn = origWarn;
   }
 });
+
+// M.1b Task 1: task projection picks up `type` field from CREATED event
+// payload. Default 'feature' when absent or invalid (back-compat for legacy
+// events created before this slice and defensive against malformed data).
+test('task projection picks up type from CREATED event payload', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 't',
+    taskId: 't_1',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'u',
+    payload: { subject: 'Fix login crash', type: 'bug' },
+  });
+  const task = board.getTask({ teamId: 't', taskId: 't_1' });
+  assert.equal(task.type, 'bug');
+});
+
+test('task projection defaults type to feature when CREATED event has no type', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 't',
+    taskId: 't_1',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'u',
+    payload: { subject: 'Add a button' },
+  });
+  const task = board.getTask({ teamId: 't', taskId: 't_1' });
+  assert.equal(task.type, 'feature');
+});
+
+test('task projection defaults type to feature when CREATED event has invalid type', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 't',
+    taskId: 't_1',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'u',
+    payload: { subject: 'Whatever', type: 'banana' },
+  });
+  const task = board.getTask({ teamId: 't', taskId: 't_1' });
+  assert.equal(task.type, 'feature', 'invalid types should fall back to feature default');
+});
+
+test('task projection accepts type=feature explicitly', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 't',
+    taskId: 't_1',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'u',
+    payload: { subject: 'Build dashboard', type: 'feature' },
+  });
+  const task = board.getTask({ teamId: 't', taskId: 't_1' });
+  assert.equal(task.type, 'feature');
+});
