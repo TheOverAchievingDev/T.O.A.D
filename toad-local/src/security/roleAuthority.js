@@ -30,6 +30,7 @@ const COMMON_READ_TOOLS = Object.freeze([
   'usage_summary',
   'tool_activity',
   'health_status',
+  'project_state_describe',
   'diagnostics_run',
   'task_history_export',
   'stuck_runtime_list',
