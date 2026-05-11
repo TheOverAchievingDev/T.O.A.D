@@ -6,10 +6,12 @@ import { callTool, ToadApiError, type Actor } from '@/api/client';
 export type AssignedRole = 'lead' | 'architect' | 'developer' | 'reviewer' | 'tester' | 'human';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
+export type TaskType = 'feature' | 'bug';
 
 const ASSIGNED_ROLES: AssignedRole[] = ['lead', 'architect', 'developer', 'reviewer', 'tester', 'human'];
 const PRIORITIES: TaskPriority[] = ['low', 'medium', 'high', 'urgent'];
 const RISK_LEVELS: RiskLevel[] = ['low', 'medium', 'high', 'critical'];
+const TASK_TYPES: TaskType[] = ['feature', 'bug'];
 
 const DEFAULT_ACTOR: Actor = { teamId: 'default', agentId: 'ui-client', agentName: 'ui', role: 'human' };
 
@@ -117,6 +119,7 @@ export function TaskCreationModal({
   const [taskId, setTaskId] = useState(suggestedId);
   const [subject, setSubject] = useState('');
   const [description, setDescription] = useState('');
+  const [type, setType] = useState<TaskType>('feature');
   const [assignedRole, setAssignedRole] = useState<AssignedRole>('developer');
   const [priority, setPriority] = useState<TaskPriority>('medium');
   const [baseBranch, setBaseBranch] = useState(defaultBaseBranch ?? team.branch ?? 'main');
@@ -163,6 +166,7 @@ export function TaskCreationModal({
     const args: Record<string, unknown> = {
       taskId: taskId.trim(),
       subject: subject.trim(),
+      type,
       assignedRole,
       priority,
     };
@@ -245,6 +249,28 @@ export function TaskCreationModal({
               onChange={(e) => setDescription(e.target.value)}
               disabled={inFlight}
             />
+          </div>
+
+          <div className="field">
+            <label>Type</label>
+            <div className="seg" role="radiogroup" aria-label="Task type">
+              {TASK_TYPES.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  role="radio"
+                  aria-checked={type === t}
+                  className={type === t ? 'active' : ''}
+                  onClick={() => setType(t)}
+                  disabled={inFlight}
+                >
+                  {t[0].toUpperCase() + t.slice(1)}
+                </button>
+              ))}
+            </div>
+            <div className="field-hint">
+              Feature tasks propose a plan before coding. Bug tasks skip planning and go straight to reproduce → root-cause → minimal fix → verify.
+            </div>
           </div>
 
           <div className="field-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>

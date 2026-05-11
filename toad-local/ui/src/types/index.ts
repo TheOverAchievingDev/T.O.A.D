@@ -97,6 +97,10 @@ export interface UiTask {
   status: TaskStatus;
   assignee: string;
   project: string;
+  /** Task type: 'feature' (default) or 'bug'. Bug tasks bypass the
+   *  plan-propose-approve cycle in agent behavior. Legacy tasks without
+   *  the field render as feature. */
+  type?: 'feature' | 'bug';
   riskLevel?: TaskRiskLevel | null;
   requiresHumanApproval?: boolean;
   matchedRules?: MatchedRiskRule[];
