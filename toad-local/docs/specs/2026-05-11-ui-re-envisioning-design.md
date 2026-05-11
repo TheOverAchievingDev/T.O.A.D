@@ -77,79 +77,202 @@ Today's sidebar mixes primary (Cockpit, Foundry, Code, Tasks, Drift) and seconda
 
 ## 4. Menubar — the familiar top-of-window menu
 
-Sits as the highest row in the window. Cursor / VS Code / every IDE has this. It's the right surface for actions that are project-management or app-level — the things that today are buried in the command palette or scattered across the titlebar's right-side icons.
+Sits as the highest row in the window. Modeled directly on Cursor's menu structure (screenshots referenced in `Reference material/Cursor/Screenshots/`), with Symphony-specific deviations called out per-menu. Items that don't apply to Symphony are dropped; items unique to Symphony are added.
 
 ```
-File   Edit   View   Project   Run   Terminal   Help
+File   Edit   Selection   View   Go   Run   Terminal   Help
 ```
 
-The contents below are the "what's in each menu" decisions. Keyboard shortcuts use `Ctrl` on Win/Linux, `⌘` on macOS — the menu shows the right one per platform.
+Keyboard shortcuts use `Ctrl` on Win/Linux, `⌘` on macOS — the menu shows the right one per platform. Sub-menus marked `▸`.
 
-**File**
-- New Project… `Ctrl+Shift+N`  — routes to Foundry to plan a new project
-- Open Project Folder… `Ctrl+O` — folder picker, loads `.toad/` if present (reopen flow)
-- Recent Projects ▸ — sub-menu, most-recent first, with paths
-- Close Project — ends the current project's session
-- New File `Ctrl+N` — only meaningful on Code screen
-- New Task `Ctrl+T` — opens TaskCreationModal
-- ─────
-- Quit `Ctrl+Q`
+### 4.1 File
 
-**Edit**
-- Undo `Ctrl+Z` / Redo `Ctrl+Shift+Z` — text edits in Code screen
-- Cut / Copy / Paste — standard
-- Find in Project `Ctrl+Shift+F` — full-project text search
-- Replace in Project `Ctrl+Shift+H`
-- ─────
-- Preferences (= open Settings) `Ctrl+,`
+| Item | Shortcut | Notes |
+|---|---|---|
+| New File | `Ctrl+N` | New blank file in the Code screen editor |
+| New Window | `Ctrl+Shift+N` | Spawns a second Symphony window (Tauri multi-window) |
+| ─── | | |
+| Open Project Folder… | `Ctrl+O` | Folder picker; loads `.toad/` if present (reopen flow) |
+| Open Recent ▸ | | Sub-menu, recent projects newest first |
+| ─── | | |
+| Save | `Ctrl+S` | Active file in Code screen |
+| Save As… | `Ctrl+Shift+S` | |
+| Save All | `Ctrl+K S` | |
+| ─── | | |
+| Auto Save | (toggle) | Setting passthrough |
+| Preferences ▸ | | → Settings, Keyboard Shortcuts, Color Theme |
+| ─── | | |
+| Revert File | | Discard unsaved changes in active editor |
+| Close Editor | `Ctrl+F4` | Close active editor tab |
+| Close Project | `Ctrl+K F` | End the project's session (was "Close Folder" in Cursor) |
+| Close Window | `Alt+F4` | |
+| ─── | | |
+| Exit | | |
 
-**View**
-- Command Palette `Ctrl+K` — the existing palette
-- Toggle Sidebar `Ctrl+B`
-- Toggle Bottom Panel `Ctrl+J` — show/hide the terminal/output pane
-- Toggle Right Inspector `Ctrl+Alt+B`
-- ─────
-- Open Cockpit / Foundry / Code / Tasks / Drift / Costs / Audit — direct jumps
-- ─────
-- Theme: Dark / Light / System
-- Developer Mode (toggle, persists to `tweaks.developerMode`)
+**Dropped from Cursor:** New Text File (redundant with New File), New Agents Window (Cursor-specific), New Window with Profile (no profiles in Symphony), Open File (Symphony works at project level, not loose files), Open Workspace from File / Add Folder to Workspace / Save Workspace As / Duplicate Workspace (no multi-folder workspaces), Share (Cursor cloud feature).
 
-**Project**
-- Switch Project ▸ — sub-menu listing all known projects, click to switch
-- Project Settings `Ctrl+,` — opens Settings filtered to project-scoped sections
-- Reopen Project — explicit re-trigger of the reopen flow
-- End Team — confirm dialog, then teardown
-- ─────
-- Sync with GitHub — opens GitHub integration
-- Manage Plugins — opens Settings → Plugins
+### 4.2 Edit
 
-**Run**
-- Start / Resume Team `F5`
-- Pause Team `Shift+F5`
-- Run Drift Check `Ctrl+Shift+D`
-- Run Validations on Active Task `Ctrl+Shift+V`
-- Trigger Foundry Refinement Pass
-- ─────
-- Approve Pending… `Ctrl+Shift+A` — opens ApprovalsDrawer
+Identical to Cursor with one Symphony deviation: text-editing items only fire when the Code screen is active.
 
-**Terminal**
-- New Terminal `` Ctrl+` `` — adds a terminal in the bottom panel
-- Split Terminal `Ctrl+Shift+5`
-- Kill Active Terminal `Ctrl+Shift+W`
-- Clear `Ctrl+L`
-- ─────
-- Choose Validation Kind ▸ test / lint / typecheck / build / security / install
+| Item | Shortcut |
+|---|---|
+| Undo | `Ctrl+Z` |
+| Redo | `Ctrl+Y` |
+| ─── | |
+| Cut | `Ctrl+X` |
+| Copy | `Ctrl+C` |
+| Paste | `Ctrl+V` |
+| ─── | |
+| Find | `Ctrl+F` |
+| Replace | `Ctrl+H` |
+| ─── | |
+| Find in Files | `Ctrl+Shift+F` |
+| Replace in Files | `Ctrl+Shift+H` |
+| ─── | |
+| Toggle Line Comment | `Ctrl+/` |
+| Toggle Block Comment | `Shift+Alt+A` |
+| Emmet: Expand Abbreviation | `Tab` |
 
-**Help**
-- Documentation — opens docs URL in default browser
-- Keyboard Shortcuts… — opens ShortcutsModal
-- Symphony Tour — re-runs first-run cards across all screens
-- Show Welcome Banner
-- ─────
-- Report Issue… — pre-fills a GitHub issue with diagnostics
-- About Symphony — opens Settings → About
+### 4.3 Selection
 
-**Implementation note.** Tauri 2 supports both native OS menus (macOS top-of-screen, Windows in-window) and HTML-rendered in-window menus. For visual consistency across platforms and to keep the custom titlebar pattern below the menu, we use the HTML-rendered approach — same as Cursor on Windows. Native macOS menu can be wired later as a power-user-mode-or-platform option without changing the IA.
+Identical to Cursor — these are universal text-editor multi-cursor operations and there's no Symphony-specific take that improves them.
+
+Select All / Expand Selection / Shrink Selection / Copy Line Up·Down / Move Line Up·Down / Duplicate Selection / Add Cursor Above·Below / Add Cursors to Line Ends / Add Next·Previous Occurrence / Select All Occurrences / Switch to Ctrl+Click for Multi-Cursor / Column Selection Mode.
+
+### 4.4 View
+
+This is where Symphony deviates most. Cursor's View menu surfaces VS Code's panel system (Explorer, Search, Source Control, Extensions, etc.). Symphony's View menu surfaces Symphony's *screens*.
+
+| Item | Shortcut | Notes |
+|---|---|---|
+| Command Palette… | `Ctrl+Shift+P` | Existing palette |
+| Open View… | | Quick-jump to any screen by name |
+| ─── | | |
+| Appearance ▸ | | Theme (Dark / Light / System), zoom level |
+| Editor Layout ▸ | | Split vertical / horizontal / single (Code screen) |
+| ─── | | |
+| **Symphony screens (jumps):** | | |
+| Cockpit | `Ctrl+1` | |
+| Foundry | `Ctrl+2` | |
+| Code | `Ctrl+3` | |
+| Tasks | `Ctrl+4` | |
+| Drift | `Ctrl+5` | |
+| Costs | `Ctrl+6` | |
+| Audit | `Ctrl+7` | |
+| Settings | `Ctrl+,` | |
+| ─── | | |
+| Toggle Sidebar | `Ctrl+B` | Show/hide left screen nav |
+| Toggle Bottom Panel | `Ctrl+J` | Show/hide terminal / output / problems |
+| Toggle Right Panel | `Ctrl+Alt+I` | Show/hide Agent Inbox |
+| ─── | | |
+| Word Wrap | `Alt+Z` | Code screen |
+| Developer Mode | (toggle) | `tweaks.developerMode` |
+
+**Dropped from Cursor:** Explorer / Search / Source Control / Run / Extensions / Problems / Output / Debug Console / Terminal as top-level "open this panel" items — Symphony uses screens for these instead of VS-Code-style panels. (Problems / Output / Terminal are tabs WITHIN the bottom panel; you toggle the panel itself.)
+
+### 4.5 Go
+
+Identical to Cursor for the navigation primitives — they're universal editor moves — with two Symphony-specific replacements.
+
+| Item | Shortcut | Notes |
+|---|---|---|
+| Back | `Alt+LeftArrow` | Screen navigation history |
+| Forward | `Alt+RightArrow` | |
+| Last Edit Location | `Ctrl+K Ctrl+Q` | Code screen |
+| ─── | | |
+| Switch Editor ▸ | | Code screen — between open file tabs |
+| Switch Group ▸ | | Between split editor groups |
+| ─── | | |
+| Go to File… | `Ctrl+P` | Quick-open file by name |
+| Go to Symbol in Workspace… | `Ctrl+T` | |
+| Go to Symbol in Editor… | `Ctrl+Shift+O` | |
+| ─── | | |
+| Go to Definition | `F12` | |
+| Go to Declaration | | |
+| Go to Type Definition | | |
+| Go to Implementations | `Ctrl+F12` | |
+| Go to References | `Shift+F12` | |
+| **Add Symbol to Agent Inbox** | `Shift+F12` ✱ | **Symphony deviation** — Cursor has "Add Symbol to Current/New Chat"; Symphony's equivalent is sending the symbol context to the Agent Inbox |
+| ─── | | |
+| Go to Line/Column… | `Ctrl+G` | |
+| Go to Bracket | `Ctrl+Shift+\` | |
+| ─── | | |
+| Next Problem | `F8` | |
+| Previous Problem | `Shift+F8` | |
+| Next Change | `Alt+F3` | |
+| Previous Change | `Shift+Alt+F3` | |
+
+### 4.6 Run
+
+**Biggest Symphony deviation.** Cursor's Run menu is debugger UI (Start Debugging, Step Over, Breakpoints). Symphony doesn't have an integrated debugger — agents do the work, operators observe. So Run becomes "team operations."
+
+| Item | Shortcut | Notes |
+|---|---|---|
+| Start / Resume Team | `F5` | |
+| Pause Team | `Shift+F5` | |
+| ─── | | |
+| Run Drift Check | `Ctrl+Shift+D` | Force a manual drift_run |
+| Run Validations on Active Task | `Ctrl+Shift+V` | Test / lint / typecheck — kind picker in Settings |
+| Trigger Foundry Refinement Pass | | Re-run the planning agent on the active Foundry session |
+| ─── | | |
+| Approve Pending… | `Ctrl+Shift+A` | Opens ApprovalsDrawer |
+| End Team | | Confirmed dialog, then teardown |
+
+**Future (placeholder, not in initial rollout):** integrated debugger sub-section for power-user-mode operators who want to step through the agents' Bash tool calls or the generated code. Tracked, not built.
+
+### 4.7 Terminal
+
+Cursor's Terminal menu maps cleanly. Symphony additions: validation-kind selector pre-bound.
+
+| Item | Shortcut | Notes |
+|---|---|---|
+| New Terminal | `` Ctrl+Shift+` `` | New terminal in bottom panel |
+| Split Terminal | `Ctrl+Shift+5` | |
+| Kill Active Terminal | `Ctrl+Shift+W` | |
+| Clear | `Ctrl+L` | |
+| ─── | | |
+| Run Task… | | |
+| Run Build Task… | `Ctrl+Shift+B` | |
+| Run Active File | | Code screen |
+| Run Selected Text | | Code screen |
+| ─── | | |
+| Choose Validation Kind ▸ | | test / lint / typecheck / build / security / install |
+| ─── | | |
+| Show Running Tasks… | | |
+| Restart Running Task… | | |
+| Terminate Task… | | |
+| ─── | | |
+| Configure Tasks… | | |
+| Configure Default Build Task… | | |
+
+### 4.8 Help
+
+| Item | Shortcut | Notes |
+|---|---|---|
+| Show All Commands | `Ctrl+Shift+P` | Same as Command Palette |
+| Documentation | | Opens docs URL in default browser |
+| Keyboard Shortcuts… | `Ctrl+K Ctrl+S` | Opens ShortcutsModal |
+| Symphony Tour | | Re-runs first-run cards across all screens |
+| Show Welcome Banner | | |
+| ─── | | |
+| Give Feedback… | | Opens email / GitHub issue prefill |
+| Report Issue… | | Pre-fills a GitHub issue with diagnostics |
+| ─── | | |
+| View License | | |
+| Toggle Developer Tools | | Tauri DevTools |
+| Open Process Explorer | | Sidecar + plugin processes |
+| ─── | | |
+| Restart to Update | | Apply update if downloaded |
+| About Symphony | | Opens Settings → About |
+
+**Dropped from Cursor:** Editor Playground (Cursor-specific tutorial), Get Started with Accessibility Features (could be re-added later as a Symphony Accessibility section).
+
+---
+
+### 4.9 Implementation note
+
+Tauri 2 supports both native OS menus (macOS top-of-screen, Windows in-window) and HTML-rendered in-window menus. For visual consistency across platforms and to keep the custom titlebar pattern below the menu, we use the HTML-rendered approach — same as Cursor on Windows. Native macOS menu wiring can be added later as a platform-conditional override without changing the IA.
 
 ---
 
@@ -430,31 +553,21 @@ Each phase produces working, shippable software on its own. Phase 1 alone would 
 
 ---
 
-## 14. Open questions for the user
+## 14. Open questions — RESOLVED
 
-**Confirmed in user review (2026-05-11):**
-- ✅ Menu bar at top (File / Edit / View / Project / Run / Terminal / Help) — locked in §4
-- ✅ Sidebar for screen nav — locked
-- ✅ Resizable panes everywhere, especially terminal — locked in §3.1
-- ✅ Closable + reopenable bottom terminal via menu bar — locked
-- ✅ File tabs in Code screen — locked in §8.3
-- ✅ Cursor as the reference IDE for look/feel
+All open questions resolved by user review (2026-05-11). The spec below is final pending one optional item (Audit visibility, see #5).
 
-**Still open — please answer or push back:**
+| # | Question | Resolution |
+|---|---|---|
+| 1 | Menu bar contents | ✅ Locked — §4 now matches Cursor's menu structure exactly (screenshots in `Reference material/Cursor/Screenshots/`) with Symphony-specific deviations called out per-menu |
+| 2 | Right-side panel = Agent Inbox vs Foundry chat | ✅ **Agent Inbox** — user confirmed "perfect" |
+| 3 | Project switching = dropdown vs tabs | ✅ **Dropdown** — user confirmed |
+| 4 | Runtimes / Approvals as drawers vs sidebar | ✅ **Drawers** — user confirmed |
+| 5 | Audit screen visibility | ⚪ Open — defaulting to "WITH-me only with cushion for FOR-me" unless user pushes back |
+| 6 | Statusbar git segment | ✅ **Add it** — user confirmed |
+| 7 | Phasing order | ✅ **Foundations first** — user confirmed |
 
-1. **Menu contents for each top-bar menu**: §4 proposes specific items for File / Edit / View / Project / Run / Terminal / Help based on IDE conventions. Skim that section and call out anything missing or that doesn't belong. If you want me to research Cursor's exact menu contents to copy specific items, screenshots of each menu would help — otherwise the §4 contents are my best guess based on what Cursor / VS Code typically show.
-
-2. **Right-side panel = Agent Inbox** (§8.1.1): the spec proposes Symphony's right panel is `AgentInbox` (Ask / Delegate / Interrupt a specific agent on your team), not a generic AI chat like Cursor's. Foundry stays its own screen (project-planning vs project-operation). Does that match your mental model, or were you imagining the Foundry chat would live there?
-
-3. **Project switching as dropdown vs. tabs**: §5 proposes dropdown in the titlebar (because Symphony projects are heavyweight — one runtime/worktree/team each, not lightweight tab-style switching). But Cursor uses an in-app folder switch and you said you like that feel. Confirm dropdown is OK, or would you rather a tab-strip persist?
-
-4. **Removing Runtimes / Approvals from the sidebar**: §6 moves them to drawers (opened from titlebar or statusbar). They become "glance, dismiss" surfaces. Agree, or do you want them as sidebar primaries?
-
-5. **Audit screen for power-user only**: §8.7 hides it from FOR-me users. Is that right, or visible-to-all-with-a-cushion?
-
-6. **Statusbar's git segment**: §7 adds git state (branch + clean/dirty) as ambient context. Today this isn't surfaced at all. OK to add?
-
-7. **Phasing order**: §13 sequences foundations → Cockpit → per-screen polish → discoverability. The first phase (menubar + titlebar + sidebar + statusbar) is the biggest discoverability unlock. Would you rather lead with Cockpit redesign (most visible win for current users)?
+The only remaining decision is whether the Audit screen is power-user-mode-only or visible-to-everyone-with-a-"this-is-dense"-cushion. Spec currently sits at WITH-me-only per the original proposal; flag this if you want it changed.
 
 ---
 
