@@ -103,7 +103,7 @@ function makeMetaFinding(teamId, checkName, code, detail) {
   };
 }
 
-function buildUserPayload(snapshot, tier1Findings) {
+export function buildUserPayload(snapshot, tier1Findings) {
   const lines = [];
   lines.push(`# Team: ${snapshot.teamId}`);
   lines.push(`# As-of: ${snapshot.asOf}`);
@@ -148,13 +148,39 @@ function buildUserPayload(snapshot, tier1Findings) {
   }
   lines.push('');
 
-  // Foundry docs (full content)
-  lines.push('## Foundry docs');
-  for (const [key, content] of Object.entries(snapshot.foundryDocs ?? {})) {
-    if (typeof content !== 'string' || content.length === 0) continue;
-    lines.push(`### ${key}.md`);
-    lines.push(content);
-    lines.push('');
+  // Baseline section: branches on snapshot shape.
+  // When buildSnapshot ran in current_state mode it populates
+  // snapshot.currentStateContext; foundry_docs mode leaves it null
+  // and populates snapshot.foundryDocs instead.
+  if (snapshot.currentStateContext) {
+    const ctx = snapshot.currentStateContext;
+    lines.push('## Current codebase context');
+    const commits = Array.isArray(ctx.recentCommits) ? ctx.recentCommits : [];
+    if (commits.length > 0) {
+      lines.push(`### Recent commits (newest first, last ${commits.length})`);
+      for (const c of commits) lines.push(`- ${c}`);
+      lines.push('');
+    }
+    const projectDocs = ctx.projectDocs || {};
+    const docNames = Object.keys(projectDocs);
+    if (docNames.length > 0) {
+      lines.push('### Project documentation');
+      for (const [name, content] of Object.entries(projectDocs)) {
+        if (typeof content !== 'string' || content.length === 0) continue;
+        lines.push(`#### ${name}`);
+        lines.push(content);
+        lines.push('');
+      }
+    }
+  } else {
+    // Foundry docs (full content) — original behavior
+    lines.push('## Foundry docs');
+    for (const [key, content] of Object.entries(snapshot.foundryDocs ?? {})) {
+      if (typeof content !== 'string' || content.length === 0) continue;
+      lines.push(`### ${key}.md`);
+      lines.push(content);
+      lines.push('');
+    }
   }
 
   // Tier-2 only: include tier-1 findings as baseline

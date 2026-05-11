@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkLlmSemantic } from '../../../src/drift/checks/checkLlmSemantic.js';
+import { checkLlmSemantic, buildUserPayload } from '../../../src/drift/checks/checkLlmSemantic.js';
 
 const BASE_SNAPSHOT = {
   teamId: 'team-a',
@@ -77,6 +77,52 @@ test('checkLlmSemantic returns meta-finding on judge failure', async () => {
   assert.equal(findings[0].severity, 'medium');
   assert.match(findings[0].title, /failed/i);
   assert.equal(findings[0].checkName, 'check_llm_semantic_t1');
+});
+
+test('semantic check prompt includes Foundry docs section when snapshot uses foundry_docs mode', () => {
+  const snapshot = {
+    teamId: 't', asOf: '2026-05-10', tasks: [], taskEvents: [], runtimeEvents: [],
+    foundryDocs: { architecture: 'this is the architecture doc' },
+    currentStateContext: null,
+    worktrees: [], diffsByTask: {}, teamConfig: null,
+  };
+  const prompt = buildUserPayload(snapshot, null);
+  assert.match(prompt, /## Foundry docs/);
+  assert.match(prompt, /architecture/);
+  assert.doesNotMatch(prompt, /## Current codebase context/);
+});
+
+test('semantic check prompt includes Current codebase context when snapshot uses current_state mode', () => {
+  const snapshot = {
+    teamId: 't', asOf: '2026-05-10', tasks: [], taskEvents: [], runtimeEvents: [],
+    foundryDocs: {},
+    currentStateContext: {
+      recentCommits: ['abc1 first commit (2026)', 'def2 second (2026)'],
+      projectDocs: { 'README.md': 'This is the README.' },
+    },
+    worktrees: [], diffsByTask: {}, teamConfig: null,
+  };
+  const prompt = buildUserPayload(snapshot, null);
+  assert.match(prompt, /## Current codebase context/);
+  assert.match(prompt, /abc1 first commit/);
+  assert.match(prompt, /This is the README/);
+  assert.doesNotMatch(prompt, /## Foundry docs/);
+});
+
+test('semantic check prompt with empty currentStateContext omits subsections gracefully', () => {
+  const snapshot = {
+    teamId: 't', asOf: '2026-05-10', tasks: [], taskEvents: [], runtimeEvents: [],
+    foundryDocs: {},
+    currentStateContext: { recentCommits: [], projectDocs: {} },
+    worktrees: [], diffsByTask: {}, teamConfig: null,
+  };
+  // Should not throw. Header may still be present without subsections.
+  const prompt = buildUserPayload(snapshot, null);
+  assert.ok(typeof prompt === 'string');
+  assert.match(prompt, /## Current codebase context/);
+  assert.doesNotMatch(prompt, /## Foundry docs/);
+  assert.doesNotMatch(prompt, /### Recent commits/);
+  assert.doesNotMatch(prompt, /### Project documentation/);
 });
 
 test('checkLlmSemantic@tier1 caps severity at high (drops critical)', async () => {
