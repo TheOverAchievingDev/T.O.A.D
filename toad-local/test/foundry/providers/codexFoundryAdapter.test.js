@@ -105,20 +105,19 @@ test('CodexFoundryAdapter.send resume turn spawns codex exec resume without syst
   const result = await sendPromise;
 
   const call = spawn.calls[0];
-  // Resume turn passes the prompt POSITIONALLY and omits flags that
-  // `codex exec resume` doesn't accept:
-  //  - `-C <cwd>`: session's cwd is locked in on first turn.
-  //  - `--skip-git-repo-check`: only valid on `codex exec`, not resume.
-  // Surfaced during F.2 smoke — codex stderr said "unexpected argument '-C'".
+  // Resume uses the `-` stdin sentinel (same as first turn) — the prompt
+  // rides over stdin so cmd.exe doesn't re-split multi-word user
+  // messages into separate positional args. Flags `-C` and
+  // `--skip-git-repo-check` are omitted because `codex exec resume`
+  // rejects them (only valid on `codex exec`).
   assert.deepEqual(call.args, [
     'exec',
     'resume',
     '--json',
     'thr-existing',
-    'follow-up',
+    '-',
   ]);
-  // stdin gets closed immediately on resume so codex doesn't wait on it.
-  assert.deepEqual(child.stdin.written, []);
+  assert.deepEqual(child.stdin.written, ['follow-up']);
   assert.equal(child.stdin.ended, true);
   assert.equal(result.text, 'response');
   assert.equal(result.sessionUuid, 'thr-existing');

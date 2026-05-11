@@ -75,23 +75,32 @@ export class CodexFoundryAdapter extends FoundryProviderAdapter {
     // we prepend the system prompt to the user message. Resume turns
     // don't need to re-send the system prompt — Codex has the prior
     // conversation (including original instructions) on disk.
+    // Both turn shapes use Codex's `-` stdin sentinel and write the
+    // prompt to stdin. Two reasons:
+    //  1. cmd.exe length cap (~8KB): first-turn prompt is
+    //     foundryInstructions.txt (~10KB) + user message — well over the
+    //     cap when passed positionally.
+    //  2. Windows shell:true argv splitting: when spawn uses shell:true
+    //     (required because npm-installed codex.cmd is a .cmd wrapper,
+    //     see commit c39f38c), cmd.exe re-splits the args string by
+    //     whitespace. A multi-word prompt like "what was my first
+    //     question?" gets parsed as 5 separate positionals; codex
+    //     rejects the extras. stdin transport sidesteps both problems
+    //     entirely.
+    //
+    // Argv differences:
+    //  - First turn `codex exec` accepts -C (cwd) and --skip-git-repo-check.
+    //  - Resume `codex exec resume` accepts neither — those were locked
+    //    in at session creation time.
     let prompt;
     let args;
-    let useStdin;
     if (cliSessionId) {
       prompt = text;
-      // `codex exec resume` accepts only [OPTIONS] [SESSION_ID] [PROMPT].
-      // It rejects `-C` and `--skip-git-repo-check` (those are only valid
-      // on `codex exec`). The session's working directory and git-repo
-      // permissiveness were locked in at creation time on the first turn,
-      // so resume doesn't need them re-stated.
-      args = ['exec', 'resume', '--json', cliSessionId, prompt];
-      useStdin = false;
+      args = ['exec', 'resume', '--json', cliSessionId, '-'];
     } else {
       const systemPrompt = this.readFileImpl(this.instructionsPath);
       prompt = `${systemPrompt}\n\n${text}`;
       args = ['exec', '--json', '--skip-git-repo-check', '-C', cwd, '-'];
-      useStdin = true;
     }
 
     // resolveCli walks PATH for codex.cmd / codex.exe / codex.bat on
@@ -112,14 +121,10 @@ export class CodexFoundryAdapter extends FoundryProviderAdapter {
       windowsHide: true,
     });
 
-    // For first-turn (`codex exec -`), write the full prompt to stdin
-    // and close it so Codex sees EOF and starts processing. For resume
-    // turns the prompt is positional, so close stdin immediately so
-    // Codex doesn't wait on it.
+    // Both first-turn and resume use the `-` stdin sentinel — write the
+    // prompt to stdin and close so Codex sees EOF and starts processing.
     try {
-      if (useStdin) {
-        child.stdin?.write(prompt);
-      }
+      child.stdin?.write(prompt);
       child.stdin?.end();
     } catch (err) {
       // Defensive — if stdin write fails (process already exited, etc.),
