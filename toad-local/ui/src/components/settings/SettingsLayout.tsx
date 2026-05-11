@@ -5,6 +5,7 @@ export type SettingsSectionKey =
   | 'general'
   | 'providers'
   | 'foundry'
+  | 'drift'
   | 'plugins'
   | 'github'
   | 'workspace'
@@ -25,6 +26,7 @@ const SECTIONS: SettingsSection[] = [
   { key: 'general', label: 'General', icon: 'settings', description: 'Theme, density, locale.' },
   { key: 'providers', label: 'Providers', icon: 'cpu', description: 'Anthropic, OpenAI, OpenCode.' },
   { key: 'foundry', label: 'Foundry', icon: 'workflow', description: 'Default planning provider for new project plans.' },
+  { key: 'drift', label: 'Drift', icon: 'info', description: 'Comparison baseline for drift checks.' },
   { key: 'plugins', label: 'Plugins', icon: 'layers', description: 'Railway, EAS, Vercel — infrastructure plugins.' },
   { key: 'github', label: 'GitHub', icon: 'github', description: 'Connect a GitHub account for branch + PR ops.' },
   { key: 'workspace', label: 'Workspace', icon: 'folder', description: 'Default project path, worktree behaviour.' },
