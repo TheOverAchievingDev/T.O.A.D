@@ -10,8 +10,22 @@
  *
  * Errors from any one runDrift are swallowed (and logged) so a single
  * misbehaving team can't take the whole monitor down.
+ *
+ * Cadence rationale: 5 minutes. The earlier 60s default was chosen
+ * defensively when the LLM judge was first wired and we didn't trust
+ * the cache behavior; in practice the LLM judge is the expensive part
+ * (1–3s of subprocess time + tokens per tier-1 call, more for tier-2
+ * escalations) and 60s × every live team adds up fast. Event-triggered
+ * runs (notifyTaskEvent on review/testing/merge_ready/done transitions)
+ * still fire immediately so real activity surfaces with no delay. The
+ * 5-minute periodic is the safety net for "team is idle but maybe
+ * something slipped" — slow enough to amortize LLM cost, fast enough
+ * that an operator hitting the UI sees fresh-ish data within a coffee
+ * sip. Operators on the Drift screen also get the on-mount immediate
+ * fetch (see useDrift.ts), so the periodic isn't the only source of
+ * fresh data when someone is actively watching.
  */
-const DEFAULT_INTERVAL_MS = 60_000;
+const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 
 const TRIGGER_TRANSITIONS = new Set([
   'review', 'testing', 'merge_ready', 'done',
