@@ -35,6 +35,7 @@ export function checkOutOfScopeFiles({ snapshot } = {}) {
       if (!outOfScope) continue;
       findings.push({
         id: stableFindingId({
+          teamId: snapshot.teamId,
           checkName: CHECK_NAME, category: CATEGORY, taskId: task.taskId,
           salient: `${file}|allowed:${allowed.join(',')}|forbidden:${forbidden.join(',')}`,
         }),

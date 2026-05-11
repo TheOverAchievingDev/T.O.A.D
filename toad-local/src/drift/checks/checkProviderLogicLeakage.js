@@ -55,6 +55,7 @@ export function checkProviderLogicLeakage({ snapshot } = {}) {
         ?.trim() ?? '(provider import detected)';
       findings.push({
         id: stableFindingId({
+          teamId: snapshot.teamId,
           checkName: CHECK_NAME, category: CATEGORY, taskId: task.taskId,
           salient: file,
         }),

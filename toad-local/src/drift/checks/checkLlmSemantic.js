@@ -63,6 +63,7 @@ export async function checkLlmSemantic({
   // Stamp + cap-severity-at-high for tier 1.
   return result.findings.map((f) => ({
     id: stableFindingId({
+      teamId: snapshot.teamId,
       checkName, category: f.category,
       taskId: f.taskId ?? null,
       salient: f.title,
@@ -85,6 +86,7 @@ export async function checkLlmSemantic({
 function makeMetaFinding(teamId, checkName, code, detail) {
   return {
     id: stableFindingId({
+      teamId,
       checkName,
       category: 'risk',
       taskId: null,

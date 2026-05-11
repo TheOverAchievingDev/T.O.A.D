@@ -34,6 +34,7 @@ export function checkInvalidTransitions({ snapshot } = {}) {
       if (verdict.ok) continue;
       findings.push({
         id: stableFindingId({
+          teamId: snapshot.teamId,
           checkName: CHECK_NAME, category: CATEGORY, taskId,
           salient: `${from}->${to}@${ev.createdAt}`,
         }),

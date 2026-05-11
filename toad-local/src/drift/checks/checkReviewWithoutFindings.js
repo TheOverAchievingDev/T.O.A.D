@@ -41,6 +41,7 @@ export function checkReviewWithoutFindings({ snapshot } = {}) {
         if (fbCount === 0) {
           findings.push({
             id: stableFindingId({
+              teamId: snapshot.teamId,
               checkName: CHECK_NAME, category: CATEGORY, taskId,
               salient: `${start}->${end}`,
             }),

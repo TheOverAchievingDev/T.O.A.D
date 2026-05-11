@@ -54,6 +54,7 @@ export function checkMissingTestArtifacts({ snapshot } = {}) {
         if (!ran) {
           findings.push({
             id: stableFindingId({
+              teamId: snapshot.teamId,
               checkName: CHECK_NAME, category: CATEGORY, taskId,
               salient: `${start}->${end}`,
             }),

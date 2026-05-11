@@ -21,6 +21,7 @@ export function checkRolePermissionViolations({ snapshot } = {}) {
     const reason = e.payload?.reason ?? 'role denied';
     findings.push({
       id: stableFindingId({
+        teamId: snapshot.teamId,
         checkName: CHECK_NAME, category: CATEGORY, taskId: null,
         salient: `${agentId}|${toolName}|${e.createdAt}`,
       }),

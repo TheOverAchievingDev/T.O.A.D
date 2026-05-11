@@ -25,6 +25,7 @@ export function checkDoneWithoutMergeEvidence({ snapshot } = {}) {
     if (mergedTaskIds.has(task.taskId)) continue;
     findings.push({
       id: stableFindingId({
+        teamId: snapshot.teamId,
         checkName: CHECK_NAME, category: CATEGORY, taskId: task.taskId,
         salient: 'no-merge',
       }),
