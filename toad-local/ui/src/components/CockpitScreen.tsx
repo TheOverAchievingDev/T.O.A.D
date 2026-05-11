@@ -66,11 +66,20 @@ interface CockpitScreenProps {
   driftError: string | null;
   onRefreshDrift: () => Promise<void>;
   onRefreshData: () => void;
-  // TODO M.1a Task 4: refine into a concrete ReopenContext type + render
-  // the paused-team header when reopenContext is present and isRunning
-  // is false. Temporary loose typing keeps the typecheck gate green
-  // while Task 3 ships the routing change.
-  reopenContext?: unknown;
+  /** Context block from project_state_describe — present when this
+   *  Cockpit was reached via reopen-flow. Drives the paused-team header.
+   *  Null on fresh projects or normal navigation. */
+  reopenContext?: {
+    teamId: string;
+    teamName: string;
+    isRunning: boolean;
+    lastActiveAt: string | null;
+    lastTask?: { taskId: string; subject: string; status: string };
+    lastDriftScore?: { teamScore: number; status: string; runId: string; createdAt: string };
+    lastCommit?: { sha: string; message: string; authoredAt: string | null };
+  } | null;
+  /** Called when the user clicks "Resume team" in the paused header.
+   *  Parent wires this to the team_launch MCP tool. */
   onResumeTeam?: () => void;
 }
 
@@ -99,6 +108,8 @@ export function CockpitScreen({
   driftError,
   onRefreshDrift,
   onRefreshData,
+  reopenContext = null,
+  onResumeTeam,
 }: CockpitScreenProps) {
   const [leftTab, setLeftTab] = useState<LeftTab>('tasks');
   const [centerTab, setCenterTab] = useState<CenterTab>(developerMode ? 'code' : 'flow');
@@ -106,6 +117,7 @@ export function CockpitScreen({
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(tasks[0]?.id ?? null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(team.members[0]?.id ?? null);
   const [testRunning, setTestRunning] = useState(false);
+  const [resuming, setResuming] = useState(false);
   const [terminalExpanded, setTerminalExpanded] = useState(false);
   const [testMessage, setTestMessage] = useState<string | null>(null);
   const [validationKind, setValidationKind] = useState<ValidationKind>('test');
@@ -326,6 +338,58 @@ export function CockpitScreen({
 
   return (
     <main className={`cockpit-screen ${developerMode ? 'dev-mode' : ''} ${terminalExpanded ? 'terminal-expanded' : ''}`}>
+      {reopenContext && !reopenContext.isRunning && (
+        <header className="cockpit-paused-header">
+          <div className="cockpit-paused-summary">
+            <span className="cockpit-paused-eyebrow">Team paused</span>
+            <h2>{reopenContext.teamName}</h2>
+            {reopenContext.lastActiveAt && (
+              <span className="dim">
+                Last active {formatRelativeTime(reopenContext.lastActiveAt)}
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={resuming}
+            onClick={() => {
+              if (!onResumeTeam) return;
+              setResuming(true);
+              onResumeTeam();
+              // The header will hide automatically once SSE updates flip
+              // isRunning. Reset resuming after a short timeout so the
+              // button label doesn't stick if the SSE round-trip is slow.
+              window.setTimeout(() => setResuming(false), 4000);
+            }}
+          >
+            {resuming ? 'Resuming…' : 'Resume team'}
+          </button>
+          <div className="cockpit-paused-context">
+            {reopenContext.lastTask && (
+              <div className="cockpit-paused-tile">
+                <span className="eyebrow">Last task</span>
+                <span>{reopenContext.lastTask.subject}</span>
+                <span className="dim">{reopenContext.lastTask.status}</span>
+              </div>
+            )}
+            {reopenContext.lastDriftScore && (
+              <div className="cockpit-paused-tile">
+                <span className="eyebrow">Last drift</span>
+                <span>{reopenContext.lastDriftScore.teamScore}/100</span>
+                <span className="dim">{reopenContext.lastDriftScore.status}</span>
+              </div>
+            )}
+            {reopenContext.lastCommit && (
+              <div className="cockpit-paused-tile">
+                <span className="eyebrow">Last commit</span>
+                <span className="mono">{reopenContext.lastCommit.sha.slice(0, 7)}</span>
+                <span className="dim">{reopenContext.lastCommit.message.slice(0, 60)}</span>
+              </div>
+            )}
+          </div>
+        </header>
+      )}
       <aside className="cockpit-left" aria-label="Cockpit task and agent status">
         <div className="cockpit-pane-head">
           <div>
@@ -1033,4 +1097,14 @@ function toggleExpandedPath(current: Set<string>, path: string): Set<string> {
   if (next.has(path)) next.delete(path);
   else next.add(path);
   return next;
+}
+
+function formatRelativeTime(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return iso;
+  const deltaSec = Math.floor((Date.now() - t) / 1000);
+  if (deltaSec < 60) return 'just now';
+  if (deltaSec < 3600) return `${Math.floor(deltaSec / 60)}m ago`;
+  if (deltaSec < 86400) return `${Math.floor(deltaSec / 3600)}h ago`;
+  return `${Math.floor(deltaSec / 86400)}d ago`;
 }
