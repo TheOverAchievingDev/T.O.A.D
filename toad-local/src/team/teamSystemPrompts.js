@@ -16,10 +16,12 @@ export const ROLE_GUIDANCE = Object.freeze({
     'You receive user messages and teammate replies via stdin (stream-json). You delegate by calling the message_send MCP tool with `to.kind = "agent"` and `to.agentId = "<teammate>"`.',
     'CRITICAL: every task_create call MUST include `assignedRole` matching one of the actual teammate roles on this team (lead, architect, developer, reviewer, tester, human). Without assignedRole, the UI cannot link the task to the assigned agent and the task appears unassigned. Match the role to the work — implementation → developer, design/structure → architect, review → reviewer, validation → tester. Also set `priority` (low|medium|high|critical).',
     'Before assigning work, post a brief plan via task_plan_propose. After teammates report results, gate review_decide before integrating.',
+    'Tasks have a type field: "feature" (default) or "bug". For "feature" tasks, ensure the assignee proposes a plan via task_plan_propose before code work begins — feature work benefits from up-front design. For "bug" tasks, instruct the assignee to skip planning and go straight to investigation: reproduce → root-cause → minimal fix → verify. Set type: "bug" on task_create when the work is fixing existing broken behavior.',
   ].join(' '),
   developer: [
     'You implement code changes. When the lead assigns you a task, propose a plan via task_plan_propose, write the code, run validation_run for relevant kinds (lint, typecheck, test, build), and report back via message_send with results and the diff summary.',
     'Do not start work until the lead assigns it.',
+    'When you receive a task assignment, read the task type field. If type === "feature": propose a plan via task_plan_propose before writing code, wait for approval, then implement. If type === "bug": skip planning — first reproduce the issue, then identify the root cause, then implement the minimal fix, then run validation_run to confirm. Either way, follow the steering rules and the Definition of Done.',
   ].join(' '),
   reviewer: [
     'You review diffs for correctness, style, and risk. When the lead asks for a review, read the change, identify concrete issues, and reply via message_send with a critique structured as: blockers, suggestions, nits.',
@@ -32,6 +34,7 @@ export const ROLE_GUIDANCE = Object.freeze({
   debugger: [
     'You diagnose failures. When the lead hands you a stack trace, error log, or failing test, reproduce the issue, identify the root cause, and reply via message_send with: the trigger, the cause, and a proposed fix.',
     'Do not fix code yourself — that is the developer\'s job. You diagnose.',
+    'When the lead hands you a bug task (type === "bug"), skip planning — reproduce the failure, identify the root cause, and report your findings via message_send. The developer handles the actual fix unless the lead routes the fix back to you specifically.',
   ].join(' '),
   qa: [
     'You design and run quality checks: tests, validation suites, edge-case probes. When the lead asks for verification, write/run tests via validation_run and report results via message_send. Identify what is covered, what is not, and any flakes observed.',

@@ -148,6 +148,25 @@ test('buildAgentSystemPrompt routes lead vs teammate based on role', () => {
   assert.match(matePrompt, /message_send/);
 });
 
+test('lead guidance includes task-type conditional language for bug vs feature', () => {
+  const guidance = ROLE_GUIDANCE.lead;
+  // Some signal of task-type-awareness in the lead's instructions.
+  assert.match(guidance, /\btype\b.*(feature|bug)|bug.*task|feature.*task/i);
+  assert.match(guidance, /skip planning|investigation|reproduce/i, 'lead should know to direct bug tasks to investigation');
+});
+
+test('developer guidance directs bug tasks to skip plan_propose and reproduce first', () => {
+  const guidance = ROLE_GUIDANCE.developer;
+  assert.match(guidance, /type/i);
+  assert.match(guidance, /bug|reproduce/i);
+  assert.match(guidance, /plan_propose|planning/i, 'should still mention plan_propose for feature tasks');
+});
+
+test('debugger guidance distinguishes bug tasks from feature work', () => {
+  const guidance = ROLE_GUIDANCE.debugger;
+  assert.match(guidance, /bug|reproduce|root.cause/i);
+});
+
 test('buildAgentSystemPrompt falls back gracefully on an unknown role', () => {
   const prompt = buildAgentSystemPrompt({
     teamId: 'orion',
