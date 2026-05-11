@@ -389,6 +389,8 @@ export class LocalToolFacade {
         return this.#driftRun(actor, args);
       case COMMANDS.DRIFT_CORRECTION_CREATE:
         return this.#driftCorrectionCreate(actor, command.idempotencyKey, args);
+      case COMMANDS.PROJECT_STATE_DESCRIBE:
+        return this.#projectStateDescribe(args);
       default:
         throw new Error(`unsupported command: ${commandName}`);
     }
@@ -2779,6 +2781,241 @@ export class LocalToolFacade {
       throw new Error('foundry store is not configured');
     }
     return this.foundryStore;
+  }
+
+  // ---- M.1a: project_state_describe ----------------------------------------
+
+  /**
+   * Read-only inspection of the loaded project. Used by the UI on app mount
+   * to decide whether to route to Cockpit (existing team — reopen flow) or
+   * Foundry (no team yet — discovery flow). See
+   * `docs/specs/2026-05-10-maintenance-mode-m1a-reopen-design.md` §1.
+   *
+   * Returns one of three states:
+   *   - 'fresh'          — no team configs AND no foundry sessions.
+   *   - 'half_foundried' — foundry sessions exist but no team configs yet.
+   *   - 'has_team'       — at least one team config exists. Includes a
+   *                        `reopenContext` block with the most-recently-
+   *                        touched team's last activity (last task, last
+   *                        drift run, last commit, isRunning).
+   *
+   * Every external call is wrapped defensively — the handler never throws,
+   * even on corrupted state. UI routing must always get a valid response.
+   */
+  async #projectStateDescribe(_args) {
+    const teamConfigs = this.#countTeamConfigs();
+    const foundrySessions = this.#countFoundrySessions();
+    if (teamConfigs === 0 && foundrySessions === 0) {
+      return { state: 'fresh', teamConfigs, foundrySessions };
+    }
+    if (teamConfigs === 0) {
+      return { state: 'half_foundried', teamConfigs, foundrySessions };
+    }
+    return {
+      state: 'has_team',
+      teamConfigs,
+      foundrySessions,
+      reopenContext: await this.#buildReopenContext(),
+    };
+  }
+
+  #countTeamConfigs() {
+    if (!this.teamConfigRegistry || typeof this.teamConfigRegistry.listTeams !== 'function') {
+      return 0;
+    }
+    try {
+      return this.teamConfigRegistry.listTeams().length;
+    } catch {
+      return 0;
+    }
+  }
+
+  #countFoundrySessions() {
+    const store = this.foundryStore;
+    if (!store || typeof store.listSessions !== 'function') return 0;
+    try {
+      return store.listSessions().length;
+    } catch {
+      return 0;
+    }
+  }
+
+  async #buildReopenContext() {
+    const team = this.#pickMostRecentTeam();
+    if (!team) {
+      // Defensive: caller already verified teamConfigs > 0. Hitting this
+      // branch means corrupted state or a race — return a stub so routing
+      // doesn't break.
+      return { teamId: 'unknown', teamName: 'unknown', isRunning: false, lastActiveAt: null };
+    }
+    const lastTask = this.#getLastTouchedTask(team.teamId);
+    const lastDrift = this.#getLastDriftRun(team.teamId);
+    const lastCommit = await this.#getLastCommitSafely();
+    const isRunning = this.#isAnyRuntimeRunning(team.teamId);
+
+    return {
+      teamId: team.teamId,
+      teamName: team.displayName || team.teamId,
+      isRunning,
+      lastActiveAt: lastTask?.createdAt ?? null,
+      lastTask: lastTask
+        ? { taskId: lastTask.taskId, subject: lastTask.subject, status: lastTask.status }
+        : undefined,
+      lastDriftScore: lastDrift
+        ? {
+            teamScore: lastDrift.teamScore,
+            status: lastDrift.status,
+            runId: lastDrift.runId,
+            createdAt: lastDrift.createdAt,
+          }
+        : undefined,
+      lastCommit: lastCommit || undefined,
+    };
+  }
+
+  /**
+   * Picks the team with the most-recent task_event. Ties (or teams that
+   * have never seen a task event) are broken by team_configs.created_at
+   * ascending — i.e. the oldest team wins. Returns null when there are no
+   * configured teams, or when the registry has no `.db` to query.
+   *
+   * Note: `team_configs` has no display_name column. We project it as the
+   * teamId; the `teams` table's display_name is auto-populated as NULL in
+   * most cases (each store INSERT-ON-CONFLICT-NOTHING with NULL), so it
+   * isn't a reliable name source either.
+   */
+  #pickMostRecentTeam() {
+    const db = this.teamConfigRegistry?.db || this.taskBoard?.db || null;
+    if (!db) {
+      // Fall back to the in-memory registry's listTeams() — only one
+      // configured team in that case, so picking the first is correct.
+      try {
+        const list = this.teamConfigRegistry?.listTeams?.() ?? [];
+        const first = list[0];
+        return first ? { teamId: first.teamId, displayName: first.teamId } : null;
+      } catch {
+        return null;
+      }
+    }
+    try {
+      const row = db.prepare(`
+        SELECT tc.team_id AS teamId,
+               MAX(te.created_at) AS lastEventAt,
+               tc.created_at AS teamCreatedAt
+        FROM team_configs tc
+        LEFT JOIN task_events te ON te.team_id = tc.team_id
+        GROUP BY tc.team_id
+        ORDER BY (lastEventAt IS NULL) ASC, lastEventAt DESC, teamCreatedAt ASC
+        LIMIT 1
+      `).get();
+      if (!row) return null;
+      return { teamId: row.teamId, displayName: row.teamId };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Returns the most-recently-touched task for `teamId`, or null on any
+   * error / no events. Folds task_events into a task projection so the
+   * returned `status` reflects the cumulative state, not just the latest
+   * event type.
+   */
+  #getLastTouchedTask(teamId) {
+    if (!this.taskBoard || typeof this.taskBoard.listEvents !== 'function') return null;
+    try {
+      const events = this.taskBoard.listEvents({ teamId });
+      if (!events || events.length === 0) return null;
+      // Find the newest event with a non-empty taskId.
+      const sorted = [...events].sort((a, b) =>
+        String(b.createdAt).localeCompare(String(a.createdAt))
+      );
+      const newest = sorted.find((e) => typeof e.taskId === 'string' && e.taskId.length > 0);
+      if (!newest) return null;
+      const task = typeof this.taskBoard.getTask === 'function'
+        ? this.taskBoard.getTask({ teamId, taskId: newest.taskId })
+        : null;
+      if (!task) return null;
+      return {
+        taskId: task.taskId,
+        subject: task.subject,
+        status: task.status,
+        createdAt: newest.createdAt,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Returns the most-recent drift run for `teamId`, or null on any error /
+   * no history. The drift store lives at `this.driftEngine?.store` (same
+   * path drift_correction_create uses).
+   */
+  #getLastDriftRun(teamId) {
+    const driftStore = this.driftEngine?.store ?? null;
+    if (!driftStore || typeof driftStore.listScoreHistory !== 'function') return null;
+    try {
+      const history = driftStore.listScoreHistory({ teamId, limit: 1 });
+      if (!history || history.length === 0) return null;
+      const row = history[0];
+      return {
+        teamScore: row.teamScore,
+        status: row.status,
+        runId: row.runId,
+        createdAt: row.createdAt,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Best-effort `git log -1` against the project cwd. Returns null on any
+   * failure (no git binary, not a git repo, malformed output). Never
+   * throws — git issues must NOT block the routing decision.
+   *
+   * Async only because the spec calls out an async signature; the
+   * underlying runGit is sync (spawnSync).
+   */
+  async #getLastCommitSafely() {
+    if (typeof this.projectCwd !== 'string' || this.projectCwd.length === 0) return null;
+    if (typeof this.runGit !== 'function') return null;
+    try {
+      const result = this.runGit(
+        ['log', '-1', '--pretty=format:%H%n%s%n%aI'],
+        { cwd: this.projectCwd },
+      );
+      if (!result || result.exitCode !== 0 || typeof result.stdout !== 'string') return null;
+      const lines = result.stdout.split('\n');
+      if (lines.length < 2) return null;
+      const sha = lines[0].trim();
+      const message = lines[1].trim();
+      if (!sha || !message) return null;
+      return {
+        sha,
+        message,
+        authoredAt: (lines[2] || '').trim() || null,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * True iff any runtime row for `teamId` is in 'running' status. Returns
+   * false on any error so a flaky registry doesn't flip Cockpit into the
+   * paused/running state inadvertently.
+   */
+  #isAnyRuntimeRunning(teamId) {
+    const reg = this.runtimeRegistry;
+    if (!reg || typeof reg.listRuntimes !== 'function') return false;
+    try {
+      const runtimes = reg.listRuntimes({ teamId }) || [];
+      return runtimes.some((r) => r && r.status === 'running');
+    } catch {
+      return false;
+    }
   }
 
   /**

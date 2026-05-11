@@ -10,7 +10,12 @@ import { LocalToolFacade } from '../src/tools/localToolFacade.js';
 import { SettingsStore } from '../src/settings/settingsStore.js';
 import { RiskPolicyStore } from '../src/policy/riskPolicyStore.js';
 import { SqliteFoundryStore } from '../src/foundry/sqliteFoundryStore.js';
-import { TeamConfigRegistry } from '../src/team/teamConfig.js';
+import { TeamConfig, TeamConfigRegistry } from '../src/team/teamConfig.js';
+import { SqliteTeamConfigRegistry } from '../src/team/sqliteTeamConfigRegistry.js';
+import { SqliteTaskBoard } from '../src/task/sqliteTaskBoard.js';
+import { SqliteRuntimeRegistry } from '../src/runtime/sqliteRuntimeRegistry.js';
+import { SqliteDriftStore } from '../src/drift/driftStore.js';
+import { openToadDatabase } from '../src/storage/sqlite.js';
 
 function createFacade() {
   const broker = new InMemoryBroker();
@@ -6387,4 +6392,240 @@ test('LocalToolFacade foundry_chat_turn passes session.provider to runtime.send'
 
   assert.equal(sendCalls.length, 1);
   assert.equal(sendCalls[0].provider, 'openai');
+});
+
+// ============================================================================
+// project_state_describe (M.1a Reopen Project Flow)
+// ============================================================================
+
+/**
+ * Build a facade wired against a single shared sqlite DB so that
+ * teamConfigRegistry, taskBoard, runtimeRegistry, and drift store all
+ * read/write the same `teams`, `task_events`, `runtime_instances`, and
+ * `drift_score_history` rows. Mimics the production wiring path where
+ * every store opens the same `.toad/toad.db` file.
+ *
+ * Optional opts:
+ *   - projectCwd: passed through to LocalToolFacade (overrides default null).
+ *   - runGit: injected git invoker (lets tests deterministically simulate
+ *     git success / failure without spawning real git).
+ */
+function makePsdFacade({ projectCwd = null, runGit = null } = {}) {
+  const db = openToadDatabase(':memory:');
+  const broker = new InMemoryBroker();
+  const taskBoard = new SqliteTaskBoard({ db });
+  const teamConfigRegistry = new SqliteTeamConfigRegistry({ db });
+  const runtimeRegistry = new SqliteRuntimeRegistry({ db });
+  const driftStore = new SqliteDriftStore({ db });
+  // The facade reads the drift store via this.driftEngine?.store, mirroring
+  // the production wiring (drift_correction_create uses the same path).
+  const driftEngine = { runDrift: async () => null, store: driftStore };
+  const facade = new LocalToolFacade({
+    broker,
+    taskBoard,
+    runtimeRegistry,
+    teamConfigRegistry,
+    driftEngine,
+    projectCwd,
+    runGit: typeof runGit === 'function' ? runGit : undefined,
+  });
+  return { db, broker, taskBoard, teamConfigRegistry, runtimeRegistry, driftStore, driftEngine, facade };
+}
+
+test('project_state_describe returns fresh when no teams and no foundry sessions exist', async () => {
+  const { facade, db } = makePsdFacade();
+  const result = await facade.execute({
+    commandName: COMMANDS.PROJECT_STATE_DESCRIBE,
+    actor: { teamId: 'system', agentId: 'ui-client', role: 'human' },
+    args: {},
+  });
+  assert.equal(result.state, 'fresh');
+  assert.equal(result.teamConfigs, 0);
+  assert.equal(result.foundrySessions, 0);
+  assert.equal(result.reopenContext, undefined);
+  db.close();
+});
+
+test('project_state_describe returns half_foundried when only foundry_sessions has rows', async () => {
+  // half_foundried needs the foundry store wired alongside the
+  // sqlite-backed registries — use its own facade instance with a fresh
+  // SqliteFoundryStore. The other stores stay empty so teamConfigs=0.
+  const broker = new InMemoryBroker();
+  const taskBoard = new InMemoryTaskBoard();
+  const foundryStore = new SqliteFoundryStore();
+  const teamConfigRegistry = new SqliteTeamConfigRegistry();
+  const facade = new LocalToolFacade({
+    broker, taskBoard, foundryStore, teamConfigRegistry,
+  });
+  foundryStore.createSession({ title: 'Half-formed plan' });
+
+  const result = await facade.execute({
+    commandName: COMMANDS.PROJECT_STATE_DESCRIBE,
+    actor: { teamId: 'system', agentId: 'ui-client', role: 'human' },
+    args: {},
+  });
+  assert.equal(result.state, 'half_foundried');
+  assert.equal(result.teamConfigs, 0);
+  assert.equal(result.foundrySessions, 1);
+  assert.equal(result.reopenContext, undefined);
+  foundryStore.close();
+  teamConfigRegistry.close();
+});
+
+test('project_state_describe returns has_team with reopenContext when a team exists', async () => {
+  const { facade, db, teamConfigRegistry, taskBoard } = makePsdFacade();
+  teamConfigRegistry.registerTeam(new TeamConfig({
+    teamId: 'demo-team',
+    lead: { agentId: 'lead' },
+    teammates: [],
+  }));
+  taskBoard.appendEvent({
+    teamId: 'demo-team',
+    taskId: 't1',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'user',
+    payload: { subject: 'Wire OAuth' },
+  });
+
+  const result = await facade.execute({
+    commandName: COMMANDS.PROJECT_STATE_DESCRIBE,
+    actor: { teamId: 'system', agentId: 'ui-client', role: 'human' },
+    args: {},
+  });
+  assert.equal(result.state, 'has_team');
+  assert.equal(result.teamConfigs, 1);
+  assert.ok(result.reopenContext);
+  assert.equal(result.reopenContext.teamId, 'demo-team');
+  assert.equal(result.reopenContext.isRunning, false);
+  assert.ok(result.reopenContext.lastTask, 'reopenContext.lastTask should be populated');
+  assert.equal(result.reopenContext.lastTask.subject, 'Wire OAuth');
+  db.close();
+});
+
+test('project_state_describe.isRunning is true when at least one runtime is status=running', async () => {
+  const { facade, db, teamConfigRegistry, runtimeRegistry } = makePsdFacade();
+  teamConfigRegistry.registerTeam(new TeamConfig({
+    teamId: 'demo-team',
+    lead: { agentId: 'lead' },
+    teammates: [],
+  }));
+  runtimeRegistry.upsertRuntime({
+    runtimeId: 'rt-running-1',
+    teamId: 'demo-team',
+    agentId: 'lead',
+    providerId: 'anthropic',
+    command: 'claude',
+    args: [],
+    cwd: '.',
+    env: {},
+    deliveryMode: 'runtime_stdin',
+    status: 'running',
+    startedAt: new Date().toISOString(),
+  });
+
+  const result = await facade.execute({
+    commandName: COMMANDS.PROJECT_STATE_DESCRIBE,
+    actor: { teamId: 'system', agentId: 'ui-client', role: 'human' },
+    args: {},
+  });
+  assert.equal(result.state, 'has_team');
+  assert.equal(result.reopenContext.isRunning, true);
+  db.close();
+});
+
+test('project_state_describe.isRunning is false when all runtimes are status=stopped', async () => {
+  const { facade, db, teamConfigRegistry, runtimeRegistry } = makePsdFacade();
+  teamConfigRegistry.registerTeam(new TeamConfig({
+    teamId: 'demo-team',
+    lead: { agentId: 'lead' },
+    teammates: [],
+  }));
+  runtimeRegistry.upsertRuntime({
+    runtimeId: 'rt-stopped-1',
+    teamId: 'demo-team',
+    agentId: 'lead',
+    providerId: 'anthropic',
+    command: 'claude',
+    args: [],
+    cwd: '.',
+    env: {},
+    deliveryMode: 'runtime_stdin',
+    status: 'stopped',
+    startedAt: new Date().toISOString(),
+  });
+
+  const result = await facade.execute({
+    commandName: COMMANDS.PROJECT_STATE_DESCRIBE,
+    actor: { teamId: 'system', agentId: 'ui-client', role: 'human' },
+    args: {},
+  });
+  assert.equal(result.reopenContext.isRunning, false);
+  db.close();
+});
+
+test('project_state_describe picks most-recently-touched team when multiple teams exist', async () => {
+  const { facade, db, teamConfigRegistry, taskBoard } = makePsdFacade();
+  teamConfigRegistry.registerTeam(new TeamConfig({
+    teamId: 'team-old',
+    lead: { agentId: 'lead' },
+    teammates: [],
+  }));
+  teamConfigRegistry.registerTeam(new TeamConfig({
+    teamId: 'team-new',
+    lead: { agentId: 'lead' },
+    teammates: [],
+  }));
+  // Older event for team-old.
+  taskBoard.appendEvent({
+    teamId: 'team-old',
+    taskId: 't-old',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'u',
+    payload: { subject: 'Old work' },
+    createdAt: '2026-01-01T00:00:00.000Z',
+    idempotencyKey: 'iko',
+  });
+  // Newer event for team-new.
+  taskBoard.appendEvent({
+    teamId: 'team-new',
+    taskId: 't-new',
+    eventType: TASK_EVENT_TYPES.CREATED,
+    actorId: 'u',
+    payload: { subject: 'New work' },
+    createdAt: '2026-05-01T00:00:00.000Z',
+    idempotencyKey: 'ikn',
+  });
+
+  const result = await facade.execute({
+    commandName: COMMANDS.PROJECT_STATE_DESCRIBE,
+    actor: { teamId: 'system', agentId: 'ui-client', role: 'human' },
+    args: {},
+  });
+  assert.equal(result.reopenContext.teamId, 'team-new');
+  assert.equal(result.reopenContext.lastTask.subject, 'New work');
+  db.close();
+});
+
+test('project_state_describe.lastCommit is undefined when git fails', async () => {
+  // Inject a runGit that simulates a non-zero exit (e.g. "not a git
+  // repository"). The handler should swallow this and omit lastCommit.
+  const failingRunGit = () => ({ exitCode: 128, stdout: '', stderr: 'fatal: not a git repository' });
+  const { facade, db, teamConfigRegistry } = makePsdFacade({
+    projectCwd: 'C:/not-a-real-repo',
+    runGit: failingRunGit,
+  });
+  teamConfigRegistry.registerTeam(new TeamConfig({
+    teamId: 't',
+    lead: { agentId: 'lead' },
+    teammates: [],
+  }));
+
+  const result = await facade.execute({
+    commandName: COMMANDS.PROJECT_STATE_DESCRIBE,
+    actor: { teamId: 'system', agentId: 'ui-client', role: 'human' },
+    args: {},
+  });
+  assert.equal(result.state, 'has_team');
+  assert.equal(result.reopenContext.lastCommit, undefined);
+  db.close();
 });
