@@ -46,6 +46,7 @@ interface TaskDetailData {
   requiresHumanApproval?: boolean;
   humanApproved?: boolean;
   matchedRules?: MatchedRiskRule[];
+  type?: 'feature' | 'bug';
   // Rich content from the lead's EARS-spec task_create calls — surfaced
   // in the description column when present so the assigned agent (and
   // the operator reviewing) can see the full contract for the task.
@@ -96,6 +97,7 @@ interface BackendTask {
   // used the flat boolean. UI must accept both.
   humanApproval?: { approved?: boolean };
   matchedRules?: MatchedRiskRule[];
+  type?: 'feature' | 'bug';
   // Rich fields surfaced from the projection — populated by task_create
   // when the lead follows the EARS-spec system prompt.
   acceptanceCriteria?: string[];
@@ -299,6 +301,7 @@ export function TaskDetailModal({ team, taskId, task, onClose, actor = DEFAULT_A
       requiresHumanApproval: task.requiresHumanApproval,
       humanApproved: task.humanApproved,
       matchedRules: task.matchedRules,
+      type: task.type,
     };
   });
   const [timeline, setTimeline] = useState<ActivityEvent[]>([]);
@@ -373,6 +376,7 @@ export function TaskDetailModal({ team, taskId, task, onClose, actor = DEFAULT_A
             requiresHumanApproval: t.requiresHumanApproval ?? prev.requiresHumanApproval,
             humanApproved: humanApprovedOut,
             matchedRules: Array.isArray(t.matchedRules) ? t.matchedRules : prev.matchedRules,
+            type: t.type === 'bug' || t.type === 'feature' ? t.type : prev.type,
             priority: t.priority ?? prev.priority,
             acceptanceCriteria: Array.isArray(t.acceptanceCriteria) ? t.acceptanceCriteria : prev.acceptanceCriteria,
             expectedDeliverables: Array.isArray(t.expectedDeliverables) ? t.expectedDeliverables : prev.expectedDeliverables,
@@ -479,6 +483,8 @@ export function TaskDetailModal({ team, taskId, task, onClose, actor = DEFAULT_A
                 variant="full"
               />
             )}
+            <span className="dim">·</span>
+            <span className="dim">Type: {detail.type === 'bug' ? 'Bug' : 'Feature'}</span>
             <span className="dim">·</span>
             <span className="dim mono">{detail.id}</span>
             <span className="dim">·</span>
