@@ -2318,6 +2318,62 @@
   opacity: 0.78;
 }
 
+.cockpit-paused-header {
+  margin: 16px 20px;
+  padding: 16px 20px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  column-gap: 16px;
+  row-gap: 12px;
+}
+
+.cockpit-paused-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cockpit-paused-eyebrow {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: var(--fg-dim);
+}
+
+.cockpit-paused-summary h2 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.2;
+  color: var(--fg);
+}
+
+.cockpit-paused-header > .btn {
+  align-self: start;
+}
+
+.cockpit-paused-context {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.cockpit-paused-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 120px;
+  flex: 1 1 auto;
+  max-width: 280px;
+}
+
 @media (max-width: 1180px) {
   .cockpit-screen {
     grid-template-columns: minmax(230px, 280px) minmax(420px, 1fr);
