@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSnapshot } from '../../src/drift/buildSnapshot.js';
+import { buildSnapshot, getRecentCommits, readProjectDocs } from '../../src/drift/buildSnapshot.js';
 
 function fakeTaskBoard() {
   return {
@@ -160,4 +160,71 @@ test('buildSnapshot tolerates missing teamConfigRegistry', async () => {
     },
   });
   assert.equal(snap.teamConfig, null);
+});
+
+// ---------------------------------------------------------------------------
+// getRecentCommits helper
+// ---------------------------------------------------------------------------
+
+test('getRecentCommits parses git log output into trimmed lines', () => {
+  const fakeRunGit = () => ({
+    exitCode: 0,
+    stdout: 'abc1234 fix(foo): bar (2026-05-10T12:00:00Z)\ndef5678 chore: baz (2026-05-09T08:00:00Z)\n',
+  });
+  const commits = getRecentCommits({ cwd: '/proj', count: 30, runGitImpl: fakeRunGit });
+  assert.deepEqual(commits, [
+    'abc1234 fix(foo): bar (2026-05-10T12:00:00Z)',
+    'def5678 chore: baz (2026-05-09T08:00:00Z)',
+  ]);
+});
+
+test('getRecentCommits returns empty array when runGit exits non-zero', () => {
+  const fakeRunGit = () => ({ exitCode: 128, stdout: '', stderr: 'not a git repo' });
+  const commits = getRecentCommits({ cwd: '/proj', runGitImpl: fakeRunGit });
+  assert.deepEqual(commits, []);
+});
+
+test('getRecentCommits returns empty array when runGit throws', () => {
+  const fakeRunGit = () => { throw new Error('spawn failed'); };
+  const commits = getRecentCommits({ cwd: '/proj', runGitImpl: fakeRunGit });
+  assert.deepEqual(commits, []);
+});
+
+test('getRecentCommits returns empty array when cwd is null', () => {
+  const fakeRunGit = () => ({ exitCode: 0, stdout: 'should-not-see' });
+  const commits = getRecentCommits({ cwd: null, runGitImpl: fakeRunGit });
+  assert.deepEqual(commits, []);
+});
+
+// ---------------------------------------------------------------------------
+// readProjectDocs helper
+// ---------------------------------------------------------------------------
+
+test('readProjectDocs reads only files that exist, caps at 8KB', () => {
+  // endsWith handles both posix and win32 join() output (e.g. /proj/README.md vs \proj\README.md)
+  const existsNames = new Set(['README.md', 'AGENTS.md']);
+  const fakeExistsSync = (p) => [...existsNames].some((n) => p.endsWith(n));
+  const fakeReadFileSync = (p) => p.endsWith('README.md') ? 'a'.repeat(10000) : 'agent docs';
+  const docs = readProjectDocs({
+    cwd: '/proj',
+    existsSyncImpl: fakeExistsSync,
+    readFileSyncImpl: fakeReadFileSync,
+  });
+  assert.equal(docs['README.md'].length, 8192);
+  assert.equal(docs['AGENTS.md'], 'agent docs');
+  assert.ok(!('CLAUDE.md' in docs));
+  assert.ok(!('CONTRIBUTING.md' in docs));
+});
+
+test('readProjectDocs returns empty object when cwd is null', () => {
+  const docs = readProjectDocs({ cwd: null });
+  assert.deepEqual(docs, {});
+});
+
+test('readProjectDocs returns empty object when no docs exist', () => {
+  const docs = readProjectDocs({
+    cwd: '/proj',
+    existsSyncImpl: () => false,
+  });
+  assert.deepEqual(docs, {});
 });

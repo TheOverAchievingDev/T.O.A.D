@@ -1,3 +1,71 @@
+import { existsSync as defaultExistsSync, readFileSync as defaultReadFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { runGit as defaultRunGit } from '../git/runGit.js';
+
+const COMMITS_DEFAULT = 30;
+const DOC_CAP = 8 * 1024;
+const PROJECT_DOC_CANDIDATES = Object.freeze([
+  'README.md',
+  'AGENTS.md',
+  'CLAUDE.md',
+  'CONTRIBUTING.md',
+]);
+
+/**
+ * Fetch up to `count` recent commits via git log, formatted as
+ * "shortSha shortMessage (isoAuthorDate)" strings. Fail-soft: returns []
+ * on any failure (non-zero exit, throw, missing cwd) so callers don't
+ * need to handle errors.
+ *
+ * Accepts an optional `runGitImpl` for testability — defaults to the
+ * production `runGit` from `../git/runGit.js`.
+ */
+export function getRecentCommits({
+  cwd,
+  count = COMMITS_DEFAULT,
+  runGitImpl = defaultRunGit,
+} = {}) {
+  if (typeof cwd !== 'string' || cwd.length === 0) return [];
+  try {
+    const result = runGitImpl(
+      ['log', '-n', String(count), '--pretty=format:%h %s (%ai)'],
+      { cwd },
+    );
+    if (!result || result.exitCode !== 0 || typeof result.stdout !== 'string') return [];
+    return result.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Read up to 4 canonical project docs (README, AGENTS, CLAUDE, CONTRIBUTING)
+ * from `cwd`. Each file's content is capped at 8KB to keep the prompt
+ * footprint bounded. Returns {} if cwd is invalid or no docs exist.
+ *
+ * Accepts `existsSyncImpl` / `readFileSyncImpl` overrides for testability.
+ */
+export function readProjectDocs({
+  cwd,
+  existsSyncImpl = defaultExistsSync,
+  readFileSyncImpl = defaultReadFileSync,
+} = {}) {
+  if (typeof cwd !== 'string' || cwd.length === 0) return {};
+  const docs = {};
+  for (const name of PROJECT_DOC_CANDIDATES) {
+    try {
+      const fp = join(cwd, name);
+      if (!existsSyncImpl(fp)) continue;
+      const raw = readFileSyncImpl(fp, 'utf8');
+      if (typeof raw !== 'string') continue;
+      docs[name] = raw.length > DOC_CAP ? raw.slice(0, DOC_CAP) : raw;
+    } catch {
+      // skip per-file failures; other candidates may still succeed
+    }
+  }
+  return docs;
+}
+
 /**
  * Gather all inputs the deterministic checks need into a single snapshot.
  * The engine calls this once per run; checks read it without further I/O.
