@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Actor } from '@/api/client';
 import { callTool } from '@/api/client';
 import type { Message, Runtime, Team, UiTask, ValidationKind, UiValidationRun } from '@/types';
@@ -118,6 +118,7 @@ export function CockpitScreen({
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(team.members[0]?.id ?? null);
   const [testRunning, setTestRunning] = useState(false);
   const [resuming, setResuming] = useState(false);
+  const resumeTimerRef = useRef<number | null>(null);
   const [terminalExpanded, setTerminalExpanded] = useState(false);
   const [testMessage, setTestMessage] = useState<string | null>(null);
   const [validationKind, setValidationKind] = useState<ValidationKind>('test');
@@ -297,6 +298,17 @@ export function CockpitScreen({
     setSelectedAgentId(team.members.find((member) => member.role === 'lead')?.id ?? team.members[0]?.id ?? null);
   }, [selectedAgentId, team.members]);
 
+  // Clear the resume-state safety-net timer on unmount so the callback
+  // doesn't fire on an unmounted component (React warning).
+  useEffect(() => {
+    return () => {
+      if (resumeTimerRef.current !== null) {
+        window.clearTimeout(resumeTimerRef.current);
+        resumeTimerRef.current = null;
+      }
+    };
+  }, []);
+
   async function runSelectedTaskValidation() {
     if (!selectedTask || testRunning) return;
     setTestRunning(true);
@@ -360,7 +372,14 @@ export function CockpitScreen({
               // The header will hide automatically once SSE updates flip
               // isRunning. Reset resuming after a short timeout so the
               // button label doesn't stick if the SSE round-trip is slow.
-              window.setTimeout(() => setResuming(false), 4000);
+              // Store the timer ID so we can clean it up if the component unmounts.
+              if (resumeTimerRef.current !== null) {
+                window.clearTimeout(resumeTimerRef.current);
+              }
+              resumeTimerRef.current = window.setTimeout(() => {
+                setResuming(false);
+                resumeTimerRef.current = null;
+              }, 4000);
             }}
           >
             {resuming ? 'Resuming…' : 'Resume team'}
