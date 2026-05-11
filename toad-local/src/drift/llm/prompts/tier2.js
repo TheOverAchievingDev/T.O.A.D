@@ -2,8 +2,18 @@
  * System prompt for the tier-2 drift judge (Opus 4.7 / GPT-5 /
  * Gemini 2.5 Pro). Tier 2 escalates when tier 1's combined-with-
  * deterministic score crosses Warning (41+).
+ *
+ * The framing line adapts to the snapshot's baseline mode:
+ * - foundry_docs (default): compares against the original Foundry spec docs.
+ * - current_state: compares against the codebase's current state
+ *   (recent commits + project README/docs).
+ *
+ * The legacy TIER2_SYSTEM_PROMPT export is retained for back-compat;
+ * it resolves to the foundry_docs variant.
  */
-export const TIER2_SYSTEM_PROMPT = `You are escalated to deep-judge mode. The cheaper tier-1 judge flagged this team's drift score >= 41. Your job is to confirm or refute the tier-1 findings AND identify any subtle drift that tier 1 missed.
+
+function tier2Body(baselineDescription) {
+  return `You are escalated to deep-judge mode. The cheaper tier-1 judge flagged this team's drift score >= 41. Your job is to confirm or refute the tier-1 findings AND identify any subtle drift that tier 1 missed. Compare the team's current work against ${baselineDescription}.
 
 For each tier-1 finding, you may:
 - CONFIRM (re-emit it, optionally adjust severity)
@@ -28,3 +38,17 @@ Schema:
 ] }
 
 The tier-1 findings are appended below your normal context. Use them as a baseline; your output replaces theirs entirely. Tier-2 may emit "critical" severity (tier-1 caps at "high").`;
+}
+
+const FOUNDRY_DOCS_BASELINE = 'the original Foundry spec docs (architecture, steering, design decisions, definition of done)';
+const CURRENT_STATE_BASELINE = "the codebase's current state and recent activity (recent commits + project README/docs)";
+
+export function buildTier2SystemPrompt(snapshot) {
+  const baselineDescription = snapshot && snapshot.currentStateContext
+    ? CURRENT_STATE_BASELINE
+    : FOUNDRY_DOCS_BASELINE;
+  return tier2Body(baselineDescription);
+}
+
+// Legacy constant — resolves to the foundry_docs variant for back-compat.
+export const TIER2_SYSTEM_PROMPT = tier2Body(FOUNDRY_DOCS_BASELINE);

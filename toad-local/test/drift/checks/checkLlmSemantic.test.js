@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { checkLlmSemantic, buildUserPayload } from '../../../src/drift/checks/checkLlmSemantic.js';
+import { buildTier1SystemPrompt } from '../../../src/drift/llm/prompts/tier1.js';
+import { buildTier2SystemPrompt } from '../../../src/drift/llm/prompts/tier2.js';
 
 const BASE_SNAPSHOT = {
   teamId: 'team-a',
@@ -123,6 +125,69 @@ test('semantic check prompt with empty currentStateContext omits subsections gra
   assert.doesNotMatch(prompt, /## Foundry docs/);
   assert.doesNotMatch(prompt, /### Recent commits/);
   assert.doesNotMatch(prompt, /### Project documentation/);
+});
+
+test('buildTier1SystemPrompt frames against Foundry docs when snapshot has no currentStateContext', () => {
+  const snapshot = { currentStateContext: null, foundryDocs: { architecture: '# A' } };
+  const prompt = buildTier1SystemPrompt(snapshot);
+  assert.match(prompt, /Foundry spec docs/);
+  assert.match(prompt, /architecture, steering, design decisions, definition of done/);
+  assert.doesNotMatch(prompt, /recent commits/);
+});
+
+test('buildTier1SystemPrompt frames against current codebase when snapshot has currentStateContext', () => {
+  const snapshot = {
+    currentStateContext: { recentCommits: [], projectDocs: {} },
+    foundryDocs: {},
+  };
+  const prompt = buildTier1SystemPrompt(snapshot);
+  assert.match(prompt, /current state/);
+  assert.match(prompt, /recent commits \+ project README\/docs/);
+  assert.doesNotMatch(prompt, /Foundry spec docs/);
+});
+
+test('buildTier2SystemPrompt frames against Foundry docs when snapshot has no currentStateContext', () => {
+  const snapshot = { currentStateContext: null, foundryDocs: { architecture: '# A' } };
+  const prompt = buildTier2SystemPrompt(snapshot);
+  assert.match(prompt, /Foundry spec docs/);
+  assert.doesNotMatch(prompt, /recent commits/);
+});
+
+test('buildTier2SystemPrompt frames against current codebase when snapshot has currentStateContext', () => {
+  const snapshot = {
+    currentStateContext: { recentCommits: [], projectDocs: {} },
+    foundryDocs: {},
+  };
+  const prompt = buildTier2SystemPrompt(snapshot);
+  assert.match(prompt, /current state/);
+  assert.match(prompt, /recent commits \+ project README\/docs/);
+  assert.doesNotMatch(prompt, /Foundry spec docs/);
+});
+
+test('checkLlmSemantic@tier1 system prompt adapts to current_state snapshot mode', async () => {
+  const currentStateSnapshot = {
+    ...BASE_SNAPSHOT,
+    foundryDocs: {},
+    currentStateContext: { recentCommits: ['abc commit'], projectDocs: { 'README.md': 'readme' } },
+  };
+  let called = null;
+  const fakeJudge = async (args) => { called = args; return { findings: [] }; };
+  await checkLlmSemantic({
+    snapshot: currentStateSnapshot, settings: NO_OVERRIDES,
+    tier: 1, llmJudgeImpl: fakeJudge,
+  });
+  assert.match(called.systemPrompt, /current state/);
+  assert.doesNotMatch(called.systemPrompt, /Foundry spec docs/);
+});
+
+test('checkLlmSemantic@tier1 system prompt defaults to Foundry framing on legacy snapshots', async () => {
+  let called = null;
+  const fakeJudge = async (args) => { called = args; return { findings: [] }; };
+  await checkLlmSemantic({
+    snapshot: BASE_SNAPSHOT, settings: NO_OVERRIDES,
+    tier: 1, llmJudgeImpl: fakeJudge,
+  });
+  assert.match(called.systemPrompt, /Foundry spec docs/);
 });
 
 test('checkLlmSemantic@tier1 caps severity at high (drops critical)', async () => {

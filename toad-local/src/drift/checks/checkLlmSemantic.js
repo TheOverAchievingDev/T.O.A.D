@@ -1,8 +1,8 @@
 import { stableFindingId } from './_findingId.js';
 import { llmJudge as defaultLlmJudge } from '../llm/llmJudge.js';
 import { resolveProvider } from '../llm/providerResolver.js';
-import { TIER1_SYSTEM_PROMPT } from '../llm/prompts/tier1.js';
-import { TIER2_SYSTEM_PROMPT } from '../llm/prompts/tier2.js';
+import { buildTier1SystemPrompt } from '../llm/prompts/tier1.js';
+import { buildTier2SystemPrompt } from '../llm/prompts/tier2.js';
 
 /**
  * LLM semantic check. Async — calls a provider CLI in one-shot mode.
@@ -41,7 +41,9 @@ export async function checkLlmSemantic({
       err && err.message ? err.message : String(err))];
   }
 
-  const systemPrompt = tier === 1 ? TIER1_SYSTEM_PROMPT : TIER2_SYSTEM_PROMPT;
+  const systemPrompt = tier === 1
+    ? buildTier1SystemPrompt(snapshot)
+    : buildTier2SystemPrompt(snapshot);
   const userPayload = buildUserPayload(snapshot, tier === 2 ? tier1Findings : null);
 
   let result;
