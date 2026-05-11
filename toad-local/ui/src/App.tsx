@@ -313,13 +313,18 @@ function AppInner() {
   // and have an empty registry (e.g. they deleted all projects). Skips
   // entirely while firstRunComplete is false so first-run users can
   // explore the sidebar without being yanked to picker before they've
-  // engaged with the welcome banner.
+  // engaged with the welcome banner. Also skips when reopenContext is
+  // set: the reopen flow's routing is authoritative — if we know there's
+  // a team to work with, we should never bounce the user to the project
+  // picker just because the localStorage registry is empty (e.g. browser
+  // mode without Tauri shell persisting the project).
   useEffect(() => {
     if (!tweaks.firstRunComplete) return;
+    if (reopenContext) return; // Reopen flow has authoritative routing; don't override.
     if (projectRegistry.projects.length === 0 && tweaks.screen !== 'picker' && tweaks.screen !== 'create' && tweaks.screen !== 'settings' && tweaks.screen !== 'foundry' && tweaks.screen !== 'code' && tweaks.screen !== 'drift') {
       setTweak('screen', 'picker');
     }
-  }, [projectRegistry.projects.length, tweaks.screen, tweaks.firstRunComplete, setTweak]);
+  }, [projectRegistry.projects.length, tweaks.screen, tweaks.firstRunComplete, setTweak, reopenContext]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', tweaks.theme);
