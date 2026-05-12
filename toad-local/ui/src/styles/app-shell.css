@@ -5,11 +5,17 @@
 .win {
   display: flex !important;
   flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
 }
 
-.win > .titlebar {
+/* Phase 1 chrome rows — rigid flex children, no grow / no shrink. Their
+ * own stylesheets (chrome.css) set explicit heights via design tokens
+ * (--h-menubar / --h-titlebar / --h-statusbar). */
+.win > .menubar,
+.win > .titlebar,
+.win > .statusbar {
   flex: 0 0 auto;
-  height: 36px;
 }
 
 .app-body {
