@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { callTool, type Actor } from '@/api/client';
 import type { Agent, Message, Runtime, Team, UiTask } from '@/types';
 import type { StreamEntry } from '@/utils/agentStream';
 import type { Tweaks } from '@/types';
-import { Icon } from '../Icon';
+import type { DriftRunResult } from '@/hooks/useDrift';
 import { IdeFileTree } from '../IdeFileTree';
-import { type IdeTreeResult } from '../ideSource';
+import { IdeEditorPane } from '../IdeEditorPane';
+import { type IdeSource, type IdeTreeResult } from '../ideSource';
 import {
   buildCodeTree,
   flattenVisibleCodeTree,
@@ -14,7 +15,6 @@ import {
 import { PaneSplitter } from './PaneSplitter';
 import { AgentCard } from './AgentCard';
 import { BottomPanel, type BottomPanelTab } from './BottomPanel';
-import { FileTabs, type OpenFile } from './FileTabs';
 import { AgentInboxPanel } from './AgentInboxPanel';
 
 /**
@@ -69,6 +69,10 @@ export interface CockpitWithMeProps {
   agentStreams?: Record<string, StreamEntry[]>;
   actor?: Actor;
 
+  /** Drift data — drives the editor's drift-annotation gutter when
+   *  Phase 3a Task 2 lands Monaco. */
+  drift?: DriftRunResult | null;
+
   /** Phase 2 panel state — owned by App.tsx via tweaks. */
   showBottomPanel: boolean;
   showRightPanel: boolean;
@@ -88,6 +92,7 @@ export function CockpitWithMe({
   messages,
   agentStreams = {},
   actor,
+  drift = null,
   showBottomPanel,
   showRightPanel,
   bottomPanelTab,
@@ -99,13 +104,22 @@ export function CockpitWithMe({
     () => (rightPanelAgent ?? team.members.find((m) => m.role === 'lead')?.id ?? team.members[0]?.id ?? null),
   );
 
-  // Phase 3a Task 1: real file-tree state. Loaded on mount via the
-  // existing ide_tree_list MCP method; same source the Code screen uses.
-  const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);
-  const [activePath, setActivePath] = useState<string | null>(null);
+  // Phase 3a Task 1+2: real file tree + Monaco editor wiring. The
+  // editor (IdeEditorPane) manages its own tabs internally — we no
+  // longer maintain an openFiles array in CockpitWithMe. Instead we
+  // fire an externalOpenRequest at the editor whenever the user
+  // clicks a file in the tree; IdeEditorPane handles "is this tab
+  // already open / load file / dirty state / save / diff mode" etc.
   const [tree, setTree] = useState<IdeTreeResult | null>(null);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
   const [treeError, setTreeError] = useState<string | null>(null);
+  // externalOpenRequest carries a monotonic requestId so IdeEditorPane
+  // re-fires open even if the same path is clicked twice.
+  const [externalOpenRequest, setExternalOpenRequest] = useState<
+    { sourceKey: string; path: string; requestId: number } | null
+  >(null);
+  const [openRequestCounter, setOpenRequestCounter] = useState(0);
+  const [activePath, setActivePath] = useState<string | null>(null);
 
   // Load the project file tree on mount + whenever the team changes.
   // Mirrors CodeScreen's loadTree logic but trimmed: no git-status
@@ -178,13 +192,34 @@ export function CockpitWithMe({
     });
   };
 
-  const handleOpenFile = (path: string) => {
-    setOpenFiles((prev) => {
-      if (prev.some((f) => f.path === path)) return prev;
-      return [...prev, { path }];
-    });
+  const handleOpenFile = useCallback((path: string) => {
     setActivePath(path);
-  };
+    setOpenRequestCounter((c) => {
+      const next = c + 1;
+      setExternalOpenRequest({ sourceKey: 'project', path, requestId: next });
+      return next;
+    });
+  }, []);
+
+  // Refresh-tree callback fired by IdeEditorPane after a save.
+  const refreshTree = useCallback(async (_pathToReopen: string | null = null) => {
+    if (!team.name) return;
+    try {
+      const result = await callTool<IdeTreeResult>({
+        actor: treeActor,
+        method: 'ide_tree_list',
+        args: { source: { kind: 'project' } },
+      });
+      setTree(result);
+    } catch (err) {
+      setTreeError(err instanceof Error ? err.message : String(err));
+    }
+  }, [team.name, treeActor]);
+
+  // Build the IdeSource the editor pane consumes. CockpitWithMe always
+  // operates on the project root (not a task worktree); task-scoped
+  // editing remains the Code screen's job.
+  const editorSource: IdeSource = useMemo(() => ({ kind: 'project' }), []);
 
   const runtimeByAgent = useMemo(() => {
     const m = new Map<string, Runtime>();
@@ -198,14 +233,6 @@ export function CockpitWithMe({
     // operators are signaling "I want to talk to this person."
     if (!showRightPanel) setTweak('showRightPanel', true);
     setTweak('rightPanelAgent', id);
-  };
-
-  const closeFile = (path: string) => {
-    setOpenFiles((prev) => prev.filter((f) => f.path !== path));
-    if (activePath === path) {
-      const remaining = openFiles.filter((f) => f.path !== path);
-      setActivePath(remaining[0]?.path ?? null);
-    }
   };
 
   // Outer top region: file tabs + editor body. Outer column splitter
@@ -294,10 +321,11 @@ export function CockpitWithMe({
           anchorEnd
         >
           <EditorRegion
-            openFiles={openFiles}
-            activePath={activePath}
-            onActivate={setActivePath}
-            onCloseFile={closeFile}
+            source={editorSource}
+            actor={treeActor}
+            drift={drift}
+            externalOpenRequest={externalOpenRequest}
+            onRefreshTreeRequest={refreshTree}
           />
           <AgentInboxPanel
             team={team}
@@ -315,10 +343,11 @@ export function CockpitWithMe({
         </PaneSplitter>
       ) : (
         <EditorRegion
-          openFiles={openFiles}
-          activePath={activePath}
-          onActivate={setActivePath}
-          onCloseFile={closeFile}
+          source={editorSource}
+          actor={treeActor}
+          drift={drift}
+          externalOpenRequest={externalOpenRequest}
+          onRefreshTreeRequest={refreshTree}
         />
       )}
     </PaneSplitter>
@@ -350,42 +379,37 @@ export function CockpitWithMe({
 }
 
 function EditorRegion({
-  openFiles,
-  activePath,
-  onActivate,
-  onCloseFile,
+  source,
+  actor,
+  drift,
+  externalOpenRequest,
+  onRefreshTreeRequest,
 }: {
-  openFiles: OpenFile[];
-  activePath: string | null;
-  onActivate: (path: string) => void;
-  onCloseFile: (path: string) => void;
+  source: IdeSource;
+  actor: Actor;
+  drift: DriftRunResult | null;
+  externalOpenRequest: { sourceKey: string; path: string; requestId: number } | null;
+  onRefreshTreeRequest?: (path: string | null) => void;
 }) {
+  // Phase 3a Task 2 — replaced the placeholder card with the real
+  // IdeEditorPane. The pane manages its own tab strip (so we don't
+  // render our Phase 2 FileTabs here; keeping two parallel tab UIs
+  // would confuse users). Phase 3 polish can re-introduce a custom
+  // tab strip on top of IdeEditorPane once the in-scope-for chip
+  // and drag-reorder land (Task 4 + per-task scope chips).
   return (
     <div className="cockpit-with-editor">
-      <FileTabs
-        files={openFiles}
-        activePath={activePath}
-        onActivate={onActivate}
-        onClose={onCloseFile}
+      <IdeEditorPane
+        source={source}
+        actor={actor}
+        driftData={drift}
+        // CockpitWithMe always operates on the project root — task-
+        // worktree editing is the Code screen's domain. No agent
+        // filter; an empty list is correct here.
+        activeAgentsInWorktree={[]}
+        externalOpenRequest={externalOpenRequest}
+        onRefreshTreeRequest={onRefreshTreeRequest}
       />
-      <div className="cockpit-with-editor-body">
-        {activePath ? (
-          <div className="cockpit-with-editor-placeholder mono">
-            <Icon name="code" size={16} />
-            <span>{activePath}</span>
-            <span className="hint">Monaco editor lands Phase 3.</span>
-          </div>
-        ) : (
-          <div className="cockpit-with-editor-empty">
-            <Icon name="code" size={20} />
-            <div className="title">No file open</div>
-            <div className="hint">
-              Phase 3 wires the file tree + Monaco editor. Until then this is
-              an empty editor pane.
-            </div>
-          </div>
-        )}
-      </div>
     </div>
   );
 }

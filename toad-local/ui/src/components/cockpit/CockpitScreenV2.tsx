@@ -74,6 +74,7 @@ export function CockpitScreenV2(props: CockpitScreenV2Props) {
         messages={props.messages}
         agentStreams={props.agentStreams}
         actor={props.actor}
+        drift={props.drift}
         showBottomPanel={props.showBottomPanel}
         showRightPanel={props.showRightPanel}
         bottomPanelTab={props.bottomPanelTab}
