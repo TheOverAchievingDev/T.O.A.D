@@ -3,6 +3,7 @@ import { Titlebar } from '@/components/Titlebar';
 import { Menubar, type MenuAction } from '@/components/Menubar';
 import { SidebarNav, type SidebarKey } from '@/components/SidebarNav';
 import { Statusbar } from '@/components/Statusbar';
+import { CockpitScreenV2 } from '@/components/cockpit/CockpitScreenV2';
 import { Workspace } from '@/components/Workspace';
 import { TasksScreen } from '@/components/TasksScreen';
 import { CreateTeamModal } from '@/components/CreateTeamModal';
@@ -772,40 +773,39 @@ function AppInner() {
             />
           )}
           {(tweaks.screen === 'cockpit' || tweaks.screen === 'create' || tweaks.screen === 'task') && (
-            <CockpitScreen
+            // Phase 2 Task 11 — CockpitScreenV2 replaces the old 1132-line
+            // CockpitScreen at this mount point. V2's prop shape is tighter
+            // (no projects/activeProject/onSelectFolder/onOpenLogs etc.),
+            // routing those through the new Phase 1 Titlebar's project pill
+            // and the existing drawer toggles. Task 12 retires the old file.
+            <CockpitScreenV2
               team={team}
               tasks={tasks}
               runtimes={runtimes}
               messages={messages}
               agentStreams={agentStreams}
-              teamId={team.name || activeTeamId}
-              developerMode={tweaks.developerMode === true}
               actor={{
                 teamId: team.name || activeTeamId || 'system',
                 agentId: 'ui-client',
                 agentName: 'ui',
                 role: 'human',
               }}
-              projects={projectRegistry.projects}
-              activeProject={projectRegistry.active}
-              onSelectProject={(id) => {
-                void openRegisteredProject(id, 'cockpit');
-              }}
-              onSelectFolder={() => {
-                void pickProjectFolder('cockpit');
-              }}
-              onOpenTask={(id) => {
+              drift={drift.data}
+              developerMode={tweaks.developerMode === true}
+              showBottomPanel={tweaks.showBottomPanel !== false}
+              showRightPanel={tweaks.showRightPanel === true}
+              bottomPanelTab={tweaks.bottomPanelTab ?? 'terminal'}
+              rightPanelAgent={tweaks.rightPanelAgent ?? null}
+              setTweak={setTweak}
+              reopenContext={reopenContext}
+              onCreateTask={() => setTaskCreateOpen(true)}
+              onRefreshDrift={async () => { await drift.refresh(); }}
+              onOpenTaskDetail={(id) => {
                 setSelectedTaskId(id);
                 setTweak('screen', 'task');
               }}
-              onCreateTask={() => setTaskCreateOpen(true)}
-              onOpenLogs={(id) => setLogRuntimeId(id)}
-              driftData={drift.data}
-              driftLoading={drift.loading}
-              driftError={drift.error}
-              onRefreshDrift={drift.refresh}
-              onRefreshData={refresh}
-              reopenContext={reopenContext}
+              onOpenDriftScreen={() => setTweak('screen', 'drift')}
+              onMessageSent={refresh}
               onResumeTeam={() => {
                 if (!reopenContext?.teamId) return;
                 void callToadApi({
