@@ -1089,18 +1089,48 @@
   background: var(--bg-1);
   border-right: 1px solid var(--line-soft);
 }
-.cockpit-with-left .cockpit-col-body {
+.cockpit-with-left > .pane-splitter {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Phase 3a Task 1 — left rail vertical split: tree (top) + agents (bottom). */
+.cockpit-with-tree {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+  background: var(--bg-1);
+}
+.cockpit-with-tree-body {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  padding: 4px 0 12px;
+}
+.cockpit-with-tree-error,
+.cockpit-with-tree-empty {
+  padding: 14px 14px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--fg-3);
+}
+.cockpit-with-tree-error {
+  color: var(--signal-red);
 }
 
-.cockpit-col-placeholder {
-  padding: 12px 14px;
-  font-size: 11px;
-  color: var(--fg-3);
-  text-align: center;
+.cockpit-with-agents {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+  background: var(--bg-1);
   border-top: 1px solid var(--line-soft);
+}
+.cockpit-with-agents .cockpit-col-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
 }
 
 .cockpit-with-editor {

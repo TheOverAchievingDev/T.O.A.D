@@ -1,9 +1,16 @@
-import { useMemo, useState } from 'react';
-import type { Actor } from '@/api/client';
+import { useEffect, useMemo, useState } from 'react';
+import { callTool, type Actor } from '@/api/client';
 import type { Agent, Message, Runtime, Team, UiTask } from '@/types';
 import type { StreamEntry } from '@/utils/agentStream';
 import type { Tweaks } from '@/types';
 import { Icon } from '../Icon';
+import { IdeFileTree } from '../IdeFileTree';
+import { type IdeTreeResult } from '../ideSource';
+import {
+  buildCodeTree,
+  flattenVisibleCodeTree,
+  type CodeTreeNode,
+} from '../codeTreeNavigator';
 import { PaneSplitter } from './PaneSplitter';
 import { AgentCard } from './AgentCard';
 import { BottomPanel, type BottomPanelTab } from './BottomPanel';
@@ -92,11 +99,92 @@ export function CockpitWithMe({
     () => (rightPanelAgent ?? team.members.find((m) => m.role === 'lead')?.id ?? team.members[0]?.id ?? null),
   );
 
-  // Phase 2: open-files state is local (placeholder until Phase 3 wires
-  // real file-tree → editor selection). For now we render an empty file
-  // tab strip; the editor body is a placeholder card.
+  // Phase 3a Task 1: real file-tree state. Loaded on mount via the
+  // existing ide_tree_list MCP method; same source the Code screen uses.
   const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
+  const [tree, setTree] = useState<IdeTreeResult | null>(null);
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
+  const [treeError, setTreeError] = useState<string | null>(null);
+
+  // Load the project file tree on mount + whenever the team changes.
+  // Mirrors CodeScreen's loadTree logic but trimmed: no git-status
+  // enrichment, no checkpoint plumbing — Phase 3d's Code screen polish
+  // is the better place to share that logic via a hook. Phase 3a Task 1
+  // keeps it inline so the diff stays small.
+  const treeActor: Actor = useMemo(
+    () => ({
+      teamId: team.name || 'system',
+      agentId: 'ui-client',
+      agentName: 'ui',
+      role: 'human',
+    }),
+    [team.name],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!team.name) {
+      setTree(null);
+      return;
+    }
+    (async () => {
+      setTreeError(null);
+      try {
+        const result = await callTool<IdeTreeResult>({
+          actor: treeActor,
+          method: 'ide_tree_list',
+          args: { source: { kind: 'project' } },
+        });
+        if (cancelled) return;
+        setTree(result);
+        // Auto-expand the root one level so the user sees content.
+        setExpandedPaths((prev) => {
+          if (prev.size > 0) return prev;
+          const next = new Set<string>();
+          for (const entry of result.entries) {
+            if (entry.kind === 'directory' && entry.path.indexOf('/') < 0) {
+              next.add(entry.path);
+            }
+          }
+          return next;
+        });
+      } catch (err) {
+        if (cancelled) return;
+        setTreeError(err instanceof Error ? err.message : String(err));
+        setTree(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [team.name, treeActor]);
+
+  // Build the hierarchical tree from the flat entries the MCP method
+  // returns. Memoized so re-renders don't rebuild unless entries change.
+  const treeNodes: CodeTreeNode[] = useMemo(
+    () => (tree ? buildCodeTree(tree.entries) : []),
+    [tree],
+  );
+  const visibleNodes: CodeTreeNode[] = useMemo(
+    () => flattenVisibleCodeTree(treeNodes, expandedPaths),
+    [treeNodes, expandedPaths],
+  );
+
+  const handleToggleDirectory = (path: string) => {
+    setExpandedPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
+
+  const handleOpenFile = (path: string) => {
+    setOpenFiles((prev) => {
+      if (prev.some((f) => f.path === path)) return prev;
+      return [...prev, { path }];
+    });
+    setActivePath(path);
+  };
 
   const runtimeByAgent = useMemo(() => {
     const m = new Map<string, Runtime>();
@@ -131,26 +219,68 @@ export function CockpitWithMe({
       maxSize={400}
       storageKey="cockpit.withMe.leftCol"
     >
-      {/* LEFT rail — agent column. File tree below in Phase 3. */}
+      {/* LEFT rail — file tree on top + agent column below.
+          Phase 3a Task 1 wires the real IdeFileTree (loaded via
+          ide_tree_list MCP) above the agent stack, splitting them
+          with a vertical PaneSplitter so the operator can resize. */}
       <div className="cockpit-with-left">
-        <div className="cockpit-col-head">
-          <h4>TEAM</h4>
-          <span className="cockpit-col-sub">{team.members.length} agents</span>
-        </div>
-        <div className="cockpit-col-body">
-          {team.members.map((a: Agent) => (
-            <AgentCard
-              key={a.id}
-              agent={a}
-              runtime={runtimeByAgent.get(a.id) ?? null}
-              active={selectedAgentId === a.id}
-              onSelect={handleAgentSelect}
-            />
-          ))}
-        </div>
-        <div className="cockpit-col-placeholder">
-          File tree lands in Phase 3.
-        </div>
+        <PaneSplitter
+          orientation="vertical"
+          defaultSize={320}
+          minSize={120}
+          maxSize={640}
+          storageKey="cockpit.withMe.fileTreeHeight"
+        >
+          {/* TOP: file tree */}
+          <div className="cockpit-with-tree">
+            <div className="cockpit-col-head">
+              <h4>FILES</h4>
+              {tree?.rootLabel && (
+                <span className="cockpit-col-sub mono" title={tree.rootLabel}>
+                  {tree.rootLabel.length > 22 ? `…${tree.rootLabel.slice(-22)}` : tree.rootLabel}
+                </span>
+              )}
+            </div>
+            <div className="cockpit-with-tree-body">
+              {treeError && (
+                <div className="cockpit-with-tree-error">{treeError}</div>
+              )}
+              {!treeError && tree && visibleNodes.length === 0 && (
+                <div className="cockpit-with-tree-empty">Project is empty.</div>
+              )}
+              {!treeError && !tree && (
+                <div className="cockpit-with-tree-empty">Loading…</div>
+              )}
+              {!treeError && tree && visibleNodes.length > 0 && (
+                <IdeFileTree
+                  nodes={visibleNodes}
+                  expandedPaths={expandedPaths}
+                  activePath={activePath}
+                  onToggleDirectory={handleToggleDirectory}
+                  onOpenFile={handleOpenFile}
+                />
+              )}
+            </div>
+          </div>
+          {/* BOTTOM: agent column */}
+          <div className="cockpit-with-agents">
+            <div className="cockpit-col-head">
+              <h4>TEAM</h4>
+              <span className="cockpit-col-sub">{team.members.length} agents</span>
+            </div>
+            <div className="cockpit-col-body">
+              {team.members.map((a: Agent) => (
+                <AgentCard
+                  key={a.id}
+                  agent={a}
+                  runtime={runtimeByAgent.get(a.id) ?? null}
+                  active={selectedAgentId === a.id}
+                  onSelect={handleAgentSelect}
+                />
+              ))}
+            </div>
+          </div>
+        </PaneSplitter>
       </div>
 
       {/* RIGHT of outer splitter: editor + optional right panel */}
