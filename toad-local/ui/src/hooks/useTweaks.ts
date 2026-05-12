@@ -16,6 +16,14 @@ export const TWEAK_DEFAULTS: Tweaks = {
   showRuntimes: false,
   showDiagnostics: false,
   showTweaks: false,
+  // Phase 2 panel defaults — sidebar visible, bottom panel visible (in
+  // contexts that have one, i.e. WITH-me Cockpit), right Agent Inbox
+  // hidden (operator opts in via View → Toggle Right Panel).
+  showSidebar: true,
+  showBottomPanel: true,
+  showRightPanel: false,
+  bottomPanelTab: 'terminal',
+  rightPanelAgent: null,
   developerMode: false,
   firstRunComplete: false,
 };

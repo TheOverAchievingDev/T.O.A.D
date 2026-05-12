@@ -197,6 +197,16 @@ export interface Tweaks {
   showRuntimes: boolean;
   showDiagnostics: boolean;
   showTweaks: boolean;
+  /** Phase 2 panel toggles. */
+  showSidebar: boolean;
+  showBottomPanel: boolean;
+  showRightPanel: boolean;
+  /** Phase 2 bottom-panel active tab. */
+  bottomPanelTab: 'terminal' | 'problems' | 'output' | 'validations';
+  /** Phase 2 right-panel agent selection — which agent the Agent Inbox
+   *  is currently talking to. null = use the lead. Persists across
+   *  sessions so the operator returns to the same conversation. */
+  rightPanelAgent: string | null;
   /** Developer mode opt-in — reveals power-user surfaces. Default false. */
   developerMode: boolean;
   /** First-run flag — false until the user sends their first Foundry
