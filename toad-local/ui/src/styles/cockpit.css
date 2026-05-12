@@ -223,3 +223,88 @@
 .term-line .ok  { color: var(--signal-green); }
 .term-line .err { color: var(--signal-red); }
 .term-line .dim { color: var(--fg-3); }
+
+/* ---------- AgentCard (shared by both Cockpit modes) ---------- */
+.agent-card {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  gap: 10px;
+  padding: 10px 14px;
+  align-items: center;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  background: transparent;
+  color: var(--fg-1);
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-display);
+  font-size: 12px;
+}
+.agent-card:hover  { background: var(--bg-2); }
+.agent-card.active { background: var(--bg-2); }
+
+.agent-card .avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: var(--bg-3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono-new);
+  font-size: 11px;
+  color: var(--fg-0);
+  position: relative;
+  border: 1px solid var(--line);
+}
+.agent-card .avatar .status {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-1);
+}
+.agent-card .avatar .status.live    { background: var(--signal-green); }
+.agent-card .avatar .status.idle    { background: var(--fg-3); }
+.agent-card .avatar .status.working { background: var(--clay); }
+.agent-card .avatar .status.review  { background: var(--signal-blue); }
+.agent-card .avatar .status.error   { background: var(--signal-red); }
+
+.agent-card .agent-meta {
+  min-width: 0;
+  overflow: hidden;
+}
+.agent-card .agent-meta .name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg-0);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-card .agent-meta .role {
+  font-size: 11px;
+  color: var(--fg-2);
+}
+.agent-card .agent-meta .task {
+  font-size: 11px;
+  color: var(--fg-1);
+  margin-top: 2px;
+  font-family: var(--font-mono-new);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+}
+.agent-card .spark {
+  font-size: 10px;
+  font-family: var(--font-mono-new);
+  color: var(--fg-2);
+  letter-spacing: 1px;
+}
