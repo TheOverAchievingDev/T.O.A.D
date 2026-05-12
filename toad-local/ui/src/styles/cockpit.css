@@ -1133,6 +1133,127 @@
   overflow: auto;
 }
 
+/* ---------- BottomPanel slot contents (Phase 3a Task 3) ---------- */
+
+/* Output slot — recent agent tool calls. */
+.bp-output {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--font-mono-new);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--fg-1);
+}
+.bp-output-row {
+  display: grid;
+  grid-template-columns: 64px 100px 92px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  padding: 2px 0;
+  white-space: nowrap;
+}
+.bp-output-row .bp-output-time { color: var(--fg-3); }
+.bp-output-row .bp-output-agent { color: var(--clay); font-weight: 500; }
+.bp-output-row .bp-output-tool {
+  color: var(--fg-0);
+  background: var(--bg-2);
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-soft);
+  font-size: 10.5px;
+  width: fit-content;
+}
+.bp-output-row .bp-output-body {
+  color: var(--fg-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bp-output-row.kind-output .bp-output-body { color: var(--signal-green); }
+.bp-output-row.kind-thought .bp-output-body { color: var(--fg-2); font-style: italic; }
+.bp-output-row.kind-system .bp-output-body { color: var(--signal-amber); }
+
+.bp-output-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  height: 100%;
+  min-height: 80px;
+  gap: 4px;
+  color: var(--fg-3);
+  font-family: var(--font-display);
+  padding: 16px;
+}
+.bp-output-empty .mono {
+  font-family: var(--font-mono-new);
+  font-size: 11px;
+  color: var(--fg-2);
+}
+
+/* Validations slot — per-task latest runs. */
+.bp-validations {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  font-family: var(--font-display);
+  font-size: 12px;
+}
+.bp-validations-head,
+.bp-validations-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(4, 84px);
+  gap: 8px;
+  align-items: center;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.bp-validations-head {
+  color: var(--fg-3);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.bp-validations-head .col-kind,
+.bp-validations-row .col-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono-new);
+  font-size: 11px;
+}
+.bp-validations-row .col-task {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.bp-validations-row .task-id {
+  font-family: var(--font-mono-new);
+  font-size: 11px;
+  color: var(--clay);
+  flex: 0 0 auto;
+}
+.bp-validations-row .task-title {
+  color: var(--fg-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bp-validations-row .col-kind .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.bp-validations-row .col-kind .dot.green { background: var(--signal-green); }
+.bp-validations-row .col-kind .dot.red   { background: var(--signal-red); }
+.bp-validations-row .col-kind .dot.idle  { background: var(--fg-3); }
+.bp-validations-row .col-kind .lbl       { color: var(--fg-2); }
+.bp-validations-row .col-kind.passed .lbl { color: var(--signal-green); }
+.bp-validations-row .col-kind.failed .lbl { color: var(--signal-red); }
+
 .cockpit-with-editor {
   display: flex;
   flex-direction: column;

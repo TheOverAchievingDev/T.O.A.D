@@ -15,6 +15,8 @@ import {
 import { PaneSplitter } from './PaneSplitter';
 import { AgentCard } from './AgentCard';
 import { BottomPanel, type BottomPanelTab } from './BottomPanel';
+import { BottomPanelOutput } from './BottomPanelOutput';
+import { BottomPanelValidations } from './BottomPanelValidations';
 import { AgentInboxPanel } from './AgentInboxPanel';
 
 /**
@@ -87,7 +89,7 @@ export interface CockpitWithMeProps {
 
 export function CockpitWithMe({
   team,
-  tasks: _tasks,
+  tasks,
   runtimes,
   messages,
   agentStreams = {},
@@ -369,6 +371,12 @@ export function CockpitWithMe({
             activeTab={bottomPanelTab}
             onChangeTab={(tab) => setTweak('bottomPanelTab', tab)}
             onClose={() => setTweak('showBottomPanel', false)}
+            outputCount={Object.values(agentStreams).reduce((n, arr) => n + arr.length, 0)}
+            outputSlot={<BottomPanelOutput team={team} agentStreams={agentStreams} />}
+            validationsSlot={<BottomPanelValidations tasks={tasks} />}
+            // Phase 3a Task 3 ships Output + Validations slots; Terminal
+            // and Problems land in Phase 5 (xterm wiring + LSP).
+            // BottomPanel's empty-state render kicks in for those slots.
           />
         </PaneSplitter>
       ) : (
