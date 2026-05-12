@@ -1,192 +1,222 @@
-import type { Runtime } from '@/types';
-import type { ProjectEntry } from '@/hooks/useProjects';
+import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Icon } from './Icon';
 
-// Note: plan/quota usage previously rendered as a chip up here, but it
-// was redundant once we surfaced the same info in Settings → Providers
-// and the team-creation modal (where the operator actually chooses
-// which provider to assign). Lives in PlanUsagePanel now.
+/**
+ * Phase 1 Titlebar — four-zone layout below the Menubar.
+ *
+ * Replaces the project-tabs strip + dense global-icon row that used
+ * to live here. Per docs/specs/2026-05-11-ui-re-envisioning-design.md §5:
+ *
+ *   ┌──────────────────────────────────────────────────────────────┐
+ *   │ Symphony / project-pill  ·  [⌘K palette]  ·  [pill][icons]   │
+ *   └──────────────────────────────────────────────────────────────┘
+ *
+ * Three zones:
+ *   - LEFT  : wordmark + project pill (active project context) +
+ *             "new project" plus button.
+ *   - CENTER: command palette trigger with a rotating placeholder
+ *             that teaches what the palette can do.
+ *   - RIGHT : FOR me / WITH me persona pill (wires
+ *             tweaks.developerMode) + theme toggle + ambient icons:
+ *             notifications, runtimes count, account/settings.
+ *
+ * Items intentionally removed from the previous Titlebar:
+ *   - Project tabs strip — heavyweight projects switch via the
+ *     pill's dropdown (Phase 2) or the picker screen.
+ *   - Per-action icons (Approvals, Providers, Repository, Diagnostics)
+ *     — these move to drawers / statusbar / Settings sub-sections per
+ *     spec §3.2. Phase 5+ task list tracks each surface.
+ */
 
-interface TitlebarProps {
+export interface TitlebarProps {
   theme: 'dark' | 'light';
-  runtimes: Runtime[];
-  projects: ProjectEntry[];
-  activeProjectId: string | null;
-  onSelectProject: (id: string) => void;
-  onAddProject: () => void;
-  onCloseProject?: (id: string) => void;
   onToggleTheme: () => void;
-  onCreateTeam: () => void;
-  onOpenProviders: () => void;
-  onOpenNotifs: () => void;
-  onOpenApprovals: () => void;
-  onOpenDiagnostics?: () => void;
-  onToggleTweaks?: () => void;
+
+  /** Persona pill — wires existing tweaks.developerMode. */
+  developerMode: boolean;
+  setDeveloperMode: (v: boolean) => void;
+
+  /** Active project context for the project pill. */
+  activeProjectName: string | null;
+  activeProjectPath?: string | null;
+
+  /** Click on the project pill — Phase 1 routes to the existing
+   *  ProjectPicker screen; Phase 2 replaces with a real popover. */
+  onOpenProjectDropdown: () => void;
+  onAddProject: () => void;
+
+  /** Center palette trigger. */
   onOpenCommandPalette?: () => void;
-  pendingApprovalCount?: number;
+
+  /** Right-side ambient icons. */
+  onOpenNotifs: () => void;
+  onOpenRuntimes: () => void;
+  onOpenAccount: () => void;
+
+  /** Badge counts. */
+  pendingNotifications?: number;
+  liveRuntimes?: number;
+  totalRuntimes?: number;
+
+  /** Optional Tauri window controls slot. Lets the platform glue
+   *  inject minimize/maximize/close at the very right edge. */
+  windowControls?: ReactNode;
 }
 
+/** Rotating placeholders cycled in the command palette trigger.
+ *  Teaches the user what's possible without forcing them to open it. */
+const PLACEHOLDERS: Array<ReactNode> = [
+  <><b>Search anything</b> · run drift · open settings · switch project</>,
+  <><b>Run drift</b> · approve pending · new task · switch project</>,
+  <><b>Open settings</b> · view costs · resume team · new project</>,
+];
+
 export function Titlebar({
-  theme, runtimes, projects, activeProjectId, onSelectProject, onAddProject, onCloseProject,
-  onToggleTheme, onCreateTeam, onOpenProviders, onOpenNotifs,
-  onOpenApprovals, onOpenDiagnostics, onToggleTweaks, onOpenCommandPalette,
-  pendingApprovalCount = 0,
+  theme,
+  onToggleTheme,
+  developerMode,
+  setDeveloperMode,
+  activeProjectName,
+  activeProjectPath,
+  onOpenProjectDropdown,
+  onAddProject,
+  onOpenCommandPalette,
+  onOpenNotifs,
+  onOpenRuntimes,
+  onOpenAccount,
+  pendingNotifications = 0,
+  liveRuntimes = 0,
+  totalRuntimes = 0,
+  windowControls,
 }: TitlebarProps) {
-  const live = runtimes.filter((r) => r.status === 'live').length;
-  const activeProject = projects.find((p) => p.id === activeProjectId) ?? projects[0] ?? null;
+  const [phIndex, setPhIndex] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setPhIndex((i) => (i + 1) % PLACEHOLDERS.length);
+    }, 4200);
+    return () => window.clearInterval(id);
+  }, []);
+
+  // Derive a short path prefix from the absolute project path for the
+  // pill's tertiary context (e.g. "~/projects/" before "harvest").
+  // Pure cosmetic — the dropdown shows the full path.
+  const pathPrefix = formatPathPrefix(activeProjectPath ?? null);
 
   return (
     <div className="titlebar">
-      <div className="titlebar-left">
-        <div className="titlebar-logo">T</div>
-        <div className="titlebar-tabs">
-          {projects.map((p) => {
-            const isActive = p.id === (activeProjectId ?? activeProject?.id);
-            return (
-              <button
-                key={p.id}
-                type="button"
-                className={`tab ${isActive ? 'active' : ''}`}
-                onClick={() => onSelectProject(p.id)}
-                title={p.path}
-              >
-                <span
-                  className="dot"
-                  style={{
-                    background: isActive ? 'var(--clay, #d97757)' : 'var(--fg-dim, rgba(255,255,255,0.3))',
-                  }}
-                />
-                {p.name}
-                {onCloseProject && (
-                  <span
-                    role="button"
-                    aria-label={`Remove ${p.name}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onCloseProject(p.id);
-                    }}
-                    style={{ opacity: 0.45, marginLeft: 4, display: 'inline-flex' }}
-                  >
-                    <Icon name="x" size={11} />
-                  </span>
-                )}
-              </button>
-            );
-          })}
-          <button
-            type="button"
-            className="tab"
-            style={{ color: 'var(--fg-dim)' }}
-            onClick={onAddProject}
-            title="Add project"
-          >
-            <Icon name="plus" size={11} />
-          </button>
+      <div className="title-left">
+        <div className="wordmark">
+          <span className="dot" aria-hidden="true" />
+          Symphony
         </div>
-      </div>
-      <button
-        type="button"
-        className="titlebar-title mono"
-        onClick={onOpenCommandPalette}
-        title="Open command palette (⌘K / Ctrl+K)"
-        style={{
-          background: 'transparent',
-          border: '1px solid var(--border-soft, rgba(255,255,255,0.08))',
-          borderRadius: 6,
-          padding: '3px 10px',
-          color: 'var(--fg-muted, rgba(255,255,255,0.55))',
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          fontSize: 11.5,
-        }}
-      >
-        <Icon name="search" size={11} />
-        <span>
-          Symphony AI{activeProject ? ` · ${activeProject.name}` : ''}
-        </span>
-        <span style={{
-          marginLeft: 8,
-          fontSize: 9.5,
-          padding: '1px 4px',
-          borderRadius: 3,
-          background: 'rgba(255,255,255,0.06)',
-          color: 'var(--fg-dim, rgba(255,255,255,0.4))',
-          letterSpacing: '0.05em',
-        }}>
-          ⌘K
-        </span>
-      </button>
-      <div className="titlebar-right">
+        <span className="title-sep">/</span>
         <button
-          className="runtime-pill"
-          title={`${live} live · ${runtimes.length} total runtimes`}
-          onClick={() => window.dispatchEvent(new CustomEvent('toad:open-runtimes'))}
+          className="project-pill"
+          type="button"
+          onClick={onOpenProjectDropdown}
+          title={activeProjectPath ?? 'Open project picker'}
         >
-          <span className="dot" />
-          <span><span className="num">{live}</span> / {runtimes.length}</span>
-          <span style={{ color: 'var(--fg-dim)' }}>runtimes</span>
+          {pathPrefix && <span className="ctx">{pathPrefix}</span>}
+          <span className="label">{activeProjectName ?? 'no project'}</span>
+          <Icon name="chevronDown" size={12} className="chev" />
         </button>
-        <button className="icon-btn" onClick={onCreateTeam} title="New team"><Icon name="plus" size={14} /></button>
         <button
           className="icon-btn"
-          title={`Approvals (${pendingApprovalCount} pending)`}
-          onClick={onOpenApprovals}
-          style={{ position: 'relative' }}
+          type="button"
+          title="New project"
+          onClick={onAddProject}
         >
-          <Icon name="check" size={14} />
-          {pendingApprovalCount > 0 && (
-            <span
-              style={{
-                position: 'absolute',
-                top: 2,
-                right: 2,
-                minWidth: 12,
-                height: 12,
-                padding: '0 3px',
-                borderRadius: 6,
-                background: 'var(--err)',
-                color: '#fff',
-                fontSize: 8,
-                fontWeight: 700,
-                lineHeight: '12px',
-                textAlign: 'center',
-              }}
-            >
-              {pendingApprovalCount}
+          <Icon name="plus" size={14} />
+        </button>
+      </div>
+
+      <div className="title-center">
+        <button
+          type="button"
+          className="palette"
+          onClick={onOpenCommandPalette}
+          title="Open command palette (⌘K / Ctrl+K)"
+        >
+          <Icon name="search" size={13} />
+          <span className="ph">{PLACEHOLDERS[phIndex]}</span>
+          <span className="k">⌘K</span>
+        </button>
+      </div>
+
+      <div className="title-right">
+        <div className="mode-pill" title="Persona mode">
+          <button
+            type="button"
+            data-active={!developerMode}
+            onClick={() => setDeveloperMode(false)}
+          >
+            FOR me
+          </button>
+          <button
+            type="button"
+            data-active={developerMode}
+            onClick={() => setDeveloperMode(true)}
+          >
+            WITH me
+          </button>
+        </div>
+        <button
+          className="icon-btn"
+          type="button"
+          title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+          onClick={onToggleTheme}
+        >
+          <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={15} />
+        </button>
+        <button
+          className="icon-btn"
+          type="button"
+          title="Notifications"
+          onClick={onOpenNotifs}
+        >
+          <Icon name="bell" size={15} />
+          {pendingNotifications > 0 && (
+            <span className="badge">
+              {pendingNotifications > 99 ? '99+' : pendingNotifications}
             </span>
           )}
         </button>
-        <button className="icon-btn" title="Notifications" onClick={onOpenNotifs} style={{ position: 'relative' }}>
-          <Icon name="bell" size={14} />
-          <span style={{ position: 'absolute', top: 4, right: 4, width: 7, height: 7, borderRadius: '50%', background: 'var(--err)' }} />
-        </button>
-        <button className="icon-btn" title="Members"><Icon name="users" size={14} /></button>
-        <button className="icon-btn" title="Providers" onClick={onOpenProviders}><Icon name="cpu" size={14} /></button>
-        <button className="icon-btn" title="Repository"><Icon name="github" size={14} /></button>
-        <button className="icon-btn" onClick={onToggleTheme} title="Toggle theme">
-          <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={14} />
-        </button>
-        {onOpenDiagnostics && (
-          <button className="icon-btn" title="Diagnostics" onClick={onOpenDiagnostics}>
-            <Icon name="info" size={14} />
-          </button>
-        )}
         <button
           className="icon-btn"
-          title={onToggleTweaks ? 'Toggle tweaks panel' : 'Settings'}
-          onClick={onToggleTweaks}
+          type="button"
+          title={`${liveRuntimes} live · ${totalRuntimes} total runtimes`}
+          onClick={onOpenRuntimes}
         >
-          <Icon name="settings" size={14} />
+          <Icon name="users" size={16} />
+          {totalRuntimes > 0 && (
+            <span className="badge">{liveRuntimes}</span>
+          )}
         </button>
-        <div className="win-controls">
-          <button className="icon-btn"><Icon name="minimize" size={12} /></button>
-          <button className="icon-btn"><Icon name="maxBtn" size={11} /></button>
-          <button className="icon-btn close"><Icon name="close" size={12} /></button>
-        </div>
+        <button
+          className="icon-btn"
+          type="button"
+          title="Account & settings"
+          onClick={onOpenAccount}
+        >
+          <Icon name="settings" size={15} />
+        </button>
+        {windowControls}
       </div>
     </div>
   );
 }
 
+function formatPathPrefix(path: string | null): string {
+  if (!path) return '';
+  // Show just the parent directory name + a trailing slash. Cosmetic
+  // context for the pill so it reads "projects/ harvest" rather than
+  // the full absolute path. The tooltip (title attr) still shows the
+  // full path for users who need it. Phase 2 may upgrade this to a
+  // proper home-relative ~ replacement once a Tauri-side home resolver
+  // is wired.
+  const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '');
+  const parts = normalized.split('/').filter(Boolean);
+  if (parts.length < 2) return '';
+  return `${parts[parts.length - 2]}/`;
+}

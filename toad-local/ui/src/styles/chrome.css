@@ -121,3 +121,205 @@
   color: var(--fg-3);
   padding: 8px 8px 4px;
 }
+
+/* ---------- Titlebar (four-zone) ---------- */
+.titlebar {
+  display: grid;
+  grid-template-columns: 1fr minmax(280px, 520px) 1fr;
+  align-items: center;
+  height: var(--h-titlebar);
+  padding: 0 12px;
+  background: var(--bg-0);
+  border-bottom: 1px solid var(--line-soft);
+  gap: 12px;
+  font-family: var(--font-display);
+  color: var(--fg-1);
+}
+
+.title-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.title-center {
+  display: flex;
+  justify-content: center;
+}
+.title-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+/* Wordmark — clay diamond + Symphony */
+.wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: -0.01em;
+  color: var(--fg-0);
+  padding: 0 4px;
+}
+.wordmark .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--clay);
+  transform: rotate(45deg);
+}
+
+.title-sep {
+  color: var(--fg-3);
+  font-size: 14px;
+  line-height: 1;
+  user-select: none;
+}
+
+/* Project pill — clickable context chip */
+.project-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px 5px 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  color: var(--fg-0);
+  position: relative;
+  cursor: pointer;
+  font-family: inherit;
+}
+.project-pill:hover {
+  background: var(--bg-2);
+  border-color: var(--line-strong);
+}
+.project-pill .ctx {
+  color: var(--fg-2);
+  font-size: 11px;
+  font-family: var(--font-mono-new);
+}
+.project-pill .chev {
+  color: var(--fg-2);
+  margin-left: 2px;
+}
+.project-pill .label {
+  font-weight: 500;
+}
+
+/* Center — command palette trigger with rotating placeholder */
+.palette {
+  width: 100%;
+  max-width: 520px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: var(--fg-2);
+  font-size: 12px;
+  cursor: text;
+  font-family: inherit;
+}
+.palette:hover {
+  border-color: var(--line);
+  background: var(--bg-2);
+}
+.palette .ph {
+  flex: 1;
+  color: var(--fg-2);
+  text-align: left;
+}
+.palette .ph b {
+  color: var(--fg-0);
+  font-weight: 500;
+}
+.palette .k {
+  font-family: var(--font-mono-new);
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-2);
+  color: var(--fg-2);
+  border: 1px solid var(--line-soft);
+}
+
+/* Right side — icon buttons (shared with Menubar, defined here so
+   the badge positioning works against the titlebar background) */
+.titlebar .icon-btn {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  color: var(--fg-1);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.titlebar .icon-btn:hover {
+  background: var(--bg-2);
+  color: var(--fg-0);
+}
+.titlebar .icon-btn[data-active="true"] {
+  background: var(--bg-3);
+  color: var(--fg-0);
+}
+.titlebar .icon-btn .badge {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: 7px;
+  background: var(--clay);
+  color: white;
+  font-size: 9px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  border: 1.5px solid var(--bg-0);
+  font-family: var(--font-mono-new);
+}
+
+/* Persona toggle pill (FOR me / WITH me) */
+.mode-pill {
+  display: inline-flex;
+  gap: 0;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 2px;
+  background: var(--bg-1);
+  margin-right: 6px;
+}
+.mode-pill button {
+  padding: 3px 8px;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--fg-2);
+  border-radius: 4px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
+}
+.mode-pill button[data-active="true"] {
+  background: var(--bg-3);
+  color: var(--fg-0);
+}
+.mode-pill button:hover {
+  color: var(--fg-0);
+}

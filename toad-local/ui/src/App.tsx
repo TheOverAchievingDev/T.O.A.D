@@ -560,23 +560,25 @@ function AppInner() {
       />
       <Titlebar
         theme={tweaks.theme}
-        runtimes={runtimes}
-        projects={projectRegistry.projects}
-        activeProjectId={projectRegistry.activeId}
-        onSelectProject={(id) => {
-          void openRegisteredProject(id);
-        }}
-        onAddProject={() => setAddProjectOpen(true)}
-        onCloseProject={projectRegistry.removeProject}
         onToggleTheme={() => setTweak('theme', tweaks.theme === 'dark' ? 'light' : 'dark')}
-        onCreateTeam={() => setTweak('screen', 'create')}
-        onOpenProviders={() => setTweak('showProviders', true)}
-        onOpenNotifs={() => setTweak('showNotifs', true)}
-        onOpenApprovals={() => setTweak('showApprovals', true)}
-        onOpenDiagnostics={() => setTweak('showDiagnostics', true)}
-        onToggleTweaks={() => setTweak('screen', 'settings')}
+        developerMode={tweaks.developerMode === true}
+        setDeveloperMode={(v) => setTweak('developerMode', v)}
+        activeProjectName={projectRegistry.active?.name ?? null}
+        activeProjectPath={projectRegistry.active?.path ?? null}
+        // Phase 1: clicking the project pill routes to the existing
+        // picker screen. Phase 2 swaps in a real popover dropdown.
+        onOpenProjectDropdown={() => setTweak('screen', 'picker')}
+        onAddProject={() => setAddProjectOpen(true)}
         onOpenCommandPalette={togglePalette}
-        pendingApprovalCount={pendingApprovals}
+        onOpenNotifs={() => setTweak('showNotifs', true)}
+        onOpenRuntimes={() => setTweak('showRuntimes', true)}
+        // Phase 1: account/settings gear routes to Settings. Phase 2
+        // builds an AccountMenu popover with Plan & quota / Theme /
+        // Sign out etc. and routes settings via a sub-action.
+        onOpenAccount={() => setTweak('screen', 'settings')}
+        pendingNotifications={0}
+        liveRuntimes={runtimes.filter((r) => r.status === 'live').length}
+        totalRuntimes={runtimes.length}
       />
 
       {error && (
