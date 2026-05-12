@@ -966,3 +966,103 @@
   background: var(--bg-3);
   color: var(--fg-0);
 }
+
+/* ---------- AgentInboxPanel (WITH-me right panel) ---------- */
+.right-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  width: 100%;
+  background: var(--bg-0);
+  border-left: 1px solid var(--line-soft);
+  font-family: var(--font-display);
+  color: var(--fg-1);
+}
+
+.right-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-1);
+  flex: 0 0 auto;
+}
+
+.right-panel-title {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  font-weight: 600;
+}
+
+.right-panel-picker {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.right-panel-picker-label {
+  font-size: 11px;
+  color: var(--fg-3);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  flex: 0 0 auto;
+}
+.right-panel-picker select {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0 8px;
+  color: var(--fg-0);
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.right-panel-picker select:focus {
+  border-color: var(--clay-line);
+}
+
+.right-panel-close {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  border: 0;
+  background: transparent;
+  color: var(--fg-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.right-panel-close:hover {
+  background: var(--bg-2);
+  color: var(--fg-0);
+}
+
+.right-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.right-panel-body > * {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.right-panel-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--fg-3);
+  font-size: 12px;
+}
