@@ -43,11 +43,11 @@ Finishes Phase 2's deferred items. The persona swap is shipped, but the WITH-me 
   - **Problems slot**: derive from `IdeEditorPane`'s LSP/diagnostics events if available; else show empty state.
   - **Output slot**: tap `agentStreams` and render the most recent 50 tool-call outputs across all agents.
 
-- [ ] **Task 4: Drag-to-reorder FileTabs**
+- [-] **Task 4: Drag-to-reorder FileTabs — DEFERRED**
   - File: `ui/src/components/cockpit/FileTabs.tsx`
-  - HTML5 drag-and-drop on each tab (`draggable={true}` + `onDragStart` / `onDragOver` / `onDrop`).
-  - New `onReorder(paths: string[])` prop fires after drop with the new order.
-  - CockpitWithMe holds the order in `openFiles` state and persists to localStorage.
+  - **Status:** Deferred. Phase 3a Task 2 swapped CockpitWithMe to render the existing IdeEditorPane (which manages its own internal tabs) instead of our FileTabs primitive. FileTabs has no active consumer; adding drag-reorder ships dead-code complexity.
+  - **Revive when:** a future task re-introduces FileTabs as the active editor-tab UI (e.g. to add the in-scope-for chip + drag-reorder on top of a custom editor surface). The Phase 2 commit history preserves the component for that day.
+  - Plan: revisit during Phase 4 or 5 if user demand surfaces; otherwise this task closes on the FileTabs primitive's eventual deletion.
 
 - [ ] **Task 5: Task lifecycle events in FlowTimeline projection**
   - File: `ui/src/components/cockpit/timelineProjection.tsx`
