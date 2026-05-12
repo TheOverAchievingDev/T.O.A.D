@@ -30,6 +30,9 @@
   flex-direction: column;
 }
 
+/* By default the first pane is sized (via inline style from JS) and
+   the second pane flexes. With anchorEnd, the roles swap — the
+   second pane gets the inline size and the first flexes. */
 .pane-splitter-first {
   display: flex;
   min-width: 0;
@@ -42,6 +45,12 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+.pane-splitter-anchor-end > .pane-splitter-first {
+  flex: 1 1 auto;
+}
+.pane-splitter-anchor-end > .pane-splitter-second {
+  flex: 0 0 auto;
 }
 
 /* Divider is invisible at rest, picks up the clay accent on hover/active
@@ -689,4 +698,173 @@
   padding: 8px 0;
   color: var(--fg-3);
   font-size: 12px;
+}
+
+/* ---------- CockpitForMe (FOR-me three-column assembly) ---------- */
+.cockpit-for {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: var(--bg-1);
+}
+.cockpit-for > .pane-splitter {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.cockpit-for-left {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  background: var(--bg-1);
+  border-right: 1px solid var(--line-soft);
+}
+.cockpit-for-left .cockpit-col-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.cockpit-col-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line-soft);
+  font-family: var(--font-display);
+  flex: 0 0 auto;
+}
+.cockpit-col-head h4 {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  font-weight: 600;
+}
+.cockpit-col-sub {
+  font-size: 10.5px;
+  font-family: var(--font-mono-new);
+  color: var(--fg-3);
+}
+
+.cockpit-for-center {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  background: var(--bg-0);
+}
+
+/* Action strip at top of center column */
+.cockpit-action-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line-soft);
+  flex: 0 0 auto;
+  background: var(--bg-1);
+}
+.cockpit-action-strip .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  color: var(--fg-1);
+  font-family: var(--font-display);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.cockpit-action-strip .btn:hover {
+  background: var(--bg-3);
+  color: var(--fg-0);
+}
+.cockpit-action-strip .btn.primary {
+  background: var(--clay-soft);
+  border-color: var(--clay-line);
+  color: var(--clay);
+}
+.cockpit-action-strip .btn.primary:hover {
+  background: var(--clay-soft);
+  color: var(--fg-0);
+}
+.cockpit-action-strip .btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--fg-2);
+}
+.cockpit-action-strip .btn.ghost:hover {
+  background: var(--bg-2);
+  color: var(--fg-0);
+}
+
+/* Reopen banner — sits above the action strip when context present */
+.cockpit-reopen-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--clay-soft);
+  border-bottom: 1px solid var(--clay-line);
+  color: var(--fg-0);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.cockpit-reopen-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.cockpit-reopen-text strong {
+  color: var(--fg-0);
+  font-weight: 600;
+}
+.cockpit-reopen-text code {
+  font-family: var(--font-mono-new);
+  font-size: 11.5px;
+  color: var(--clay);
+}
+.cockpit-reopen-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.cockpit-reopen-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  color: var(--fg-1);
+  font-family: var(--font-display);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.cockpit-reopen-actions .btn.primary {
+  background: var(--clay);
+  border-color: var(--clay);
+  color: #111;
+}
+.cockpit-reopen-actions .btn.primary:hover {
+  background: var(--clay);
+  filter: brightness(1.08);
+}
+.cockpit-reopen-actions .btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--fg-2);
+}
+.cockpit-reopen-actions .btn.ghost:hover {
+  background: var(--bg-2);
+  color: var(--fg-0);
 }
