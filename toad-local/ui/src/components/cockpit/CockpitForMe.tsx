@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Agent, Runtime, Team, UiTask } from '@/types';
 import type { StreamEntry } from '@/utils/agentStream';
 import type { DriftRunResult } from '@/hooks/useDrift';
@@ -7,7 +7,7 @@ import { PaneSplitter } from './PaneSplitter';
 import { AgentCard } from './AgentCard';
 import { FlowTimeline, type TimelineEvent } from './FlowTimeline';
 import { Inspector, type InspectorTab } from './Inspector';
-import { projectTimeline } from './timelineProjection';
+import { projectTimeline, type TaskTransition } from './timelineProjection';
 
 /**
  * Phase 2 CockpitForMe — the calm three-column observation surface
@@ -101,6 +101,46 @@ export function CockpitForMe({
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('task');
   const [bannerDismissed, setBannerDismissed] = useState<boolean>(false);
 
+  // Phase 3a Task 5 — observe task lifecycle transitions via snapshot
+  // delta. Each render compares prev tasks vs current; new rows or
+  // status changes become TaskTransition entries fed to the timeline
+  // projection. Cap at 10 to keep memory bounded.
+  const prevTasksRef = useRef<UiTask[]>(tasks);
+  const [taskTransitions, setTaskTransitions] = useState<TaskTransition[]>([]);
+  useEffect(() => {
+    const prev = prevTasksRef.current;
+    const prevMap = new Map(prev.map((t) => [t.id, t]));
+    const next: TaskTransition[] = [];
+    const at = Date.now();
+    for (const curr of tasks) {
+      const before = prevMap.get(curr.id);
+      if (!before) {
+        // New task created — emit a creation transition.
+        next.push({
+          taskId: curr.id,
+          title: curr.title,
+          fromStatus: null,
+          toStatus: curr.status,
+          agentId: curr.assignee || null,
+          at,
+        });
+      } else if (before.status !== curr.status) {
+        next.push({
+          taskId: curr.id,
+          title: curr.title,
+          fromStatus: before.status,
+          toStatus: curr.status,
+          agentId: curr.assignee || null,
+          at,
+        });
+      }
+    }
+    if (next.length > 0) {
+      setTaskTransitions((existing) => [...next, ...existing].slice(0, 10));
+    }
+    prevTasksRef.current = tasks;
+  }, [tasks]);
+
   // Promote the in-progress task to the default selection if the
   // previous selection vanished (task completed or list refreshed).
   useEffect(() => {
@@ -148,17 +188,19 @@ export function CockpitForMe({
     return m;
   }, [runtimes]);
 
-  // Project timeline events from the agent streams.
+  // Project timeline events from agent streams + drift history + the
+  // task-transition snapshot deltas observed by this component.
   const timelineEvents: TimelineEvent[] = useMemo(
     () =>
       projectTimeline({
         agentStreams,
         agents: team.members,
         driftHistory: drift?.history,
+        taskTransitions,
         activeTask: selectedTask,
-        limit: 7,
+        limit: 8,
       }),
-    [agentStreams, team.members, drift?.history, selectedTask],
+    [agentStreams, team.members, drift?.history, taskTransitions, selectedTask],
   );
 
   // Hero text: "Your team is working on t_42 — bulk subscription quantity"

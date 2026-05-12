@@ -1,7 +1,26 @@
-import type { Agent, UiTask } from '@/types';
+import type { Agent, TaskStatus, UiTask } from '@/types';
 import type { StreamEntry } from '@/utils/agentStream';
 import type { ReactNode } from 'react';
 import type { TimelineEvent, TimelineDot } from './FlowTimeline';
+
+/**
+ * A single task transition observed via snapshot delta (parent
+ * compares prev vs current tasks list). Phase 3a Task 5 keeps this
+ * client-side — no backend changes — at the cost of only surfacing
+ * transitions that happen while the timeline is mounted. Phase 5 can
+ * swap to a backend task_events_list_recent for cross-session history.
+ */
+export interface TaskTransition {
+  taskId: string;
+  title: string;
+  /** null when the task is newly created (no prior status). */
+  fromStatus: TaskStatus | null;
+  toStatus: TaskStatus;
+  /** Agent who likely triggered the transition (from task.assignee). */
+  agentId: string | null;
+  /** Wall-clock ms the parent observed the change. */
+  at: number;
+}
 
 /**
  * Phase 2 timeline projection — turns raw agent stream entries + drift
@@ -26,6 +45,9 @@ export interface TimelineProjectionInput {
   /** Recent drift runs ascending by createdAt (or any order; sorted
    *  internally). Only the last 3 are considered to keep noise down. */
   driftHistory?: Array<{ runId: string; teamScore: number; createdAt: string }>;
+  /** Phase 3a Task 5 — recent task lifecycle transitions observed by
+   *  the parent. Most-recent first. Cap usually 10 (parent decides). */
+  taskTransitions?: TaskTransition[];
   /** Optional current task selection — used to render the hero header
    *  above the timeline. Not part of the event list itself. */
   activeTask?: UiTask | null;
@@ -179,7 +201,7 @@ export function projectTimeline(input: TimelineProjectionInput): TimelineEvent[]
     });
   }
 
-  const streamEvents: TimelineEvent[] = head.map(({ agentId, entry, ts }, idx) => {
+  const streamEvents: Array<TimelineEvent & { _ts: number }> = head.map(({ agentId, entry, ts }, idx) => {
     const name = agentName.get(agentId) ?? agentId;
     const { body, expanded } = bodyForStream(name, entry);
     return {
@@ -188,11 +210,69 @@ export function projectTimeline(input: TimelineProjectionInput): TimelineEvent[]
       dot: dotForStream(entry),
       expanded: idx === 0 ? true : expanded, // First event renders expanded for emphasis
       body,
+      _ts: ts,
     };
   });
 
-  // Merge + cap. Drift events get interleaved by recency in Phase 3;
-  // for Phase 2 we tack them on at the end to avoid date math.
-  const merged = [...streamEvents, ...driftEvents].slice(0, limit);
-  return merged;
+  // Phase 3a Task 5 — task lifecycle events from parent-tracked
+  // snapshot deltas. Each transition becomes a timeline entry; agent
+  // name is resolved from the agents map when available.
+  const lifecycleEvents: Array<TimelineEvent & { _ts: number }> =
+    (input.taskTransitions ?? []).map((t) => {
+      const agentLabel = t.agentId ? (agentName.get(t.agentId) ?? t.agentId) : null;
+      const body = lifecycleBody(t, agentLabel);
+      return {
+        id: `task-${t.taskId}-${t.at}`,
+        when: formatRelative(t.at, now),
+        dot: lifecycleDot(t),
+        body,
+        _ts: t.at,
+      };
+    });
+
+  // Merge all event sources. Sort by recency (descending) so the
+  // operator's eye lands on what just happened. Drop the internal _ts
+  // key on the way out.
+  const driftWithTs = driftEvents.map((e, i) => ({ ...e, _ts: (input.driftHistory?.length ?? 0) * 1000 - i }));
+  const merged: Array<TimelineEvent & { _ts: number }> = [
+    ...streamEvents,
+    ...lifecycleEvents,
+    ...driftWithTs,
+  ];
+  merged.sort((a, b) => b._ts - a._ts);
+  return merged.slice(0, limit).map(({ _ts: _, ...rest }) => rest);
+}
+
+function lifecycleDot(t: TaskTransition): TimelineDot {
+  if (t.fromStatus === null) return 'blue';
+  if (t.toStatus === 'done') return 'green';
+  if (t.toStatus === 'blocked' || t.toStatus === 'rejected') return 'amber';
+  if (t.toStatus === 'review') return 'violet';
+  return 'clay';
+}
+
+function lifecycleBody(t: TaskTransition, agentLabel: string | null): ReactNode {
+  if (t.fromStatus === null) {
+    return (
+      <>
+        {agentLabel ? <span className="agent">{agentLabel}</span> : 'lead'}{' '}
+        created task <span className="file">{t.taskId}</span> — {t.title}.
+      </>
+    );
+  }
+  if (t.toStatus === 'done') {
+    return (
+      <>
+        <span className="file">{t.taskId}</span> done
+        {agentLabel ? <> · finished by <span className="agent">{agentLabel}</span></> : null}.
+      </>
+    );
+  }
+  return (
+    <>
+      <span className="file">{t.taskId}</span>{' '}
+      moved <b>{t.fromStatus}</b> → <b>{t.toStatus}</b>
+      {agentLabel ? <> by <span className="agent">{agentLabel}</span></> : null}.
+    </>
+  );
 }
