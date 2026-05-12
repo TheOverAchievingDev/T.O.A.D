@@ -8,19 +8,22 @@
  *
  * NEW TOKENS COEXIST WITH EXISTING:
  * - Existing components keep using --bg-app / --bg-canvas / --fg /
- *   --fg-muted / etc. from styles.css.
+ *   --fg-muted / --border / --border-soft / --border-strong from
+ *   styles.css.
  * - New chrome components (Menubar / Titlebar / Sidebar / Statusbar)
- *   and Phase 2+ redesigned screens use the --bg-0..4 / --fg-0..3
- *   scale defined here.
+ *   and Phase 2+ redesigned screens use the --bg-0..4 / --fg-0..3 /
+ *   --line / --line-soft / --line-strong scale defined here.
  *
  * Phase 3+ polish may collapse the two sets once every screen is
- * migrated. Until then, both live in :root with no overlap.
+ * migrated. Until then, both live in :root with no overlap (the only
+ * name shared is --clay-soft, which we redefine to a near-identical
+ * oklch — visually equivalent to the existing rgba).
  * ============================================================ */
 
 :root {
   /* ---- Type (mockup) ---- */
   /* Geist is already loaded via the @import in styles.css; JetBrains
-   * Mono is added via <link> in index.html so both are available. */
+   * Mono is loaded via <link> in index.html. */
   --font-display: "Geist", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono-new: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace;
 
@@ -31,26 +34,28 @@
   --bg-3: oklch(0.26 0.007 60);     /* hover */
   --bg-4: oklch(0.30 0.008 60);     /* selected */
 
-  --line-0: oklch(0.30 0.006 60);     /* divider (renamed from --line to avoid collision) */
-  --line-soft-new: oklch(0.25 0.005 60);
-  --line-strong-new: oklch(0.38 0.008 60);
+  --line: oklch(0.30 0.006 60);     /* divider */
+  --line-soft: oklch(0.25 0.005 60);
+  --line-strong: oklch(0.38 0.008 60);
 
   --fg-0: oklch(0.97 0.005 60);     /* primary text */
   --fg-1: oklch(0.82 0.006 60);     /* secondary */
   --fg-2: oklch(0.62 0.006 60);     /* tertiary */
   --fg-3: oklch(0.48 0.005 60);     /* muted */
 
-  /* ---- Accent — clay (same #d97757 as existing) ---- */
-  /* --clay is already in styles.css; we just add the new soft/line
-   * variants the mockup uses without colliding with existing
-   * --clay-soft / --clay-border (which are rgba variants). */
-  --clay-soft-new: oklch(0.66 0.13 42 / 0.16);
-  --clay-line-new: oklch(0.66 0.13 42 / 0.45);
+  /* ---- Accent — clay ---- */
+  /* Base --clay #d97757 is defined in styles.css; we redefine the
+   * soft variant in oklch to match the mockup's exact tint (visually
+   * equivalent to the existing rgba) and add --clay-line (a new
+   * name; existing project uses --clay-border for a different shade). */
+  --clay-soft: oklch(0.66 0.13 42 / 0.16);
+  --clay-line: oklch(0.66 0.13 42 / 0.45);
 
   /* ---- Signals (mockup) ---- */
   /* Existing styles.css has --ok / --warn / --err. The mockup uses
    * named semantics (--green / --amber / --red / --blue / --violet)
-   * with slightly different values. Coexist. */
+   * with slightly different values. Coexist under the --signal-*
+   * prefix so neither set is shadowed. */
   --signal-green:  oklch(0.74 0.14 150);
   --signal-amber:  oklch(0.78 0.14 75);
   --signal-red:    oklch(0.68 0.18 25);
@@ -66,7 +71,7 @@
   /* ---- Chrome dimensions (mockup) ---- */
   /* These drive the CSS Grid layout for the new four-region shell:
    *   menubar / titlebar / main(+sidebar+right+bottom) / statusbar.
-   * Used by Task 6 layout glue. */
+   * Consumed by Task 6 layout glue. */
   --h-menubar: 30px;
   --h-titlebar: 44px;
   --h-statusbar: 24px;
@@ -76,9 +81,6 @@
 }
 
 /* ---- Light palette ---- */
-/* The existing app already has [data-theme="light"] declarations in
- * styles.css for the old token names. These overrides add the new
- * mockup tokens for light mode without touching the old ones. */
 [data-theme="light"] {
   --bg-0: oklch(0.99 0.003 70);
   --bg-1: oklch(0.97 0.004 70);
@@ -86,15 +88,15 @@
   --bg-3: oklch(0.90 0.006 70);
   --bg-4: oklch(0.86 0.008 70);
 
-  --line-0: oklch(0.86 0.006 70);
-  --line-soft-new: oklch(0.90 0.005 70);
-  --line-strong-new: oklch(0.78 0.008 70);
+  --line: oklch(0.86 0.006 70);
+  --line-soft: oklch(0.90 0.005 70);
+  --line-strong: oklch(0.78 0.008 70);
 
   --fg-0: oklch(0.20 0.008 60);
   --fg-1: oklch(0.36 0.008 60);
   --fg-2: oklch(0.52 0.006 60);
   --fg-3: oklch(0.62 0.005 60);
 
-  --clay-soft-new: oklch(0.66 0.13 42 / 0.12);
-  --clay-line-new: oklch(0.66 0.13 42 / 0.55);
+  --clay-soft: oklch(0.66 0.13 42 / 0.12);
+  --clay-line: oklch(0.66 0.13 42 / 0.55);
 }

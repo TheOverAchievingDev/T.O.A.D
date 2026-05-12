@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Titlebar } from '@/components/Titlebar';
+import { Menubar, type MenuAction } from '@/components/Menubar';
 import { SidebarNav, type SidebarKey } from '@/components/SidebarNav';
 import { Workspace } from '@/components/Workspace';
 import { TasksScreen } from '@/components/TasksScreen';
@@ -103,6 +104,10 @@ function AppInner() {
   const [logRuntimeId, setLogRuntimeId] = useState<string | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [reopenContext, setReopenContext] = useState<ReopenContext | null>(null);
+  // Phase 1 — which top-level Menubar menu is currently open (File/Edit/…),
+  // or null when none. Lifted into App.tsx so keyboard shortcuts and other
+  // surfaces could close it; today only the Menubar reads/writes it.
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
   const projectRegistry = useProjects();
   // Single drift polling loop for the whole app — lifted from
   // Workspace + TasksScreen + DriftScreen so we don't triple-poll.
@@ -474,12 +479,85 @@ function AppInner() {
     }
   }
 
+  // Phase 1 — Menubar action dispatcher. Handles toggles that don't
+  // map to screen navigation. Sidebar / bottom / right panel toggles
+  // are wired loosely for now (the underlying panel chrome lands in
+  // Tasks 4–5); devmode is fully wired since the boolean already lives
+  // in tweaks.
+  function handleMenuAction(a: MenuAction) {
+    switch (a) {
+      case 'devmode':
+        setTweak('developerMode', !(tweaks.developerMode === true));
+        return;
+      case 'sidebar':
+        // Phase 1: no real sidebar-visibility tweak yet. Phase 2 wires
+        // a boolean to hide the sidebar (Cmd+B). Until then, no-op so
+        // the menu item exists for muscle memory without misleading.
+        return;
+      case 'bottom':
+        // Bottom panel toggle — surfaced today via tweaks.showBottomPanel
+        // once it exists. Phase 2 (Cockpit redesign) introduces the
+        // panel itself; until then, no-op.
+        return;
+      case 'right':
+        // Right-side Agent Inbox toggle — Phase 2 wires this when the
+        // right panel actually exists.
+        return;
+    }
+  }
+
+  // Phase 1 — keyboard shortcuts for screen jumps + (eventual) panel
+  // toggles. Ctrl/Cmd+1..7 hit Cockpit, Foundry, Code, Tasks, Drift,
+  // Costs, Audit in order; Ctrl/Cmd+, opens Settings. Matches the
+  // Menubar's View menu and the mockup's behavior.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const meta = e.metaKey || e.ctrlKey;
+      if (!meta) return;
+      // Avoid hijacking input fields — let the browser handle ⌘C / ⌘V
+      // etc. inside inputs and the command palette.
+      const tag = (e.target as HTMLElement | null)?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || (e.target as HTMLElement | null)?.isContentEditable) {
+        return;
+      }
+      const map: Record<string, SidebarKey> = {
+        '1': 'workspace',
+        '2': 'foundry',
+        '3': 'code',
+        '4': 'tasks',
+        '5': 'drift',
+        '6': 'costs',
+        // Audit will be its own SidebarKey in Phase 2/3; route to
+        // diagnostics for now to keep the shortcut alive.
+        '7': 'diagnostics',
+        ',': 'settings',
+      };
+      if (map[e.key]) {
+        handleNavSelect(map[e.key]);
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+    // handleNavSelect is stable across renders within this component;
+    // including it in deps would force a re-attach every render with
+    // no benefit. tweaks.* are also accessed indirectly through it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const isOverlayScreen =
     tweaks.screen === 'empty' ||
     tweaks.screen === 'picker';
 
   return (
     <div className="win">
+      <Menubar
+        openMenu={openMenu}
+        setOpenMenu={setOpenMenu}
+        onNav={handleNavSelect}
+        onAction={handleMenuAction}
+        devMode={tweaks.developerMode === true}
+      />
       <Titlebar
         theme={tweaks.theme}
         runtimes={runtimes}

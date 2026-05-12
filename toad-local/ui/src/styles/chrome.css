@@ -1,0 +1,123 @@
+/* ============================================================
+ * Phase 1 chrome styles — Menubar / Titlebar / Sidebar / Statusbar.
+ *
+ * Ported from the Claude Design mockup at
+ *   Reference material/Claude Design Mockup/styles.css
+ * with class names preserved so component code can be ported with
+ * minimal CSS-side changes.
+ *
+ * Imported AFTER tokens.css (which defines --bg-*, --fg-*, --line*,
+ * --clay*, --shadow-pop, --radius-md, --h-menubar, etc.) so every
+ * rule resolves correctly.
+ * ============================================================ */
+
+/* ---------- Menubar ---------- */
+.menubar {
+  display: flex;
+  align-items: stretch;
+  height: var(--h-menubar);
+  background: var(--bg-0);
+  border-bottom: 1px solid var(--line-soft);
+  padding: 0 10px;
+  font-family: var(--font-display);
+  font-size: 12px;
+  user-select: none;
+  position: relative;
+  z-index: 90;
+  color: var(--fg-1);
+}
+
+.menubar-traffic {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding-right: 14px;
+}
+.menubar-traffic span {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--bg-3);
+}
+.menubar-traffic span:nth-child(1) { background: #ff5f57; }
+.menubar-traffic span:nth-child(2) { background: #febc2e; }
+.menubar-traffic span:nth-child(3) { background: #28c840; }
+
+.menubar-item {
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  color: var(--fg-1);
+  cursor: default;
+  border-radius: 4px;
+  margin: 3px 0;
+}
+.menubar-item:hover,
+.menubar-item[data-open="true"] {
+  background: var(--bg-2);
+  color: var(--fg-0);
+}
+
+.menubar-spacer { flex: 1; }
+
+.menubar-title {
+  align-self: center;
+  color: var(--fg-2);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  font-family: var(--font-mono-new);
+}
+
+/* ---------- Menu dropdown popover ---------- */
+.menu-pop {
+  position: absolute;
+  top: calc(var(--h-menubar) - 1px);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+  min-width: 280px;
+  padding: 4px;
+  z-index: 200;
+  font-size: 12px;
+  color: var(--fg-1);
+  font-family: var(--font-display);
+}
+
+.menu-pop .row {
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 8px;
+  border-radius: 4px;
+  color: var(--fg-1);
+  cursor: default;
+}
+.menu-pop .row:hover {
+  background: var(--clay-soft);
+  color: var(--fg-0);
+}
+.menu-pop .row .kbd {
+  color: var(--fg-3);
+  font-family: var(--font-mono-new);
+  font-size: 11px;
+}
+.menu-pop .row .check {
+  color: var(--clay);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.menu-pop .sep {
+  height: 1px;
+  background: var(--line-soft);
+  margin: 4px 6px;
+}
+.menu-pop .head {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  padding: 8px 8px 4px;
+}

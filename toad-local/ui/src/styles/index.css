@@ -8,3 +8,7 @@
 @import './app-shell.css';
 @import './command-palette.css';
 @import './toasts.css';
+/* Phase 1 chrome (Menubar, plus Titlebar/Sidebar/Statusbar as those
+ * land). Imported last so the new chrome's tokens override anything
+ * earlier sheets defined for the same selectors. */
+@import './chrome.css';
