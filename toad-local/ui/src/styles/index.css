@@ -12,3 +12,8 @@
  * land). Imported last so the new chrome's tokens override anything
  * earlier sheets defined for the same selectors. */
 @import './chrome.css';
+/* Phase 2 Cockpit components (PaneSplitter, AgentCard, FlowTimeline,
+ * Inspector, FileTabs, BottomPanel, AgentInboxPanel, CockpitForMe,
+ * CockpitWithMe). Imported after chrome so its layout rules win on
+ * any overlapping selectors. */
+@import './cockpit.css';
