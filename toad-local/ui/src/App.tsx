@@ -609,7 +609,9 @@ function AppInner() {
         <SidebarNav
           active={activeNav}
           onSelect={handleNavSelect}
-          pendingApprovals={pendingApprovals}
+          developerMode={tweaks.developerMode === true}
+          taskCount={tasks.length}
+          driftScore={drift.data?.teamScore ?? null}
         />
 
         <div className="app-main">
