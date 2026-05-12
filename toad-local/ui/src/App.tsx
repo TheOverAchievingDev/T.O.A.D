@@ -30,7 +30,9 @@ import { AuditLogScreen } from '@/components/AuditLogScreen';
 import { DriftScreen } from '@/components/DriftScreen';
 import { FoundryScreen } from '@/components/FoundryScreen';
 import { CodeScreen } from '@/components/CodeScreen';
-import { CockpitScreen } from '@/components/CockpitScreen';
+// Phase 2 retired the old CockpitScreen monolith — its replacement
+// is CockpitScreenV2 below. The file ui/src/components/CockpitScreen.tsx
+// is deleted in this same commit so dead code doesn't linger.
 import { ShortcutsModal } from '@/components/ShortcutsModal';
 import { useShortcutsHotkey } from '@/hooks/useShortcutsHotkey';
 import {
