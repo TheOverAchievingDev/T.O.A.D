@@ -1,5 +1,24 @@
 # Symphony AI — Future ideas
 
+> **🚨 PRE-ROLLOUT BLOCKER — Product rename required**
+>
+> "Symphony" is already taken in the AI / dev-tools space (multiple products use the name, including at least one in the orchestration adjacent niche). Before any public rollout — landing page, social, store listing, "Symphony Cloud" build — we need a real naming workstream. This is NOT a quick brainstorm; it shapes:
+>
+> - The wordmark + clay diamond in the Titlebar (currently `<dot> Symphony`)
+> - The CLI binary name + `symphony.app` desktop entry
+> - The MCP server identifiers + tool namespaces
+> - The directory + project layout (`toad-local/` → ???; we already deprecated TOAD-the-name once)
+> - The default config dir (`~/.symphony/`)
+> - The `FUTURE-IDEAS.md` references throughout this doc + spec headers
+> - Domain registration + trademark availability check
+>
+> A dedicated brainstorming session should produce: short list of candidates → trademark check → community gut-check → final pick → migration plan (rename is a meaningful diff across the whole codebase). Sequencing: do this BEFORE Phase 4 discoverability ships, because the first-time-on-screen cards will hard-code the name in too many places to want a second rename.
+>
+> Past name lineage worth preserving in the brainstorm context: project started as TOAD ("multi-CLI agent IDE"), rebranded to Symphony AI mid-development for the orchestration metaphor (many agents, one conductor). The clay accent color (#d97757) is independent of either name and can stay.
+
+---
+
+
 A short, opinionated list of directions Symphony might grow into. Not a roadmap, not a commitment — a place to capture ideas before they're lost, with enough rationale that someone picking it up later (you, me, a future contributor) understands the why.
 
 ## Power-user mode: "AI builds it WITH me" vs "AI builds it FOR me"
