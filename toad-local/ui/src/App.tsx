@@ -480,37 +480,91 @@ function AppInner() {
     }
   }
 
-  // Phase 1 — Menubar action dispatcher. Handles toggles that don't
-  // map to screen navigation. Sidebar / bottom / right panel toggles
-  // are wired loosely for now (the underlying panel chrome lands in
-  // Tasks 4–5); devmode is fully wired since the boolean already lives
-  // in tweaks.
+  // Phase 2 Task 3 — full Menubar action dispatcher. All four panel
+  // toggles wire to real tweaks; Run menu items wire to the existing
+  // handlers where they exist, or stub with a helpful console.warn
+  // where the real handler belongs to a screen (Validations, End Team,
+  // Foundry Refinement) that hasn't yet exposed it as a top-level API.
   function handleMenuAction(a: MenuAction) {
     switch (a) {
       case 'devmode':
         setTweak('developerMode', !(tweaks.developerMode === true));
         return;
       case 'sidebar':
-        // Phase 1: no real sidebar-visibility tweak yet. Phase 2 wires
-        // a boolean to hide the sidebar (Cmd+B). Until then, no-op so
-        // the menu item exists for muscle memory without misleading.
+        setTweak('showSidebar', !(tweaks.showSidebar !== false));
         return;
       case 'bottom':
-        // Bottom panel toggle — surfaced today via tweaks.showBottomPanel
-        // once it exists. Phase 2 (Cockpit redesign) introduces the
-        // panel itself; until then, no-op.
+        setTweak('showBottomPanel', !(tweaks.showBottomPanel !== false));
         return;
       case 'right':
-        // Right-side Agent Inbox toggle — Phase 2 wires this when the
-        // right panel actually exists.
+        setTweak('showRightPanel', !(tweaks.showRightPanel === true));
+        return;
+      case 'team:resume': {
+        // Reuses the same team_launch path the Cockpit's Resume Team
+        // button uses (App.tsx wires it on the CockpitScreen prop).
+        // From the menu we don't have the reopenContext snapshot, so
+        // we use whatever team the user is currently looking at.
+        const teamId = team.name || activeTeamId;
+        if (!teamId) {
+          // eslint-disable-next-line no-console
+          console.warn('[menu] team:resume — no active team to resume');
+          return;
+        }
+        void callToadApi({
+          actor: { teamId, agentId: 'ui-client', role: 'human' },
+          method: 'team_launch',
+          args: { teamId },
+          idempotencyKey: `menu-resume-${teamId}-${Date.now()}`,
+        })
+          .then(() => refresh())
+          .catch((err) => {
+            // eslint-disable-next-line no-console
+            console.warn('[menu] team_launch failed:', err);
+          });
+        return;
+      }
+      case 'team:pause':
+        // team_pause MCP method isn't wired today — stub with a hint
+        // for the operator. Phase 3 polish adds the real handler.
+        // eslint-disable-next-line no-console
+        console.warn('[menu] Pause Team — coming in Phase 3 (team_pause MCP method not yet exposed)');
+        return;
+      case 'team:end':
+        // Destructive — needs a confirm dialog. Phase 3 wires the real
+        // tear-down via team_delete + confirmation modal.
+        // eslint-disable-next-line no-console
+        console.warn('[menu] End Team — coming in Phase 3 (destructive action needs confirm UX)');
+        return;
+      case 'drift:run':
+        // Manual drift trigger — reuses the existing drift.refresh()
+        // path that the Drift screen's Refresh button uses.
+        void drift.refresh();
+        return;
+      case 'validations:run':
+        // Validations need the active task's id, which lives in the
+        // Cockpit's selectedTask state. Phase 2c (CockpitWithMe) will
+        // wire a bus from this menu to the active validation runner.
+        // eslint-disable-next-line no-console
+        console.warn('[menu] Run Validations on Active Task — coming in Phase 2c');
+        return;
+      case 'foundry:refine':
+        // Foundry refinement passes are per-session; the menu needs to
+        // know which session is "active" which is a Phase 3 IA decision.
+        // eslint-disable-next-line no-console
+        console.warn('[menu] Trigger Foundry Refinement — coming in Phase 3');
+        return;
+      case 'approvals:open':
+        setTweak('showApprovals', true);
         return;
     }
   }
 
-  // Phase 1 — keyboard shortcuts for screen jumps + (eventual) panel
-  // toggles. Ctrl/Cmd+1..7 hit Cockpit, Foundry, Code, Tasks, Drift,
-  // Costs, Audit in order; Ctrl/Cmd+, opens Settings. Matches the
-  // Menubar's View menu and the mockup's behavior.
+  // Phase 1 + Phase 2 Task 3 — keyboard shortcuts for screen jumps +
+  // panel toggles. Ctrl/Cmd+1..7 hit Cockpit, Foundry, Code, Tasks,
+  // Drift, Costs, Audit in order; Ctrl/Cmd+, opens Settings; Ctrl+B
+  // toggles the sidebar; Ctrl+J toggles the bottom panel; Ctrl+Alt+I
+  // toggles the right Agent Inbox panel. Matches the Menubar's View
+  // menu and the mockup's behavior.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey;
@@ -519,6 +573,24 @@ function AppInner() {
       // etc. inside inputs and the command palette.
       const tag = (e.target as HTMLElement | null)?.tagName?.toLowerCase();
       if (tag === 'input' || tag === 'textarea' || (e.target as HTMLElement | null)?.isContentEditable) {
+        return;
+      }
+      // Panel toggles first — these take precedence over screen jumps
+      // because Ctrl+B / Ctrl+J / Ctrl+Alt+I never collide with the
+      // digit / comma jumps.
+      if (e.key === 'b' && !e.altKey) {
+        e.preventDefault();
+        handleMenuAction('sidebar');
+        return;
+      }
+      if (e.key === 'j' && !e.altKey) {
+        e.preventDefault();
+        handleMenuAction('bottom');
+        return;
+      }
+      if (e.key === 'i' && e.altKey) {
+        e.preventDefault();
+        handleMenuAction('right');
         return;
       }
       const map: Record<string, SidebarKey> = {
@@ -540,9 +612,9 @@ function AppInner() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-    // handleNavSelect is stable across renders within this component;
-    // including it in deps would force a re-attach every render with
-    // no benefit. tweaks.* are also accessed indirectly through it.
+    // handleNavSelect + handleMenuAction are stable within this
+    // component; including them in deps would force a re-attach every
+    // render with no benefit. tweaks.* are accessed indirectly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -607,13 +679,15 @@ function AppInner() {
       )}
 
       <div className="app-body">
-        <SidebarNav
-          active={activeNav}
-          onSelect={handleNavSelect}
-          developerMode={tweaks.developerMode === true}
-          taskCount={tasks.length}
-          driftScore={drift.data?.teamScore ?? null}
-        />
+        {tweaks.showSidebar !== false && (
+          <SidebarNav
+            active={activeNav}
+            onSelect={handleNavSelect}
+            developerMode={tweaks.developerMode === true}
+            taskCount={tasks.length}
+            driftScore={drift.data?.teamScore ?? null}
+          />
+        )}
 
         <div className="app-main">
           {/* Primary screen — workspace or one of the alt screens. */}

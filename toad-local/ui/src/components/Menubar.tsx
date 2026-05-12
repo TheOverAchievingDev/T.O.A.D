@@ -33,10 +33,19 @@ import { Icon } from './Icon';
  */
 
 export type MenuAction =
-  | 'sidebar'      // toggle left sidebar visibility
-  | 'bottom'       // toggle bottom panel
-  | 'right'        // toggle right-side Agent Inbox
-  | 'devmode';     // toggle developer mode
+  // Panel toggles (View menu)
+  | 'sidebar'
+  | 'bottom'
+  | 'right'
+  | 'devmode'
+  // Team operations (Run menu)
+  | 'team:resume'
+  | 'team:pause'
+  | 'team:end'
+  | 'drift:run'
+  | 'validations:run'
+  | 'foundry:refine'
+  | 'approvals:open';
 
 type MenuItemKind = 'row' | 'sep' | 'head';
 
@@ -136,15 +145,15 @@ const MENUS: Record<string, MenuItem[]> = {
     // Symphony deviation — Cursor's Run is a debugger UI; ours is
     // Symphony team operations because agents do the work.
     { kind: 'head', label: 'Team' },
-    { kind: 'row', label: 'Start / Resume Team', k: 'F5' },
-    { kind: 'row', label: 'Pause Team', k: '⇧F5' },
+    { kind: 'row', label: 'Start / Resume Team', k: 'F5', action: 'team:resume' },
+    { kind: 'row', label: 'Pause Team', k: '⇧F5', action: 'team:pause' },
     { kind: 'sep' },
-    { kind: 'row', label: 'Run Drift Check', k: '⌘⇧D' },
-    { kind: 'row', label: 'Run Validations on Active Task', k: '⌘⇧V' },
-    { kind: 'row', label: 'Trigger Foundry Refinement Pass' },
+    { kind: 'row', label: 'Run Drift Check', k: '⌘⇧D', action: 'drift:run' },
+    { kind: 'row', label: 'Run Validations on Active Task', k: '⌘⇧V', action: 'validations:run' },
+    { kind: 'row', label: 'Trigger Foundry Refinement Pass', action: 'foundry:refine' },
     { kind: 'sep' },
-    { kind: 'row', label: 'Approve Pending…', k: '⌘⇧A' },
-    { kind: 'row', label: 'End Team' },
+    { kind: 'row', label: 'Approve Pending…', k: '⌘⇧A', action: 'approvals:open' },
+    { kind: 'row', label: 'End Team', action: 'team:end' },
   ],
   Terminal: [
     { kind: 'row', label: 'New Terminal', k: '⌃⇧`' },
