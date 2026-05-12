@@ -868,3 +868,101 @@
   background: var(--bg-2);
   color: var(--fg-0);
 }
+
+/* ---------- FileTabs (Cursor-style tab strip above the editor) ---------- */
+.file-tabs {
+  display: flex;
+  align-items: stretch;
+  height: 36px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-0);
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex: 0 0 auto;
+}
+.file-tabs::-webkit-scrollbar { display: none; }
+.file-tabs-empty {
+  align-items: center;
+  padding: 0 14px;
+  color: var(--fg-3);
+  font-size: 11.5px;
+  font-family: var(--font-display);
+}
+.file-tabs-hint { letter-spacing: 0.02em; }
+
+.file-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 14px;
+  font-family: var(--font-mono-new);
+  font-size: 11.5px;
+  color: var(--fg-1);
+  border-right: 1px solid var(--line-soft);
+  position: relative;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+.file-tab:hover { background: var(--bg-2); }
+.file-tab[data-active="true"] {
+  background: var(--bg-1);
+  color: var(--fg-0);
+}
+.file-tab[data-active="true"]::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1.5px;
+  background: var(--clay);
+}
+.file-tab[data-pinned="true"] .file-tab-label {
+  font-weight: 600;
+}
+
+.file-tab .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--clay);
+  flex: 0 0 auto;
+}
+
+.file-tab-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+
+.file-tab .scope {
+  font-size: 9px;
+  font-family: var(--font-display);
+  color: var(--clay);
+  padding: 1px 5px;
+  border: 1px solid var(--clay-line);
+  border-radius: 100px;
+  background: var(--clay-soft);
+  letter-spacing: 0.02em;
+}
+
+.file-tab .close {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  border: 0;
+  background: transparent;
+  color: var(--fg-3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  margin-left: 2px;
+  margin-right: -4px;
+}
+.file-tab .close:hover {
+  background: var(--bg-3);
+  color: var(--fg-0);
+}
