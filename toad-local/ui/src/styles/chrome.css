@@ -431,3 +431,82 @@
   color: var(--fg-3);
   letter-spacing: 0.02em;
 }
+
+/* ---------- Statusbar (bottom ambient bar) ---------- */
+.statusbar {
+  display: flex;
+  align-items: center;
+  height: var(--h-statusbar);
+  background: var(--bg-0);
+  border-top: 1px solid var(--line-soft);
+  padding: 0 12px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  color: var(--fg-1);
+  gap: 0;
+  user-select: none;
+}
+/* Each clickable segment renders as a button; non-clickable as a div.
+ * Both consume .status-seg so layout is consistent. */
+.statusbar .status-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  height: 100%;
+  cursor: pointer;
+  border: 0;
+  background: transparent;
+  border-right: 1px solid var(--line-soft);
+  color: var(--fg-1);
+  font-family: inherit;
+  font-size: inherit;
+}
+.statusbar .status-seg:first-child { padding-left: 0; }
+.statusbar .status-seg:hover {
+  background: var(--bg-2);
+  color: var(--fg-0);
+}
+/* Non-button segments (display-only) — drop cursor and click affordance. */
+.statusbar div.status-seg {
+  cursor: default;
+}
+.statusbar div.status-seg:hover {
+  background: transparent;
+  color: var(--fg-1);
+}
+
+.statusbar .status-seg .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--signal-green);
+}
+.statusbar .status-seg.warn .dot { background: var(--signal-amber); }
+.statusbar .status-seg.bad  .dot { background: var(--signal-red); }
+
+.statusbar .status-seg .num {
+  font-family: var(--font-mono-new);
+}
+.statusbar .status-seg .muted {
+  color: var(--fg-3);
+}
+
+.status-spacer { flex: 1; }
+.status-right {
+  display: flex;
+  height: 100%;
+}
+.status-right .status-seg {
+  border-right: 0;
+  border-left: 1px solid var(--line-soft);
+}
+
+/* Pulse — applied to the drift dot when status != healthy. */
+@keyframes symphony-statusbar-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+.statusbar .dot.pulse {
+  animation: symphony-statusbar-pulse 2s ease-in-out infinite;
+}

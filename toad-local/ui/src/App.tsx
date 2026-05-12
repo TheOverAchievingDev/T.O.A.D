@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Titlebar } from '@/components/Titlebar';
 import { Menubar, type MenuAction } from '@/components/Menubar';
 import { SidebarNav, type SidebarKey } from '@/components/SidebarNav';
+import { Statusbar } from '@/components/Statusbar';
 import { Workspace } from '@/components/Workspace';
 import { TasksScreen } from '@/components/TasksScreen';
 import { CreateTeamModal } from '@/components/CreateTeamModal';
@@ -851,6 +852,31 @@ function AppInner() {
           )}
         </div>
       </div>
+
+      <Statusbar
+        driftScore={drift.data?.teamScore ?? null}
+        driftStatus={(() => {
+          // Drift's DriftRunResult uses healthy/watch/warning/critical
+          // while the Statusbar uses healthy/watch/breach. Warning and
+          // critical both signal "bad enough to interrupt"; collapse
+          // them to 'breach' so the pulse + red dot fire.
+          const s = drift.data?.status;
+          if (s === 'critical' || s === 'warning') return 'breach';
+          if (s === 'watch') return 'watch';
+          return 'healthy';
+        })()}
+        onOpenDrift={() => setTweak('screen', 'drift')}
+        liveRuntimes={runtimes.filter((r) => r.status === 'live').length}
+        totalRuntimes={runtimes.length}
+        onOpenRuntimes={() => setTweak('showRuntimes', true)}
+        costToday={null}
+        onOpenCosts={() => setTweak('screen', 'costs')}
+        gitBranch="main"
+        gitClean
+        developerMode={tweaks.developerMode === true}
+        pendingApprovals={pendingApprovals}
+        onOpenApprovals={() => setTweak('showApprovals', true)}
+      />
 
       {setupDialog && (
         <SetupProjectDialog
