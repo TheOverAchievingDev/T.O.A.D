@@ -401,6 +401,52 @@ input, textarea, select { font-family: inherit; }
   opacity: 0.6;
 }
 
+/* Phase 3b Task 8 — Tasks saved-filter chip row. Sits above the
+ * inline-create row; chips combine with the search box (AND) before
+ * grouping. */
+.tasks-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.tasks-filter-chips .filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-soft, var(--line-soft));
+  background: var(--bg-panel, var(--bg-1));
+  color: var(--fg-muted, var(--fg-2));
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+.tasks-filter-chips .filter-chip:hover {
+  color: var(--fg, var(--fg-0));
+  border-color: var(--border, var(--line));
+}
+.tasks-filter-chips .filter-chip.active {
+  background: var(--clay-soft);
+  color: var(--clay);
+  border-color: var(--clay);
+}
+.tasks-filter-chips .filter-chip-count {
+  font-family: var(--font-mono, var(--font-mono-new));
+  font-size: 10.5px;
+  background: var(--bg-input, var(--bg-2));
+  color: var(--fg-dim, var(--fg-3));
+  padding: 1px 6px;
+  border-radius: 8px;
+  letter-spacing: 0.02em;
+}
+.tasks-filter-chips .filter-chip.active .filter-chip-count {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--clay);
+}
+
 .ws-side {
   background: var(--bg-app);
   border-left: 1px solid var(--border-soft);

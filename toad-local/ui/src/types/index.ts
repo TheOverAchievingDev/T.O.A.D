@@ -206,6 +206,9 @@ export interface Tweaks {
   /** Phase 3b — Tasks screen group-by selector. Persists so the
    *  operator returns to the same view. */
   tasksGroupBy: 'status' | 'assignee' | 'type' | 'risk';
+  /** Phase 3b Task 8 — saved filter chip applied on top of grouping.
+   *  'all' = no filter; default. */
+  tasksFilter: 'all' | 'active' | 'needsApproval' | 'blocked' | 'review';
   /** Phase 2 right-panel agent selection — which agent the Agent Inbox
    *  is currently talking to. null = use the lead. Persists across
    *  sessions so the operator returns to the same conversation. */

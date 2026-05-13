@@ -26,6 +26,7 @@ export const TWEAK_DEFAULTS: Tweaks = {
   rightPanelAgent: null,
   // Phase 3b — default to status (the original Kanban grouping).
   tasksGroupBy: 'status',
+  tasksFilter: 'all',
   developerMode: false,
   firstRunComplete: false,
 };

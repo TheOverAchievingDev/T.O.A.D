@@ -8,6 +8,7 @@ import { DriftBadge } from './DriftBadge';
 
 type TasksView = 'kanban' | 'list';
 export type TasksGroupBy = 'status' | 'assignee' | 'type' | 'risk';
+export type TasksFilter = 'all' | 'active' | 'needsApproval' | 'blocked' | 'review';
 
 interface TasksScreenProps {
   team: Team;
@@ -28,6 +29,9 @@ interface TasksScreenProps {
    *  Returns a promise so the input can show a brief "Adding…" state.
    *  When undefined, the inline-create row is hidden. */
   onInlineCreate?: (subject: string) => Promise<void>;
+  /** Phase 3b Task 8 — saved filter chip applied on top of grouping. */
+  filter?: TasksFilter;
+  onChangeFilter?: (next: TasksFilter) => void;
 }
 
 const KANBAN_COLS: { key: TaskStatus; label: string; icon: IconName }[] = [
@@ -117,6 +121,25 @@ const GROUP_BY_OPTIONS: Array<{ id: TasksGroupBy; label: string }> = [
   { id: 'risk',     label: 'Risk' },
 ];
 
+// Phase 3b Task 8 — saved-filter chip definitions. Each chip carries
+// a predicate; chips combine with the search query (AND) before
+// grouping kicks in.
+const FILTER_CHIPS: Array<{ id: TasksFilter; label: string; predicate: (t: UiTask) => boolean }> = [
+  { id: 'all',           label: 'All',             predicate: () => true },
+  { id: 'active',        label: 'Active',          predicate: (t) => t.status !== 'done' && t.status !== 'rejected' },
+  { id: 'needsApproval', label: 'Needs approval',  predicate: (t) => t.requiresHumanApproval === true && t.humanApproved !== true },
+  { id: 'blocked',       label: 'Blocked',         predicate: (t) => t.status === 'blocked' },
+  { id: 'review',        label: 'In review',       predicate: (t) => t.status === 'review' },
+];
+
+function chipCountFor(chip: TasksFilter, tasks: UiTask[]): number {
+  const def = FILTER_CHIPS.find((c) => c.id === chip);
+  if (!def) return 0;
+  let n = 0;
+  for (const t of tasks) if (def.predicate(t)) n++;
+  return n;
+}
+
 export function TasksScreen({
   team,
   tasks,
@@ -126,6 +149,8 @@ export function TasksScreen({
   groupBy = 'status',
   onChangeGroupBy,
   onInlineCreate,
+  filter = 'all',
+  onChangeFilter,
 }: TasksScreenProps) {
   const [view, setView] = useState<TasksView>('kanban');
   const [query, setQuery] = useState('');
@@ -156,13 +181,20 @@ export function TasksScreen({
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return tasks;
-    return tasks.filter((t) =>
-      t.id.toLowerCase().includes(q)
-      || t.title.toLowerCase().includes(q)
-      || t.assignee.toLowerCase().includes(q),
-    );
-  }, [tasks, query]);
+    // Phase 3b Task 8 — apply saved-filter chip predicate first, then
+    // the search query. Chip predicates are constant-time per task;
+    // query is a per-character compare against id/title/assignee.
+    const chipDef = FILTER_CHIPS.find((c) => c.id === filter) ?? FILTER_CHIPS[0];
+    return tasks.filter((t) => {
+      if (!chipDef.predicate(t)) return false;
+      if (!q) return true;
+      return (
+        t.id.toLowerCase().includes(q)
+        || t.title.toLowerCase().includes(q)
+        || t.assignee.toLowerCase().includes(q)
+      );
+    });
+  }, [tasks, query, filter]);
 
   // Phase 3b Task 6 — dynamic grouping. Columns depend on the selected
   // mode; bucket population is uniform via groupKeyForTask. The kanban
@@ -247,6 +279,33 @@ export function TasksScreen({
       </div>
 
       <div className="ws-main-body">
+        {/* Phase 3b Task 8 — saved-filter chip row. Operators flip
+            between "the universe of tasks" lenses without leaving
+            the screen. Counts on each chip update as the tasks list
+            changes. */}
+        {onChangeFilter && tasks.length > 0 && (
+          <div className="tasks-filter-chips">
+            {FILTER_CHIPS.map((chip) => {
+              const count = chipCountFor(chip.id, tasks);
+              // Hide zero-count chips (other than 'all') so the row
+              // stays compact on small teams.
+              if (chip.id !== 'all' && count === 0) return null;
+              const active = filter === chip.id;
+              return (
+                <button
+                  key={chip.id}
+                  type="button"
+                  className={`chip filter-chip${active ? ' active' : ''}`}
+                  onClick={() => onChangeFilter(chip.id)}
+                >
+                  {chip.label}
+                  <span className="filter-chip-count">{count}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {/* Phase 3b Task 7 — inline-create input pinned to the top of
             the body. Quick path for "title only" task creation; the
             full TaskCreationModal (via onCreateTask, the header's

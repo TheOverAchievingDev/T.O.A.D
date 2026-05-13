@@ -744,6 +744,8 @@ function AppInner() {
               perTaskDrift={perTaskDrift}
               groupBy={tweaks.tasksGroupBy ?? 'status'}
               onChangeGroupBy={(next) => setTweak('tasksGroupBy', next)}
+              filter={tweaks.tasksFilter ?? 'all'}
+              onChangeFilter={(next) => setTweak('tasksFilter', next)}
               onInlineCreate={async (subject) => {
                 // Phase 3b Task 7 — minimum-viable task creation. Full
                 // form lives in TaskCreationModal (the header "+" button).
