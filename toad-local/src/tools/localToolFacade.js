@@ -1331,6 +1331,29 @@ export class LocalToolFacade {
           results.push({ runtimeId, agentId: member.agentId, status: 'already_running' });
           continue;
         }
+        // Stale-runtime cleanup (Bug 4 from 2026-05-12 triage). The registry
+        // row says `running` but no in-process adapter exists, which means
+        // the sidecar restarted while the row was alive — and the old
+        // child process is gone. Leaving the row marked `running` keeps
+        // the §13 stuck-runtime monitor flagging it, which surfaces as
+        // "stuck runtime" toasts in the UI right when the operator clicks
+        // Resume team. Mark it stopped before we re-spawn so the monitor
+        // sees a clean slate.
+        if (typeof this.runtimeRegistry?.markRuntimeStopped === 'function') {
+          try {
+            this.runtimeRegistry.markRuntimeStopped({
+              runtimeId,
+              status: 'stopped',
+              exitCode: null,
+              signal: null,
+              stoppedAt: new Date().toISOString(),
+            });
+          } catch {
+            // Best-effort — re-spawn proceeds either way. A failure to
+            // clear the registry row only means we'll briefly see a
+            // duplicate stuck-runtime toast; not worth blocking launch.
+          }
+        }
       }
       try {
         const launchInput = {

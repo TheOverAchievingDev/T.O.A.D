@@ -2140,6 +2140,7 @@ test('LocalToolFacade rejects team_* commands when no teamConfigRegistry is conf
 function createTeamLifecycleFacade({ teamRuntimes = [], adapters = new Map() } = {}) {
   const launches = [];
   const stops = [];
+  const markedStopped = [];
   const registry = new (class {
     teams = new Map();
     registerTeam(config) { this.teams.set(config.teamId, config); }
@@ -2154,6 +2155,11 @@ function createTeamLifecycleFacade({ teamRuntimes = [], adapters = new Map() } =
       return teamId ? all.filter((r) => r.teamId === teamId) : all;
     },
     getRuntime(runtimeId) { return this.runtimes.get(runtimeId) || null; },
+    markRuntimeStopped(input) {
+      markedStopped.push(input);
+      const r = this.runtimes.get(input.runtimeId);
+      if (r) r.status = input.status || 'stopped';
+    },
   };
   const facade = new LocalToolFacade({
     broker: new InMemoryBroker(),
@@ -2178,7 +2184,7 @@ function createTeamLifecycleFacade({ teamRuntimes = [], adapters = new Map() } =
       return Promise.resolve({ runtimeId: input.runtimeId, status: 'stopped' });
     },
   });
-  return { facade, registry, runtimeRegistry, launches, stops };
+  return { facade, registry, runtimeRegistry, launches, stops, markedStopped };
 }
 
 test('LocalToolFacade team_launch launches every member with derived runtime IDs', async () => {
@@ -2271,6 +2277,41 @@ test('LocalToolFacade team_launch relaunches stale running rows with no live ada
   assert.equal(launches[0].runtimeId, 'runtime-team-alpha-lead');
   assert.equal(launches[0].prompt, 'Start after restart.');
   assert.equal(result.members[0].status, 'starting');
+});
+
+test('LocalToolFacade team_launch marks stale running rows stopped before re-launching (Bug 4)', async () => {
+  // Regression for the bug where pressing "Resume team" after a sidecar
+  // restart left the stale registry row marked 'running'. The §13 stuck-
+  // runtime monitor kept seeing it as alive-but-silent and fired a
+  // "stuck runtime" toast right as the operator hit Resume — confusing
+  // because the new spawn was succeeding in the background.
+  const { facade, registry, launches, markedStopped } = createTeamLifecycleFacade({
+    teamRuntimes: [
+      { runtimeId: 'runtime-team-alpha-lead', teamId: 'team-alpha', agentId: 'lead', status: 'running' },
+    ],
+  });
+  registry.registerTeam(new (await import('../src/team/teamConfig.js')).TeamConfig({
+    teamId: 'team-alpha',
+    lead: { agentId: 'lead' },
+    teammates: [],
+  }));
+
+  await facade.execute({
+    commandName: COMMANDS.TEAM_LAUNCH,
+    idempotencyKey: 'team-launch-stale-clear',
+    actor: { teamId: 'team-alpha', agentId: 'operator' },
+    args: { teamId: 'team-alpha' },
+  });
+
+  // The stale row should have been marked stopped BEFORE the relaunch
+  // so the stuck-runtime monitor's next tick sees status='stopped' and
+  // doesn't flag it.
+  assert.equal(markedStopped.length, 1, 'stale runtime should be marked stopped exactly once');
+  assert.equal(markedStopped[0].runtimeId, 'runtime-team-alpha-lead');
+  assert.equal(markedStopped[0].status, 'stopped');
+  // And the relaunch should still happen.
+  assert.equal(launches.length, 1);
+  assert.equal(launches[0].runtimeId, 'runtime-team-alpha-lead');
 });
 
 test('LocalToolFacade team_launch records per-member failures without aborting the rest', async () => {
