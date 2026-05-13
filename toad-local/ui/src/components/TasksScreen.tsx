@@ -22,6 +22,12 @@ interface TasksScreenProps {
    *  callers that haven't been updated yet. */
   groupBy?: TasksGroupBy;
   onChangeGroupBy?: (next: TasksGroupBy) => void;
+  /** Phase 3b Task 7 — inline-create handler. Receives the typed
+   *  subject and is expected to call task_create with sensible
+   *  defaults (type=feature, role=developer, priority=medium).
+   *  Returns a promise so the input can show a brief "Adding…" state.
+   *  When undefined, the inline-create row is hidden. */
+  onInlineCreate?: (subject: string) => Promise<void>;
 }
 
 const KANBAN_COLS: { key: TaskStatus; label: string; icon: IconName }[] = [
@@ -119,9 +125,30 @@ export function TasksScreen({
   perTaskDrift = {},
   groupBy = 'status',
   onChangeGroupBy,
+  onInlineCreate,
 }: TasksScreenProps) {
   const [view, setView] = useState<TasksView>('kanban');
   const [query, setQuery] = useState('');
+  // Phase 3b Task 7 — inline-create local state.
+  const [inlineSubject, setInlineSubject] = useState('');
+  const [inlineBusy, setInlineBusy] = useState(false);
+  const [inlineError, setInlineError] = useState<string | null>(null);
+
+  async function submitInline() {
+    const subject = inlineSubject.trim();
+    if (!subject) return;
+    if (!onInlineCreate) return;
+    setInlineBusy(true);
+    setInlineError(null);
+    try {
+      await onInlineCreate(subject);
+      setInlineSubject('');
+    } catch (err) {
+      setInlineError(err instanceof Error ? err.message : 'Could not create task.');
+    } finally {
+      setInlineBusy(false);
+    }
+  }
   // Drift scores arrive via the perTaskDrift prop — App.tsx hosts the
   // single useDrift loop and threads scores down to every consumer.
   // UiTask.id IS the backend's taskId (see normalizeTask in useToadData).
@@ -220,6 +247,48 @@ export function TasksScreen({
       </div>
 
       <div className="ws-main-body">
+        {/* Phase 3b Task 7 — inline-create input pinned to the top of
+            the body. Quick path for "title only" task creation; the
+            full TaskCreationModal (via onCreateTask, the header's
+            "+ New task" button) still handles the richer cases like
+            allowedFiles, acceptance criteria, base branch, etc. */}
+        {onInlineCreate && (
+          <div className="tasks-inline-create">
+            <Icon name="plus" size={13} />
+            <input
+              className="field-input"
+              placeholder="Add task — title and press Enter"
+              value={inlineSubject}
+              disabled={inlineBusy}
+              onChange={(e) => { setInlineSubject(e.target.value); if (inlineError) setInlineError(null); }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  void submitInline();
+                }
+                if (e.key === 'Escape') {
+                  setInlineSubject('');
+                  setInlineError(null);
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={inlineBusy || !inlineSubject.trim()}
+              onClick={() => void submitInline()}
+            >
+              {inlineBusy ? 'Adding…' : 'Add'}
+            </button>
+            <span className="dim" style={{ fontSize: 11 }}>
+              feature · developer · medium priority. Use <span className="mono">+ New task</span> for full options.
+            </span>
+            {inlineError && (
+              <span style={{ color: 'var(--err)', fontSize: 11, marginLeft: 'auto' }}>{inlineError}</span>
+            )}
+          </div>
+        )}
+
         {tasks.length === 0 && (
           <EmptyTasksState
             title="This board is empty"

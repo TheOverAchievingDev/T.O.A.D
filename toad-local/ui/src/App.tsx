@@ -744,6 +744,29 @@ function AppInner() {
               perTaskDrift={perTaskDrift}
               groupBy={tweaks.tasksGroupBy ?? 'status'}
               onChangeGroupBy={(next) => setTweak('tasksGroupBy', next)}
+              onInlineCreate={async (subject) => {
+                // Phase 3b Task 7 — minimum-viable task creation. Full
+                // form lives in TaskCreationModal (the header "+" button).
+                // Auto-generated taskId uses a short timestamp suffix so
+                // the operator doesn't have to invent one.
+                const teamId = team.name || activeTeamId;
+                if (!teamId) throw new Error('No active team');
+                const ts = Date.now().toString(36).slice(-6);
+                const taskId = `t_${ts}`;
+                await callToadApi({
+                  actor: { teamId, agentId: 'ui-client', agentName: 'ui', role: 'human' },
+                  method: 'task_create',
+                  args: {
+                    taskId,
+                    subject,
+                    type: 'feature',
+                    assignedRole: 'developer',
+                    priority: 'medium',
+                  },
+                  idempotencyKey: `inline-task-${taskId}`,
+                });
+                refresh();
+              }}
             />
           )}
           {tweaks.screen === 'foundry' && (

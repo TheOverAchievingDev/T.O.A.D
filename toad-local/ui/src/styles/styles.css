@@ -368,6 +368,39 @@ input, textarea, select { font-family: inherit; }
   background: var(--bg-canvas);
 }
 
+/* Phase 3b Task 7 — Tasks inline-create row. Pinned at the top of
+ * the Tasks screen body so operators can add titles fast without
+ * popping the full TaskCreationModal. The modal still wins for
+ * richer config (allowed files, acceptance criteria, etc.). */
+.tasks-inline-create {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  background: var(--bg-panel, var(--bg-1));
+  border: 1px solid var(--border-soft, var(--line-soft));
+  border-radius: 8px;
+  color: var(--fg-muted, var(--fg-1));
+}
+.tasks-inline-create > .field-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--bg-input, var(--bg-0));
+  border: 1px solid transparent;
+  color: var(--fg, var(--fg-0));
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.tasks-inline-create > .field-input:focus {
+  border-color: var(--clay);
+  outline: none;
+}
+.tasks-inline-create > .field-input:disabled {
+  opacity: 0.6;
+}
+
 .ws-side {
   background: var(--bg-app);
   border-left: 1px solid var(--border-soft);
