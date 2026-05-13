@@ -130,12 +130,13 @@ export function LogViewerDrawer({ runtimeId, title, onClose, actor = DEFAULT_ACT
     setLoading(true);
     setError(null);
     try {
-      const result = await callTool<AuditEvent[]>({
+      const result = await callTool<{ events?: AuditEvent[] } | AuditEvent[]>({
         actor,
         method: 'runtime_events',
         args: { runtimeId },
       });
-      setEvents(Array.isArray(result) ? result : []);
+      const events = Array.isArray(result) ? result : result?.events;
+      setEvents(Array.isArray(events) ? events : []);
     } catch (err) {
       setError(err instanceof ToadApiError ? err.message : (err instanceof Error ? err.message : 'Failed to load logs'));
     } finally {

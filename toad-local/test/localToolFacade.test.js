@@ -686,20 +686,22 @@ test('LocalToolFacade lists agent runtime status for the actor team', () => {
     args: {},
   });
 
-  assert.deepEqual(result, [
-    {
-      runtimeId: 'runtime-lead-1',
-      teamId: 'team-a',
-      agentId: 'lead',
-      status: 'running',
-    },
-    {
-      runtimeId: 'runtime-worker-1',
-      teamId: 'team-a',
-      agentId: 'worker-1',
-      status: 'exited',
-    },
-  ]);
+  assert.deepEqual(result, {
+    runtimes: [
+      {
+        runtimeId: 'runtime-lead-1',
+        teamId: 'team-a',
+        agentId: 'lead',
+        status: 'running',
+      },
+      {
+        runtimeId: 'runtime-worker-1',
+        teamId: 'team-a',
+        agentId: 'worker-1',
+        status: 'exited',
+      },
+    ],
+  });
 });
 
 test('LocalToolFacade returns a specific runtime status by runtimeId', () => {
@@ -712,11 +714,25 @@ test('LocalToolFacade returns a specific runtime status by runtimeId', () => {
   });
 
   assert.deepEqual(result, {
-    runtimeId: 'runtime-lead-1',
-    teamId: 'team-a',
-    agentId: 'lead',
-    status: 'running',
+    runtime: {
+      runtimeId: 'runtime-lead-1',
+      teamId: 'team-a',
+      agentId: 'lead',
+      status: 'running',
+    },
   });
+});
+
+test('LocalToolFacade returns {runtime:null} when runtimeId is unknown', () => {
+  const { facade } = createFacade();
+
+  const result = facade.execute({
+    commandName: COMMANDS.AGENT_STATUS,
+    actor: { teamId: 'team-a', agentId: 'lead' },
+    args: { runtimeId: 'runtime-does-not-exist' },
+  });
+
+  assert.deepEqual(result, { runtime: null });
 });
 
 test('LocalToolFacade lists approvals for the actor team', () => {
@@ -728,16 +744,32 @@ test('LocalToolFacade lists approvals for the actor team', () => {
     args: {},
   });
 
-  assert.deepEqual(result, [
-    {
-      approvalId: 'approval-1',
-      teamId: 'team-a',
-      agentId: 'lead',
-      runtimeId: 'runtime-lead-1',
-      prompt: 'Approve Write',
-      status: 'pending',
-    },
-  ]);
+  assert.ok(result && typeof result === 'object' && !Array.isArray(result), 'wrapped record');
+  assert.deepEqual(result, {
+    approvals: [
+      {
+        approvalId: 'approval-1',
+        teamId: 'team-a',
+        agentId: 'lead',
+        runtimeId: 'runtime-lead-1',
+        prompt: 'Approve Write',
+        status: 'pending',
+      },
+    ],
+  });
+});
+
+test('LocalToolFacade approval_list returns {approvals:[]} when no readModel is configured', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  const result = facade.execute({
+    commandName: COMMANDS.APPROVAL_LIST,
+    actor: { teamId: 'team-a', agentId: 'operator' },
+    args: {},
+  });
+  assert.deepEqual(result, { approvals: [] });
 });
 
 test('LocalToolFacade lists runtime audit events for the actor team', () => {
@@ -749,15 +781,31 @@ test('LocalToolFacade lists runtime audit events for the actor team', () => {
     args: { runtimeId: 'runtime-lead-1' },
   });
 
-  assert.deepEqual(result, [
-    {
-      eventId: 'event-1',
-      teamId: 'team-a',
-      runtimeId: 'runtime-lead-1',
-      agentId: 'lead',
-      eventType: 'tool_use',
-    },
-  ]);
+  assert.ok(result && typeof result === 'object' && !Array.isArray(result), 'wrapped record');
+  assert.deepEqual(result, {
+    events: [
+      {
+        eventId: 'event-1',
+        teamId: 'team-a',
+        runtimeId: 'runtime-lead-1',
+        agentId: 'lead',
+        eventType: 'tool_use',
+      },
+    ],
+  });
+});
+
+test('LocalToolFacade runtime_events returns {events:[]} when no readModel is configured', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  const result = facade.execute({
+    commandName: COMMANDS.RUNTIME_EVENTS,
+    actor: { teamId: 'team-a', agentId: 'operator' },
+    args: {},
+  });
+  assert.deepEqual(result, { events: [] });
 });
 
 test('LocalToolFacade lists cross-team messages for the actor team', () => {
@@ -769,16 +817,67 @@ test('LocalToolFacade lists cross-team messages for the actor team', () => {
     args: { limit: 25 },
   });
 
-  assert.deepEqual(result, [
-    {
-      id: 'msg-cross-1',
-      teamId: 'team-a',
-      direction: 'outbound',
-      targetTeamId: 'team-b',
-      conversationId: 'conv-1',
-      text: 'Limit 25',
+  assert.ok(result && typeof result === 'object' && !Array.isArray(result), 'wrapped record');
+  assert.deepEqual(result, {
+    messages: [
+      {
+        id: 'msg-cross-1',
+        teamId: 'team-a',
+        direction: 'outbound',
+        targetTeamId: 'team-b',
+        conversationId: 'conv-1',
+        text: 'Limit 25',
+      },
+    ],
+  });
+});
+
+test('LocalToolFacade cross_team_messages returns {messages:[]} when no readModel is configured', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  const result = facade.execute({
+    commandName: COMMANDS.CROSS_TEAM_MESSAGES,
+    actor: { teamId: 'team-a', agentId: 'operator' },
+    args: {},
+  });
+  assert.deepEqual(result, { messages: [] });
+});
+
+test('LocalToolFacade tool_activity returns {toolCalls:[...]} from the readModel', () => {
+  const broker = new InMemoryBroker();
+  const taskBoard = new InMemoryTaskBoard();
+  const readModel = {
+    listToolCalls({ teamId, runtimeId }) {
+      return [
+        { toolName: 'Read', teamId, runtimeId: runtimeId || 'runtime-lead-1' },
+      ];
     },
-  ]);
+  };
+  const facade = new LocalToolFacade({ broker, taskBoard, readModel });
+  const result = facade.execute({
+    commandName: COMMANDS.TOOL_ACTIVITY,
+    actor: { teamId: 'team-a', agentId: 'operator' },
+    args: { runtimeId: 'runtime-lead-1' },
+  });
+  assert.ok(result && typeof result === 'object' && !Array.isArray(result), 'wrapped record');
+  assert.deepEqual(result, {
+    toolCalls: [{ toolName: 'Read', teamId: 'team-a', runtimeId: 'runtime-lead-1' }],
+  });
+});
+
+test('LocalToolFacade tool_activity returns {toolCalls:[]} when no readModel is configured', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+  });
+  const result = facade.execute({
+    commandName: COMMANDS.TOOL_ACTIVITY,
+    actor: { teamId: 'team-a', agentId: 'operator' },
+    args: {},
+  });
+  assert.deepEqual(result, { toolCalls: [] });
 });
 
 test('LocalToolFacade responds to approval requests through the approval broker', () => {
@@ -1661,10 +1760,12 @@ test('LocalToolFacade review_list returns tasks with active reviews including th
     actor: { teamId: 'team-a', agentId: 'operator' },
   });
 
-  assert.equal(list.length, 1);
-  assert.equal(list[0].taskId, 'open-rev');
-  assert.equal(list[0].review.state, 'requested');
-  assert.equal(list[0].review.diff, 'd');
+  assert.ok(list && typeof list === 'object' && !Array.isArray(list), 'wrapped record');
+  assert.ok(Array.isArray(list.tasks), 'tasks[] field present');
+  assert.equal(list.tasks.length, 1);
+  assert.equal(list.tasks[0].taskId, 'open-rev');
+  assert.equal(list.tasks[0].review.state, 'requested');
+  assert.equal(list.tasks[0].review.diff, 'd');
 });
 
 test('LocalToolFacade routes runtime_send_input to the adapter\'s sendTurn', async () => {
@@ -4996,9 +5097,11 @@ test('stuck_runtime_list returns the detector output filtered to actor.teamId', 
   // r-stuck has no events, startedAt is far in the past — flagged
   // r-fresh ticked 1min ago (per fake `now`) — within threshold
   // r-other is in another team — filtered by registry
-  assert.equal(result.length, 1);
-  assert.equal(result[0].runtimeId, 'r-stuck');
-  assert.equal(result[0].taskId, 'task-1');
+  assert.ok(result && typeof result === 'object' && !Array.isArray(result), 'wrapped record');
+  assert.ok(Array.isArray(result.runtimes), 'runtimes[] field present');
+  assert.equal(result.runtimes.length, 1);
+  assert.equal(result.runtimes[0].runtimeId, 'r-stuck');
+  assert.equal(result.runtimes[0].taskId, 'task-1');
 });
 
 

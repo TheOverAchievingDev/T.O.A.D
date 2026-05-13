@@ -1010,18 +1010,25 @@ export class LocalToolFacade {
   }
 
   #reviewList(actor) {
+    // Wrap as `{ tasks }` for MCP structuredContent compatibility — see
+    // task_list dispatch (L220) and #agentStatus for precedent. Key matches
+    // task_list because these are filtered task projections.
     const tasks = this.taskBoard.listTasks({ teamId: actor.teamId }) || [];
-    return tasks.filter((t) => t && t.review && t.review.state === 'requested');
+    return { tasks: tasks.filter((t) => t && t.review && t.review.state === 'requested') };
   }
 
   #agentStatus(actor, args) {
-    if (!this.runtimeRegistry) return [];
+    // Wrap returns in a record (`{ runtimes }` / `{ runtime }`) so MCP clients
+    // that require structuredContent to be an object (Claude Code's MCP client
+    // rejects top-level arrays/null as schema mismatches) accept the response.
+    // Same precedent as task_list (L220) and #runtimeList (L1615).
+    if (!this.runtimeRegistry) return { runtimes: [] };
     if (typeof args.runtimeId === 'string' && args.runtimeId.trim()) {
       const runtime = this.runtimeRegistry.getRuntime?.(args.runtimeId.trim()) || null;
-      return runtime && runtime.teamId === actor.teamId ? runtime : null;
+      return { runtime: runtime && runtime.teamId === actor.teamId ? runtime : null };
     }
-    if (typeof this.runtimeRegistry.listRuntimes !== 'function') return [];
-    return this.runtimeRegistry.listRuntimes({ teamId: actor.teamId });
+    if (typeof this.runtimeRegistry.listRuntimes !== 'function') return { runtimes: [] };
+    return { runtimes: this.runtimeRegistry.listRuntimes({ teamId: actor.teamId }) };
   }
 
   #approvalRespond(actor, idempotencyKey, args) {
@@ -1070,8 +1077,11 @@ export class LocalToolFacade {
   }
 
   #approvalList(actor) {
-    if (!this.readModel || typeof this.readModel.listApprovals !== 'function') return [];
-    return this.readModel.listApprovals({ teamId: actor.teamId });
+    // Wrap as `{ approvals }` for MCP structuredContent compatibility.
+    if (!this.readModel || typeof this.readModel.listApprovals !== 'function') {
+      return { approvals: [] };
+    }
+    return { approvals: this.readModel.listApprovals({ teamId: actor.teamId }) };
   }
 
   #sendApprovalResponseToRuntime({ approval, decision, reason, shouldSend }) {
@@ -1113,11 +1123,16 @@ export class LocalToolFacade {
   }
 
   #toolActivity(actor, args) {
-    if (!this.readModel || typeof this.readModel.listToolCalls !== 'function') return [];
-    return this.readModel.listToolCalls({
-      teamId: actor.teamId,
-      runtimeId: typeof args.runtimeId === 'string' ? args.runtimeId : undefined,
-    });
+    // Wrap as `{ toolCalls }` for MCP structuredContent compatibility.
+    if (!this.readModel || typeof this.readModel.listToolCalls !== 'function') {
+      return { toolCalls: [] };
+    }
+    return {
+      toolCalls: this.readModel.listToolCalls({
+        teamId: actor.teamId,
+        runtimeId: typeof args.runtimeId === 'string' ? args.runtimeId : undefined,
+      }),
+    };
   }
 
   #healthStatus(actor, args) {
@@ -1137,19 +1152,30 @@ export class LocalToolFacade {
   }
 
   #runtimeEvents(actor, args) {
-    if (!this.readModel || typeof this.readModel.listRuntimeAudit !== 'function') return [];
-    return this.readModel.listRuntimeAudit({
-      teamId: actor.teamId,
-      runtimeId: typeof args.runtimeId === 'string' ? args.runtimeId : undefined,
-    });
+    // Wrap as `{ events }` for MCP structuredContent compatibility.
+    if (!this.readModel || typeof this.readModel.listRuntimeAudit !== 'function') {
+      return { events: [] };
+    }
+    return {
+      events: this.readModel.listRuntimeAudit({
+        teamId: actor.teamId,
+        runtimeId: typeof args.runtimeId === 'string' ? args.runtimeId : undefined,
+      }),
+    };
   }
 
   #crossTeamMessages(actor, args) {
-    if (!this.readModel || typeof this.readModel.listCrossTeamMessages !== 'function') return [];
-    return this.readModel.listCrossTeamMessages({
-      teamId: actor.teamId,
-      limit: Number.isInteger(args.limit) ? args.limit : null,
-    });
+    // Wrap as `{ messages }` for MCP structuredContent compatibility — matches
+    // #messageList shape (which already wraps).
+    if (!this.readModel || typeof this.readModel.listCrossTeamMessages !== 'function') {
+      return { messages: [] };
+    }
+    return {
+      messages: this.readModel.listCrossTeamMessages({
+        teamId: actor.teamId,
+        limit: Number.isInteger(args.limit) ? args.limit : null,
+      }),
+    };
   }
 
   #crossTeamSend(actor, idempotencyKey, args) {
@@ -1883,8 +1909,10 @@ export class LocalToolFacade {
   }
 
   #stuckRuntimeList(actor, args) {
+    // Wrap return in `{ runtimes }` for MCP structuredContent compatibility —
+    // see #agentStatus and #runtimeList for precedent.
     if (!this.runtimeRegistry || typeof this.runtimeRegistry.listRuntimes !== 'function') {
-      return [];
+      return { runtimes: [] };
     }
     const runtimes = this.runtimeRegistry.listRuntimes({ teamId: actor.teamId });
     const latestEventByRuntime = this.eventLog && typeof this.eventLog.latestEventByRuntime === 'function'
@@ -1893,12 +1921,14 @@ export class LocalToolFacade {
     const thresholdMs = Number.isFinite(args?.thresholdMs) && args.thresholdMs > 0
       ? args.thresholdMs
       : STUCK_DEFAULT_THRESHOLD_MS;
-    return detectStuckRuntimes({
-      runtimes,
-      latestEventByRuntime,
-      now: typeof args?.now === 'string' ? args.now : new Date().toISOString(),
-      thresholdMs,
-    });
+    return {
+      runtimes: detectStuckRuntimes({
+        runtimes,
+        latestEventByRuntime,
+        now: typeof args?.now === 'string' ? args.now : new Date().toISOString(),
+        thresholdMs,
+      }),
+    };
   }
 
   /**
