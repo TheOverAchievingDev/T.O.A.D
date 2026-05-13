@@ -39,6 +39,15 @@ REM accumulate orphaned terminal windows. Best-effort; ignored if not running.
 taskkill /F /FI "WINDOWTITLE eq Symphony API*" >nul 2>&1
 taskkill /F /FI "WINDOWTITLE eq Symphony UI*" >nul 2>&1
 
+REM Also clean up any Tauri stragglers in case the user just switched
+REM from desktop mode (start-desktop.bat / restart-desktop.bat) to
+REM web mode. Otherwise the Tauri window keeps running and points at a
+REM stale Vite server.
+taskkill /F /FI "WINDOWTITLE eq Symphony Tauri*" >nul 2>&1
+taskkill /F /FI "WINDOWTITLE eq Symphony AI*" >nul 2>&1
+taskkill /F /IM "Symphony AI.exe" >nul 2>&1
+taskkill /F /IM "app.exe" >nul 2>&1
+
 REM Give the OS a moment to free the sockets so the relaunch doesn't EADDRINUSE.
 timeout /t 2 /nobreak >nul
 
