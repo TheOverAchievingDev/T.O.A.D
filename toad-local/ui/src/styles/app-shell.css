@@ -2842,6 +2842,20 @@
   color: #fff;
 }
 
+/* Phase 3d Task 14 — per-file activity banner. Same shape as the
+ * generic worktree banner but tinted with clay so the operator
+ * reads it as "agent activity on the active file" rather than
+ * "anything else going on in the worktree". */
+.code-activity-banner {
+  top: 80px; /* stack below the worktree banner when both render */
+  background: var(--clay-soft);
+  border-color: var(--clay-border);
+  color: var(--clay);
+}
+.code-activity-banner strong {
+  color: var(--fg);
+}
+
 .task-bug-badge {
   display: inline-flex;
   align-items: center;

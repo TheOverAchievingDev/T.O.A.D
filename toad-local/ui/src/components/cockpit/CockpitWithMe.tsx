@@ -236,6 +236,37 @@ export function CockpitWithMe({
     return owner ? { taskId: owner.id, assignee: owner.assignee || undefined } : null;
   }, [tasks]);
 
+  // Phase 3d Task 14 — most-recent agent stream entry whose body
+  // mentions the active file's basename. Pragmatic basename match
+  // (Phase 4 polish can wire structured event tracking via raw
+  // tool inputs). Considers entries from the last ~90s only so
+  // banners don't linger on stale activity.
+  const recentActivityForPath = useCallback((path: string): { agentName: string; summary: string; at: string } | null => {
+    if (!path) return null;
+    const basename = path.replace(/\\/g, '/').split('/').pop();
+    if (!basename) return null;
+    const agentName = new Map(team.members.map((m) => [m.id, m.name]));
+    // Sort all entries by time desc; first one mentioning basename wins.
+    type Hit = { agentId: string; entry: StreamEntry };
+    const hits: Hit[] = [];
+    for (const [agentId, entries] of Object.entries(agentStreams)) {
+      for (const entry of entries) {
+        if (typeof entry.body !== 'string') continue;
+        if (entry.body.includes(basename)) hits.push({ agentId, entry });
+      }
+    }
+    if (hits.length === 0) return null;
+    hits.sort((a, b) => b.entry.time.localeCompare(a.entry.time));
+    const top = hits[0];
+    // Trim the summary so the banner stays one line.
+    const summary = top.entry.body.length > 88 ? `${top.entry.body.slice(0, 85)}…` : top.entry.body;
+    return {
+      agentName: agentName.get(top.agentId) ?? top.agentId,
+      summary,
+      at: top.entry.time,
+    };
+  }, [agentStreams, team.members]);
+
   const runtimeByAgent = useMemo(() => {
     const m = new Map<string, Runtime>();
     for (const r of runtimes) if (r.agent) m.set(r.agent, r);
@@ -342,6 +373,7 @@ export function CockpitWithMe({
             externalOpenRequest={externalOpenRequest}
             onRefreshTreeRequest={refreshTree}
             scopeChipForPath={scopeChipForPath}
+            recentActivityForPath={recentActivityForPath}
           />
           <AgentInboxPanel
             team={team}
@@ -407,6 +439,7 @@ function EditorRegion({
   externalOpenRequest,
   onRefreshTreeRequest,
   scopeChipForPath,
+  recentActivityForPath,
 }: {
   source: IdeSource;
   actor: Actor;
@@ -414,6 +447,7 @@ function EditorRegion({
   externalOpenRequest: { sourceKey: string; path: string; requestId: number } | null;
   onRefreshTreeRequest?: (path: string | null) => void;
   scopeChipForPath?: (path: string) => { taskId: string; assignee?: string } | null;
+  recentActivityForPath?: (path: string) => { agentName: string; summary: string; at: string } | null;
 }) {
   // Phase 3a Task 2 — replaced the placeholder card with the real
   // IdeEditorPane. The pane manages its own tab strip (so we don't
@@ -433,6 +467,7 @@ function EditorRegion({
         externalOpenRequest={externalOpenRequest}
         onRefreshTreeRequest={onRefreshTreeRequest}
         scopeChipForPath={scopeChipForPath}
+        recentActivityForPath={recentActivityForPath}
       />
     </div>
   );

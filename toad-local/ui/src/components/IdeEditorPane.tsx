@@ -62,6 +62,13 @@ interface IdeEditorPaneProps {
    *  edit belongs to a specific task. Omitted when no task contract
    *  is in play (e.g. standalone Code screen with no team). */
   scopeChipForPath?: (path: string) => { taskId: string; assignee?: string } | null;
+  /** Phase 3d Task 14 — optional recent-activity lookup for the
+   *  active file. Returns the most-recent agent event whose summary
+   *  touches the active file, or null when nothing recent matched.
+   *  Renders as a Cursor-style "just edited" banner above the editor
+   *  body. Caller is responsible for the freshness window (typically
+   *  the last 60-90s of agentStreams). */
+  recentActivityForPath?: (path: string) => { agentName: string; summary: string; at: string } | null;
 }
 
 export function IdeEditorPane({
@@ -72,6 +79,7 @@ export function IdeEditorPane({
   externalOpenRequest,
   onRefreshTreeRequest,
   scopeChipForPath,
+  recentActivityForPath,
 }: IdeEditorPaneProps) {
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const decorationsCollectionRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
@@ -349,6 +357,23 @@ export function IdeEditorPane({
           </span>
         </div>
       )}
+      {/* Phase 3d Task 14 — per-file activity hint. When the caller's
+          recentActivityForPath helper returns an entry for the active
+          tab's path, surface it as a Cursor-style "agent X just …"
+          banner. Adds team-aware specificity vs. the worktree-level
+          banner above. */}
+      {activeTab && recentActivityForPath && (() => {
+        const activity = recentActivityForPath(activeTab.path);
+        if (!activity) return null;
+        return (
+          <div className="code-agent-banner code-activity-banner" title={`At ${activity.at}`}>
+            <Icon name="sparkle" size={13} />
+            <span>
+              <strong>{activity.agentName}</strong> just {activity.summary}
+            </span>
+          </div>
+        );
+      })()}
       {tabs.length > 0 && (
         <div className="code-tabs" style={{ display: 'flex', overflowX: 'auto', borderBottom: '1px solid var(--border)' }}>
           {tabs.map((tab) => {
