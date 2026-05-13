@@ -423,6 +423,19 @@ export function CodeScreen({
           activeAgentsInWorktree={activeAgentsInWorktree}
           externalOpenRequest={pendingExternalOpen}
           onRefreshTreeRequest={(path) => refreshTree(path)}
+          scopeChipForPath={(path) => {
+            // Phase 3d Task 13 — first active task whose allowedFiles
+            // contract names this path wins. Done/rejected tasks are
+            // skipped so a stale contract from last week doesn't
+            // hijack the chip after the team has moved on.
+            const owner = tasks.find((t) =>
+              t.allowedFiles?.some((p) => p === path)
+              && t.status !== 'done'
+              && t.status !== 'rejected',
+            );
+            if (!owner) return null;
+            return { taskId: owner.id, assignee: owner.assignee || undefined };
+          }}
         />
       </div>
     </main>

@@ -56,6 +56,12 @@ interface IdeEditorPaneProps {
   activeAgentsInWorktree: Runtime[];
   externalOpenRequest: { sourceKey: string; path: string; requestId: number } | null;
   onRefreshTreeRequest?: (path: string | null) => void;
+  /** Phase 3d Task 13 — optional path → task lookup. When provided,
+   *  files that match a task's allowedFiles contract render an "in
+   *  scope for t_42" chip in the file bar so the operator knows the
+   *  edit belongs to a specific task. Omitted when no task contract
+   *  is in play (e.g. standalone Code screen with no team). */
+  scopeChipForPath?: (path: string) => { taskId: string; assignee?: string } | null;
 }
 
 export function IdeEditorPane({
@@ -65,6 +71,7 @@ export function IdeEditorPane({
   activeAgentsInWorktree,
   externalOpenRequest,
   onRefreshTreeRequest,
+  scopeChipForPath,
 }: IdeEditorPaneProps) {
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const decorationsCollectionRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
@@ -382,6 +389,25 @@ export function IdeEditorPane({
             <div className="code-file-meta">
               <span className="mono">{activeTab.path}</span>
               {(activeTab.file !== null && activeTab.draftContent !== activeTab.file.content) && <span className="code-dirty-pill">Unsaved</span>}
+              {(() => {
+                // Phase 3d Task 13 — "in scope for t_42" chip. Renders
+                // only when a callsite (CodeScreen / CockpitWithMe) has
+                // wired scopeChipForPath AND the active file matches a
+                // task's allowedFiles contract. Click → opens the task
+                // (we don't have a handler today, so it's display-only;
+                // Phase 4 can add navigation).
+                const scope = scopeChipForPath?.(activeTab.path) ?? null;
+                if (!scope) return null;
+                return (
+                  <span
+                    className="code-scope-chip mono"
+                    title={`Active file is in the scope contract of task ${scope.taskId}${scope.assignee ? ` (${scope.assignee})` : ''}`}
+                  >
+                    in scope for <strong>{scope.taskId}</strong>
+                    {scope.assignee && <> · {scope.assignee}</>}
+                  </span>
+                );
+              })()}
             </div>
             <div className="code-file-actions">
               {activeTab.file && <span className="dim">{formatBytes(activeTab.file.sizeBytes)}</span>}

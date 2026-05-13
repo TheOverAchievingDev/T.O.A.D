@@ -112,6 +112,12 @@ export interface UiTask {
     branch?: string | null;
   } | null;
   testCommands?: string[];
+  /** Phase 3d Task 13 — file-scope contract. When an editor opens a
+   *  file in this list, the editor header shows an "in scope for t_42"
+   *  chip so the user knows the task is the authoritative reason
+   *  this file is being edited. Optional; legacy tasks omit it. */
+  allowedFiles?: string[];
+  forbiddenFiles?: string[];
   validations?: UiValidationRun[];
   latestValidation?: Partial<Record<ValidationKind, UiValidationRun>>;
   review?: UiTaskReview | null;

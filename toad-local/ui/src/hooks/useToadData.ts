@@ -61,6 +61,8 @@ interface BackendTask {
     branch?: string | null;
   } | null;
   testCommands?: string[];
+  allowedFiles?: string[];
+  forbiddenFiles?: string[];
   validations?: BackendValidationRun[];
   latestValidation?: Partial<Record<string, BackendValidationRun>>;
   review?: BackendTaskReview | null;
@@ -282,6 +284,17 @@ function normalizeTask(raw: BackendTask, fallbackProject: string): UiTask {
     humanApproved: raw.humanApproval?.approved === true || raw.humanApproved === true,
     testCommands: Array.isArray(raw.testCommands)
       ? raw.testCommands.filter((command) => typeof command === 'string')
+      : undefined,
+    // Phase 3d Task 13 — preserve allowedFiles + forbiddenFiles on the
+    // UI side so the Code screen can render an "in scope for t_42"
+    // chip when the editor opens a file that's part of this task's
+    // contract. Filter to strings defensively in case the backend
+    // ever emits sparse arrays.
+    allowedFiles: Array.isArray(raw.allowedFiles)
+      ? raw.allowedFiles.filter((f) => typeof f === 'string')
+      : undefined,
+    forbiddenFiles: Array.isArray(raw.forbiddenFiles)
+      ? raw.forbiddenFiles.filter((f) => typeof f === 'string')
       : undefined,
     validations,
     latestValidation: normalizeLatestValidation(raw.latestValidation),

@@ -2733,6 +2733,21 @@
   font-weight: 650;
 }
 
+/* Phase 3d Task 13 — in-scope-for chip in the editor file bar. */
+.code-scope-chip {
+  flex: 0 0 auto;
+  border: 1px solid var(--clay-border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: var(--clay-soft);
+  color: var(--clay);
+  font-size: 10.5px;
+  letter-spacing: 0.01em;
+}
+.code-scope-chip strong {
+  font-weight: 600;
+}
+
 .code-save-error {
   flex: 0 0 auto;
   border-bottom: 1px solid var(--border-soft);

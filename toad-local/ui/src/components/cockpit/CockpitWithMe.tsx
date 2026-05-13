@@ -223,6 +223,19 @@ export function CockpitWithMe({
   // editing remains the Code screen's job.
   const editorSource: IdeSource = useMemo(() => ({ kind: 'project' }), []);
 
+  // Phase 3d Task 13 — first active task whose allowedFiles contract
+  // names the path wins. Done / rejected tasks are skipped so stale
+  // contracts don't hijack the chip. Built once per (tasks) so it
+  // doesn't re-allocate on every render.
+  const scopeChipForPath = useCallback((path: string): { taskId: string; assignee?: string } | null => {
+    const owner = tasks.find((t) =>
+      t.allowedFiles?.some((p) => p === path)
+      && t.status !== 'done'
+      && t.status !== 'rejected',
+    );
+    return owner ? { taskId: owner.id, assignee: owner.assignee || undefined } : null;
+  }, [tasks]);
+
   const runtimeByAgent = useMemo(() => {
     const m = new Map<string, Runtime>();
     for (const r of runtimes) if (r.agent) m.set(r.agent, r);
@@ -328,6 +341,7 @@ export function CockpitWithMe({
             drift={drift}
             externalOpenRequest={externalOpenRequest}
             onRefreshTreeRequest={refreshTree}
+            scopeChipForPath={scopeChipForPath}
           />
           <AgentInboxPanel
             team={team}
@@ -392,19 +406,20 @@ function EditorRegion({
   drift,
   externalOpenRequest,
   onRefreshTreeRequest,
+  scopeChipForPath,
 }: {
   source: IdeSource;
   actor: Actor;
   drift: DriftRunResult | null;
   externalOpenRequest: { sourceKey: string; path: string; requestId: number } | null;
   onRefreshTreeRequest?: (path: string | null) => void;
+  scopeChipForPath?: (path: string) => { taskId: string; assignee?: string } | null;
 }) {
   // Phase 3a Task 2 — replaced the placeholder card with the real
   // IdeEditorPane. The pane manages its own tab strip (so we don't
   // render our Phase 2 FileTabs here; keeping two parallel tab UIs
-  // would confuse users). Phase 3 polish can re-introduce a custom
-  // tab strip on top of IdeEditorPane once the in-scope-for chip
-  // and drag-reorder land (Task 4 + per-task scope chips).
+  // would confuse users). Phase 3d Task 13 wires the in-scope-for
+  // chip via the scopeChipForPath prop.
   return (
     <div className="cockpit-with-editor">
       <IdeEditorPane
@@ -417,6 +432,7 @@ function EditorRegion({
         activeAgentsInWorktree={[]}
         externalOpenRequest={externalOpenRequest}
         onRefreshTreeRequest={onRefreshTreeRequest}
+        scopeChipForPath={scopeChipForPath}
       />
     </div>
   );
