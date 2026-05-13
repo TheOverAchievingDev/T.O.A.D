@@ -742,6 +742,8 @@ function AppInner() {
               }}
               onCreateTask={() => setTaskCreateOpen(true)}
               perTaskDrift={perTaskDrift}
+              groupBy={tweaks.tasksGroupBy ?? 'status'}
+              onChangeGroupBy={(next) => setTweak('tasksGroupBy', next)}
             />
           )}
           {tweaks.screen === 'foundry' && (

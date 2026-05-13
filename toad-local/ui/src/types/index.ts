@@ -203,6 +203,9 @@ export interface Tweaks {
   showRightPanel: boolean;
   /** Phase 2 bottom-panel active tab. */
   bottomPanelTab: 'terminal' | 'problems' | 'output' | 'validations';
+  /** Phase 3b — Tasks screen group-by selector. Persists so the
+   *  operator returns to the same view. */
+  tasksGroupBy: 'status' | 'assignee' | 'type' | 'risk';
   /** Phase 2 right-panel agent selection — which agent the Agent Inbox
    *  is currently talking to. null = use the lead. Persists across
    *  sessions so the operator returns to the same conversation. */
