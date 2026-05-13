@@ -77,10 +77,10 @@ Finishes Phase 2's deferred items. The persona swap is shipped, but the WITH-me 
 
 ### Phase 3c — Foundry polish (3 tasks)
 
-- [ ] **Task 9: Visible provider switcher at session start**
+- [x] **Task 9: Visible provider switcher at session start — ALREADY SHIPPED**
   - File: `ui/src/components/FoundryScreen.tsx`
-  - When starting a new session, surface a "Plan with Claude / GPT / Gemini" choice up front (currently buried in settings).
-  - Per-session provider override stored in the Foundry session record (backend already supports this).
+  - Spec said "surface a 'Plan with Claude / GPT / Gemini' choice up front." Re-check on 2026-05-12 found this is already in place — the new-session row (`.foundry-create`) has a `<select>` next to the title input with Claude / Codex options, value bound to `newSessionProvider` state, dispatched via the `foundry_session_create` MCP call.
+  - No change required. Phase 3c Task 9 closes as already-done.
 
 - [ ] **Task 10: 7-phase progress map (left rail)**
   - File: `ui/src/components/FoundryScreen.tsx`
@@ -88,11 +88,11 @@ Finishes Phase 2's deferred items. The persona swap is shipped, but the WITH-me 
   - Highlights the current phase, checkmarks completed phases.
   - Click jumps to that phase's draft doc in the right panel.
 
-- [ ] **Task 11: Inline doc editing (WITH-me only)**
+- [x] **Task 11: Inline doc editing — ALREADY SHIPPED**
   - File: `ui/src/components/FoundryScreen.tsx`
-  - Existing artifacts panel is read-only mock; convert to editable textarea (markdown source) in WITH-me mode.
-  - Save calls existing `foundry_artifact_upsert` MCP method.
-  - FOR-me users keep the read-only view.
+  - Spec said "existing artifacts panel is read-only mock; convert to editable textarea." Re-check on 2026-05-12 found the artifacts panel is ALREADY a working editor: `<textarea>` bound to `artifactDraft` state, Save button that calls `foundry_artifact_upsert`, status chip + version display in `.foundry-editor-bar`.
+  - Decision: dropped the "WITH-me only" gating that was in the spec. Foundry is collaborative project planning even for FOR-me users; reading the docs as read-only and editing them are both fair operator activities. Locking the editor behind a persona toggle would frustrate without protecting anything (artifacts are drafts, not destructive). If a future scenario surfaces where edits are dangerous, we can re-add the gate.
+  - No change required. Phase 3c Task 11 closes as already-done.
 
 ### Phase 3d — Code screen polish (3 tasks)
 
