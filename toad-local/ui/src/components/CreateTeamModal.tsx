@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
 import type { RoleId, Provider } from '@/types';
 import { ROLES, ROLE_KEYS, roleStyle } from '@/data/roles';
+import { providerBrand } from '@/data/providerLabels';
 import { SEED_PROVIDERS } from '@/data/seed';
 import { Icon } from './Icon';
 import { PlanUsagePanel } from './PlanUsagePanel';
@@ -667,8 +668,8 @@ export function CreateTeamModal({
               onClick={handleSubmit}
               disabled={inFlight || submit.kind === 'done'}
             >
-              {submit.kind === 'creating' && <>Creating…</>}
-              {submit.kind === 'launching' && <>Launching…</>}
+              {submit.kind === 'creating' && <>Creating {providerBrand(leadProvider)} team…</>}
+              {submit.kind === 'launching' && <>Launching {providerBrand(leadProvider)}…</>}
               {submit.kind === 'done' && <><Icon name="check" size={11} /> Done</>}
               {(submit.kind === 'idle' || submit.kind === 'error') && (
                 <><Icon name="play" size={11} /> {runAfterCreate ? 'Create & launch' : 'Create team'}</>

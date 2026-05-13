@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Team, Runtime, Agent } from '@/types';
 import { ROLES, roleStyle } from '@/data/roles';
+import { providerBrand } from '@/data/providerLabels';
 import { Icon } from './Icon';
 import { useToadEvents, type RuntimeEvent } from '@/api/events';
 
@@ -156,7 +157,9 @@ export function TeamLaunchingScreen({
         >
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
             <div className="section-label">
-              {allLive ? 'Team is up' : `Booting agents · ${liveCount}/${totalCount}`}
+              {allLive
+                ? 'Team is up'
+                : `Booting ${providerBrand(team.members[0]?.provider)} agents · ${liveCount}/${totalCount}`}
             </div>
             <div className="mono" style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
               {progressPct}% ready
@@ -215,7 +218,7 @@ export function TeamLaunchingScreen({
                         {member.name}
                       </span>
                       <span className="dim" style={{ fontSize: 11 }}>
-                        {role.short} · {member.provider} · {member.model}
+                        {role.short} · {providerBrand(member.provider)} · {member.model}
                       </span>
                     </div>
                     {detail && (
