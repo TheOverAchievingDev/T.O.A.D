@@ -2279,6 +2279,45 @@ test('LocalToolFacade team_launch relaunches stale running rows with no live ada
   assert.equal(result.members[0].status, 'starting');
 });
 
+test('LocalToolFacade team_launch resolves relative member.cwd against projectCwd (Bug 2)', async () => {
+  // Regression for the bug where symphony-demo's seeded lead.cwd is '.'
+  // and the agent's system prompt ended up reading "Project root: .."
+  // (a relative path) rather than the absolute project root. Now any
+  // relative cwd on a team member is resolved against this.projectCwd
+  // before being passed to launchAgent.
+  const { facade, registry, launches } = createTeamLifecycleFacade();
+  // Inject projectCwd so the resolver has a base.
+  facade.projectCwd = '/abs/project/root';
+  registry.registerTeam(new (await import('../src/team/teamConfig.js')).TeamConfig({
+    teamId: 'team-rel',
+    lead: { agentId: 'lead', cwd: '.' },
+    teammates: [
+      { agentId: 'dev', role: 'developer', cwd: '.' },
+      { agentId: 'qa', role: 'tester', cwd: 'sub/dir' },
+    ],
+  }));
+
+  await facade.execute({
+    commandName: COMMANDS.TEAM_LAUNCH,
+    idempotencyKey: 'team-launch-relative-cwd',
+    actor: { teamId: 'team-rel', agentId: 'operator' },
+    args: { teamId: 'team-rel' },
+  });
+
+  // path.resolve normalizes to forward-slashes on POSIX and backslashes
+  // on Windows. Assert via path.resolve so the test works on both.
+  const path = await import('node:path');
+  const expectedRoot = path.resolve('/abs/project/root', '.');
+  const expectedSub  = path.resolve('/abs/project/root', 'sub/dir');
+  assert.equal(launches.length, 3);
+  assert.equal(launches[0].cwd, expectedRoot, 'lead cwd should resolve to absolute path');
+  assert.equal(launches[1].cwd, expectedRoot, 'dev relative cwd should resolve to absolute path');
+  assert.equal(launches[2].cwd, expectedSub,  'qa sub/dir should resolve under projectCwd');
+  // System prompt should also carry the absolute path — assert by
+  // looking at the systemPrompt the launchInput carries.
+  assert.ok(launches[0].systemPrompt.includes(expectedRoot), 'lead system prompt should reference absolute Project root');
+});
+
 test('LocalToolFacade team_launch marks stale running rows stopped before re-launching (Bug 4)', async () => {
   // Regression for the bug where pressing "Resume team" after a sidecar
   // restart left the stale registry row marked 'running'. The §13 stuck-

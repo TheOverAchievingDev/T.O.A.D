@@ -706,7 +706,30 @@ function AppInner() {
               }}
               onCreateTeam={() => setTweak('screen', 'create')}
               onSelectFolder={pickProjectFolder}
-              onStartNewProject={() => setTweak('screen', 'foundry')}
+              onStartNewProject={async () => {
+                // Bug 2 fix — "Start new project" was just switching the
+                // screen to Foundry, which then reused whatever project
+                // was already loaded as the materialize destination.
+                // Force a folder pick first so the new project actually
+                // gets its own directory. In web view the picker falls
+                // back to a window.prompt() for an absolute path; in
+                // the desktop shell (start-desktop.bat) the native
+                // folder picker pops. If the user cancels, stay on
+                // the picker — don't drop them into Foundry against
+                // the wrong project.
+                const picked = await pickAndSwitchProjectFolder();
+                if (!picked) return;
+                const existing = projectRegistry.projects.find((p) => p.path === picked.path);
+                if (existing) {
+                  projectRegistry.setActive(existing.id);
+                } else {
+                  const created = projectRegistry.addProject({ name: picked.name, path: picked.path });
+                  projectRegistry.setActive(created.id);
+                }
+                refresh();
+                await new Promise((r) => setTimeout(r, 800));
+                setTweak('screen', 'foundry');
+              }}
             />
           )}
           {tweaks.screen === 'tasks' && (

@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import { COMMANDS, commandRequiresIdempotency } from '../commands/command-contract.js';
 import { MESSAGE_KINDS } from '../protocol/envelopes.js';
 import {
@@ -1319,9 +1320,19 @@ export class LocalToolFacade {
     // Pull the project root so the system prompt can tell agents where the
     // code they're working on actually lives. Falls back to '.' if no cwd
     // was set on the lead — agents will still boot, just without a path.
-    const teamCwd = (typeof config.lead?.cwd === 'string' && config.lead.cwd.length > 0)
+    //
+    // Bug 2 from 2026-05-12 triage: if config.lead.cwd is RELATIVE
+    // (e.g. '.' or '..' — the symphony-demo seed stores '.'), resolve
+    // it against the sidecar's projectCwd. Otherwise the agent's
+    // system prompt shows "Project root: ." which is meaningless after
+    // the agent's process forks into its own cwd, and the spawn
+    // inherits a path that doesn't necessarily match what the operator
+    // expected. resolveTeamCwd is also used below for member.cwd on the
+    // spawn input so both sources get the same treatment.
+    const rawTeamCwd = (typeof config.lead?.cwd === 'string' && config.lead.cwd.length > 0)
       ? config.lead.cwd
       : '.';
+    const teamCwd = resolveAgainstProjectRoot(rawTeamCwd, this.projectCwd);
     for (const member of members) {
       const runtimeId = `runtime-${teamId}-${member.agentId}`;
       const existing = this.runtimeRegistry?.getRuntime?.(runtimeId);
@@ -1363,7 +1374,18 @@ export class LocalToolFacade {
           command: member.command,
         };
         if (Array.isArray(member.args) && member.args.length > 0) launchInput.args = member.args;
-        if (typeof member.cwd === 'string' && member.cwd.length > 0) launchInput.cwd = member.cwd;
+        // Bug 2 — apply the same resolveAgainstProjectRoot to the
+        // spawn's cwd as we did to teamCwd above. The spawn's working
+        // directory determines where the child agent process actually
+        // runs; an absolute path is the only way to guarantee it
+        // matches what the system prompt advertises.
+        if (typeof member.cwd === 'string' && member.cwd.length > 0) {
+          launchInput.cwd = resolveAgainstProjectRoot(member.cwd, this.projectCwd);
+        } else if (teamCwd && teamCwd !== '.') {
+          // No member-specific cwd — inherit the resolved teamCwd so
+          // every agent in the team sees the same project root.
+          launchInput.cwd = teamCwd;
+        }
         if (member.env && typeof member.env === 'object' && Object.keys(member.env).length > 0) launchInput.env = member.env;
         if (typeof member.providerId === 'string' && member.providerId.length > 0) launchInput.providerId = member.providerId;
         if (typeof member.role === 'string' && member.role.length > 0) launchInput.role = member.role;
@@ -3735,4 +3757,26 @@ function requireString(value, label) {
     throw new TypeError(`${label} must be a non-empty string`);
   }
   return value.trim();
+}
+
+/**
+ * Bug 2 (2026-05-12 triage) helper. Some team configs were created
+ * with relative `cwd` values — most notably the symphony-demo seed
+ * which stores `cwd: '.'`. When that lands in the agent's system
+ * prompt or the spawn's working directory, the agent ends up
+ * pointing at whatever the sidecar's current dir happens to be
+ * (typically toad-local) rather than the project the user picked.
+ *
+ * If `cwd` is absolute, returns it unchanged.
+ * If `cwd` is relative AND projectCwd is set, returns the absolute
+ *   path produced by resolving cwd against projectCwd.
+ * If `cwd` is relative AND projectCwd is unset, returns the original
+ *   cwd unchanged (caller decides whether to error or accept).
+ * If `cwd` is empty/non-string, returns it as-is.
+ */
+function resolveAgainstProjectRoot(cwd, projectCwd) {
+  if (typeof cwd !== 'string' || cwd.length === 0) return cwd;
+  if (path.isAbsolute(cwd)) return cwd;
+  if (typeof projectCwd !== 'string' || projectCwd.length === 0) return cwd;
+  return path.resolve(projectCwd, cwd);
 }
