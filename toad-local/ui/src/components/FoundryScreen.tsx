@@ -107,6 +107,29 @@ interface FoundryScreenProps {
 
 const ACTOR_AGENT = 'ui-foundry';
 
+/**
+ * Phase 3c Task 10 — canonical Foundry artifact phases, in the order
+ * the planning chat is expected to produce them. The progress map
+ * renders one row per phase + a check when the active session has an
+ * artifact of that kind. Clicking a complete phase jumps the artifact
+ * tabs panel to it.
+ *
+ * Round 1 phases (1-4) are always produced when materialize runs.
+ * Round 2 phases (5-7) are conditional — only emitted when the chat
+ * actually produces them (see #foundryArtifactGenerate in
+ * localToolFacade.js). So a row may stay unchecked indefinitely if
+ * the team decides they don't need it.
+ */
+const FOUNDRY_PHASES: Array<{ kind: string; label: string; round: 1 | 2 }> = [
+  { kind: 'product_brief',      label: 'Brief',              round: 1 },
+  { kind: 'tech_spec',          label: 'Tech spec',          round: 1 },
+  { kind: 'roadmap',            label: 'Roadmap',            round: 1 },
+  { kind: 'task_breakdown',     label: 'Tasks',              round: 1 },
+  { kind: 'steering',           label: 'Steering',           round: 2 },
+  { kind: 'design_decisions',   label: 'Design decisions',   round: 2 },
+  { kind: 'definition_of_done', label: 'Definition of done', round: 2 },
+];
+
 function makeId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -480,6 +503,47 @@ export function FoundryScreen({
             );
           })}
         </div>
+
+        {/* Phase 3c Task 10 — 7-phase progress map. Renders only when a
+            session is active so the operator can see what's been
+            drafted and jump straight to any phase's doc. */}
+        {detail && (
+          <div className="foundry-progress-map">
+            <div className="eyebrow" style={{ marginBottom: 6, padding: '0 12px' }}>
+              Phases
+            </div>
+            {FOUNDRY_PHASES.map((phase) => {
+              const artifact = detail.artifacts.find((a) => a.kind === phase.kind) ?? null;
+              const complete = artifact !== null;
+              const selected = artifact !== null && artifact.artifactId === selectedArtifactId;
+              const interactive = complete; // unfinished phases aren't clickable yet (no artifact)
+              return (
+                <button
+                  key={phase.kind}
+                  type="button"
+                  className={`foundry-phase${complete ? ' complete' : ''}${selected ? ' selected' : ''}${phase.round === 2 ? ' round-2' : ''}`}
+                  disabled={!interactive}
+                  onClick={() => {
+                    if (artifact) setSelectedArtifactId(artifact.artifactId);
+                  }}
+                  title={
+                    complete
+                      ? `Jump to ${phase.label} draft`
+                      : `${phase.label} — not yet drafted${phase.round === 2 ? ' (optional)' : ''}`
+                  }
+                >
+                  <span className="foundry-phase-dot" aria-hidden="true">
+                    {complete ? <Icon name="check" size={10} /> : phase.round === 2 ? '·' : '○'}
+                  </span>
+                  <span className="foundry-phase-label">{phase.label}</span>
+                  {phase.round === 2 && !complete && (
+                    <span className="foundry-phase-optional">optional</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </aside>
 
       <section className="foundry-chat">

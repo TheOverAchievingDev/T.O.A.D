@@ -241,6 +241,83 @@
   padding: 10px;
 }
 
+/* Phase 3c Task 10 — Foundry 7-phase progress map. Sits in the
+ * sidebar below the sessions list when a session is active. */
+.foundry-progress-map {
+  border-top: 1px solid var(--border-soft);
+  padding: 12px 0 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 0 0 auto;
+}
+.foundry-phase {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  position: relative;
+}
+.foundry-phase:not(:disabled):hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+.foundry-phase:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.foundry-phase.selected {
+  background: var(--clay-soft);
+  color: var(--clay);
+}
+.foundry-phase.complete {
+  color: var(--fg);
+}
+.foundry-phase-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+  border: 1px solid var(--border-soft);
+  background: var(--bg-panel);
+  flex: 0 0 auto;
+}
+.foundry-phase.complete .foundry-phase-dot {
+  color: var(--clay);
+  border-color: var(--clay);
+  background: var(--clay-soft);
+}
+.foundry-phase.round-2:not(.complete) .foundry-phase-dot {
+  border-style: dashed;
+}
+.foundry-phase-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.foundry-phase-optional {
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  flex: 0 0 auto;
+}
+
 .foundry-session {
   width: 100%;
   min-height: 58px;
