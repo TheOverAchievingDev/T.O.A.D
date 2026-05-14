@@ -62,6 +62,12 @@ export interface CockpitForMeProps {
     lastCommit?: { sha: string; message: string; authoredAt: string | null };
   } | null;
   onResumeTeam?: () => void;
+  /** Optional pause handler. When provided AND team.status === 'running'
+   *  (or any runtime is live), the Resume button morphs into Pause so
+   *  the operator can stop the team mid-flight without leaving the
+   *  cockpit. Same handler the menubar's Pause Team uses (App.tsx
+   *  handlePauseTeam → team_stop). */
+  onPauseTeam?: () => void | Promise<void>;
   onCreateTask?: () => void;
   onRefreshDrift?: () => Promise<void>;
   onOpenTaskDetail?: (taskId: string) => void;
@@ -91,6 +97,7 @@ export function CockpitForMe({
   drift,
   reopenContext = null,
   onResumeTeam,
+  onPauseTeam,
   onCreateTask,
   onRefreshDrift,
   onOpenTaskDetail,
@@ -215,6 +222,18 @@ export function CockpitForMe({
     return m;
   }, [runtimes]);
 
+  // "Is the team alive right now?" — drives the Resume↔Pause button
+  // toggle. We check the runtime status set rather than team.status
+  // because team.status lags slightly (it's derived from the live
+  // runtimes list after the next refresh tick), and the operator
+  // wants the button to update the instant a Pause click hits.
+  // Includes 'launching' so the operator can still hit Pause to abort
+  // a slow startup.
+  const teamIsLive = useMemo(
+    () => runtimes.some((r) => r.status === 'live' || r.status === 'launching'),
+    [runtimes],
+  );
+
   // Project timeline events from agent streams + drift history + the
   // task-transition snapshot deltas observed by this component.
   const timelineEvents: TimelineEvent[] = useMemo(
@@ -303,12 +322,32 @@ export function CockpitForMe({
             {reopenContext && !bannerDismissed && (
               <ReopenBanner
                 context={reopenContext}
+                isRunning={teamIsLive}
                 onResume={onResumeTeam}
+                onPause={onPauseTeam}
                 onDismiss={dismissBanner}
               />
             )}
             <div className="cockpit-action-strip">
-              {onResumeTeam && (
+              {/*
+                Resume/Pause toggle: when the team is running we show
+                Pause (stops every live agent via team_stop). Otherwise
+                we show Resume (relaunches the team). The handler is
+                wired in App.tsx — handlePauseTeam fires the same
+                team_stop the menubar's "Pause Team" uses, so behavior
+                is identical from either entry point.
+              */}
+              {teamIsLive && onPauseTeam && (
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={() => { void onPauseTeam(); }}
+                  title="Stop every live agent in this team"
+                >
+                  <Icon name="pause" size={11} /> Pause team
+                </button>
+              )}
+              {!teamIsLive && onResumeTeam && (
                 <button type="button" className="btn primary" onClick={onResumeTeam}>
                   <Icon name="play" size={11} /> Resume team
                 </button>
@@ -355,26 +394,43 @@ function activeAgentCount(team: Team, _runtimes: Runtime[]): number {
 
 function ReopenBanner({
   context,
+  isRunning,
   onResume,
+  onPause,
   onDismiss,
 }: {
   context: NonNullable<CockpitForMeProps['reopenContext']>;
+  /** Live "is the team alive right now?" signal from the runtimes list.
+   *  Overrides context.isRunning (which is captured at banner-render
+   *  time and lags behind reality after the operator clicks Resume). */
+  isRunning: boolean;
   onResume?: () => void;
+  onPause?: () => void | Promise<void>;
   onDismiss: () => void;
 }) {
   return (
     <div className="cockpit-reopen-banner">
       <div className="cockpit-reopen-text">
         <strong>Welcome back to {context.teamName}.</strong>{' '}
-        {context.isRunning
-          ? 'Your team is already running.'
+        {isRunning
+          ? 'Your team is running now.'
           : 'Resume the team to pick up where you left off.'}
         {context.lastTask && (
           <> Last task: <code className="mono">{context.lastTask.taskId}</code> — {context.lastTask.subject}.</>
         )}
       </div>
       <div className="cockpit-reopen-actions">
-        {onResume && !context.isRunning && (
+        {isRunning && onPause && (
+          <button
+            type="button"
+            className="btn primary"
+            onClick={() => { void onPause(); }}
+            title="Stop every live agent in this team"
+          >
+            <Icon name="pause" size={11} /> Pause team
+          </button>
+        )}
+        {!isRunning && onResume && (
           <button type="button" className="btn primary" onClick={onResume}>
             <Icon name="play" size={11} /> Resume team
           </button>

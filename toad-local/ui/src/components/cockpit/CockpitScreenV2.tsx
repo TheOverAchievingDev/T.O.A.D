@@ -57,6 +57,9 @@ export interface CockpitScreenV2Props {
 
   /** Callbacks — same handlers App.tsx wires for the existing Cockpit. */
   onResumeTeam?: () => void;
+  /** Pause the team (team_stop on every live runtime). When omitted,
+   *  the Resume button stays as Resume even if the team is running. */
+  onPauseTeam?: () => void | Promise<void>;
   onCreateTask?: () => void;
   onRefreshDrift?: () => Promise<void>;
   onOpenTaskDetail?: (taskId: string) => void;
@@ -93,6 +96,7 @@ export function CockpitScreenV2(props: CockpitScreenV2Props) {
       drift={props.drift}
       reopenContext={props.reopenContext}
       onResumeTeam={props.onResumeTeam}
+      onPauseTeam={props.onPauseTeam}
       onCreateTask={props.onCreateTask}
       onRefreshDrift={props.onRefreshDrift}
       onOpenTaskDetail={props.onOpenTaskDetail}

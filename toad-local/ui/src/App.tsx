@@ -936,6 +936,7 @@ function AppInner() {
                     console.warn('[app] team_launch (resume) failed:', err);
                   });
               }}
+              onPauseTeam={handlePauseTeam}
             />
           )}
           {tweaks.screen === 'code' && (
