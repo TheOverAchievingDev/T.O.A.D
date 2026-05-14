@@ -181,6 +181,89 @@ test('RuntimeSupervisor marks child exit as exited without explicit stop', async
   );
 });
 
+test('RuntimeSupervisor.launchAgent allows re-launch with the same runtimeId after the previous process exits (Resume Team)', async () => {
+  // Regression: when Claude hit a usage limit mid-session the child
+  // exited, leaving the supervisor's in-memory record with status
+  // 'exited'. The old guard "throw if #runtimes.has(runtimeId)"
+  // rejected every Resume Team relaunch with "runtime already
+  // launched" — team_launch caught the error and recorded the member
+  // as failed, and the UI showed every agent as idle because no new
+  // runtime ever registered. Re-launching the SAME runtimeId is
+  // required so prior runtime_events and message history stay
+  // attached to the agent.
+  const directory = new RuntimeDirectory();
+  const children = [];
+  const supervisor = new RuntimeSupervisor({
+    runtimeDirectory: directory,
+    spawnProcess() {
+      const child = createFakeChild({ pid: 1000 + children.length });
+      children.push(child);
+      return child;
+    },
+    createAdapter({ runtimeId }) {
+      return { runtimeId };
+    },
+  });
+  await supervisor.launchAgent({
+    teamId: 'team-a',
+    agentId: 'lead',
+    runtimeId: 'runtime-lead-1',
+    command: 'claude',
+  });
+
+  // Simulate Claude hitting a usage limit and the child dying.
+  children[0].emit('exit', 1, null);
+  assert.equal(supervisor.getRuntime('runtime-lead-1').status, 'exited');
+
+  // Resume Team — relaunch with the same runtimeId. Must NOT throw.
+  await assert.doesNotReject(
+    supervisor.launchAgent({
+      teamId: 'team-a',
+      agentId: 'lead',
+      runtimeId: 'runtime-lead-1',
+      command: 'claude',
+    }),
+  );
+
+  // The new record overwrites the old one — status is back to running,
+  // pid reflects the second spawn.
+  assert.equal(supervisor.getRuntime('runtime-lead-1').status, 'running');
+  assert.equal(supervisor.getRuntime('runtime-lead-1').pid, 1001);
+});
+
+test('RuntimeSupervisor.launchAgent still rejects relaunch when the previous process is alive', async () => {
+  // Inverse of the Resume regression: while a runtime is actually
+  // alive, double-launching the same id is a real conflict and must
+  // throw. Without this, the second launchAgent would silently drop
+  // the first child and leak a process.
+  const directory = new RuntimeDirectory();
+  const supervisor = new RuntimeSupervisor({
+    runtimeDirectory: directory,
+    spawnProcess() {
+      return createFakeChild({ pid: 2000 });
+    },
+    createAdapter({ runtimeId }) {
+      return { runtimeId };
+    },
+  });
+  await supervisor.launchAgent({
+    teamId: 'team-a',
+    agentId: 'lead',
+    runtimeId: 'runtime-lead-conflict',
+    command: 'claude',
+  });
+
+  await assert.rejects(
+    () => supervisor.launchAgent({
+      teamId: 'team-a',
+      agentId: 'lead',
+      runtimeId: 'runtime-lead-conflict',
+      command: 'claude',
+    }),
+    /runtime already launched/,
+  );
+});
+
 test('RuntimeSupervisor restarts unexpected exits up to maxRestarts', async () => {
   const directory = new RuntimeDirectory();
   const children = [];

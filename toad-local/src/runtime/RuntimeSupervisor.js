@@ -54,8 +54,31 @@ export class RuntimeSupervisor {
     const agentId = requireString(input.agentId, 'agentId');
     const runtimeId = requireString(input.runtimeId, 'runtimeId');
     const command = requireString(input.command, 'command');
-    if (this.#runtimes.has(runtimeId)) {
-      throw new Error(`runtime already launched: ${runtimeId}`);
+    // Block re-launch only while the previous process is still alive.
+    // After unexpected exit (e.g. claude hit usage limit and the child
+    // died) or explicit stop, #markExited / stopAgent leave the record
+    // in #runtimes with status 'exited'/'stopped' so callers can still
+    // inspect history. But that record must NOT block a re-launch of
+    // the same runtimeId — Resume Team relies on relaunching with the
+    // exact same id so prior runtime_events and messages stay attached.
+    //
+    // The old guard ("throw if #runtimes.has") meant every Resume after
+    // a crashed agent silently failed with "runtime already launched":
+    // team_launch caught it, recorded `status: 'failed'` for the
+    // member, and the UI showed the agent as idle because no new
+    // runtime ever registered. The 2026-05-14 user report ("ran out of
+    // usage, hit Resume, lead and all teammates show idle") was this.
+    const existing = this.#runtimes.get(runtimeId);
+    if (existing) {
+      if (existing.status === 'running') {
+        throw new Error(`runtime already launched: ${runtimeId}`);
+      }
+      // Drop the stale record so the new spawn can register cleanly.
+      // The persistent registry row already reflects the prior exit
+      // (markRuntimeStopped fired from #markExited / stopAgent), and
+      // the runtimeDirectory was unregistered too — so no one outside
+      // this map still depends on the dead record.
+      this.#runtimes.delete(runtimeId);
     }
 
     const args = Array.isArray(input.args) ? input.args.map(String) : [];
