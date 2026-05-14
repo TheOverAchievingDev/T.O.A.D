@@ -8,6 +8,8 @@ import {
   addPermissionRules,
   buildWorkspaceIsolationRules,
   writeWorkspaceIsolationSettings,
+  assertWorkspaceIsolated,
+  buildScrubbedAgentEnv,
 } from '../src/runtime/claudeSettingsWriter.js';
 
 describe('claudeSettingsWriter', () => {
@@ -409,6 +411,260 @@ describe('claudeSettingsWriter', () => {
       // And the new rules landed (6 path-aware tools × the install dir,
       // minus the one Read rule that pre-existed, plus the system paths).
       assert.ok(result.added > 0);
+    });
+  });
+
+  describe('assertWorkspaceIsolated', () => {
+    // PROJECT.md §4 — hard refusal. Any path overlap between workspace
+    // and Symphony's install dir means agents could see Symphony.
+    // The assertion throws clearly before any agent spawns.
+
+    it('passes when projectCwd and installDir are wholly disjoint', () => {
+      assert.doesNotThrow(() =>
+        assertWorkspaceIsolated({
+          projectCwd: '/home/user/projects/harvest',
+          installDir: '/opt/symphony',
+          platform: 'linux',
+        }),
+      );
+    });
+
+    it('throws when projectCwd is missing', () => {
+      assert.throws(
+        () => assertWorkspaceIsolated({ installDir: '/opt/symphony', platform: 'linux' }),
+        /projectCwd is missing/,
+      );
+    });
+
+    it('throws when installDir is missing', () => {
+      assert.throws(
+        () => assertWorkspaceIsolated({ projectCwd: '/home/user/p', platform: 'linux' }),
+        /installDir is missing/,
+      );
+    });
+
+    it('throws when projectCwd equals installDir', () => {
+      assert.throws(
+        () => assertWorkspaceIsolated({
+          projectCwd: '/c/Project-TOAD/toad-local',
+          installDir: '/c/Project-TOAD/toad-local',
+          platform: 'linux',
+        }),
+        /equals Symphony's install dir/,
+      );
+    });
+
+    it('throws when projectCwd equals installDir case-insensitively on Windows', () => {
+      assert.throws(
+        () => assertWorkspaceIsolated({
+          projectCwd: 'C:\\Project-TOAD\\toad-local',
+          installDir: 'c:/project-toad/TOAD-LOCAL',
+          platform: 'win32',
+        }),
+        /equals Symphony's install dir/,
+      );
+    });
+
+    it('treats case as significant on POSIX', () => {
+      // Linux filesystems are case-sensitive — /Symphony and /symphony
+      // are different paths. The assertion must not collapse them.
+      assert.doesNotThrow(() =>
+        assertWorkspaceIsolated({
+          projectCwd: '/home/user/Symphony',
+          installDir: '/home/user/symphony',
+          platform: 'linux',
+        }),
+      );
+    });
+
+    it('throws when projectCwd is inside installDir', () => {
+      assert.throws(
+        () => assertWorkspaceIsolated({
+          projectCwd: '/c/Project-TOAD/toad-local/sub-project',
+          installDir: '/c/Project-TOAD/toad-local',
+          platform: 'linux',
+        }),
+        /is inside Symphony's install dir/,
+      );
+    });
+
+    it('throws when installDir is inside projectCwd', () => {
+      assert.throws(
+        () => assertWorkspaceIsolated({
+          projectCwd: '/c/big-monorepo',
+          installDir: '/c/big-monorepo/vendor/symphony',
+          platform: 'linux',
+        }),
+        /is inside projectCwd/,
+      );
+    });
+
+    it('does not match sibling paths sharing a prefix', () => {
+      // /opt/symphony-data vs /opt/symphony — first 8 chars match but
+      // they're siblings, not parent/child.
+      assert.doesNotThrow(() =>
+        assertWorkspaceIsolated({
+          projectCwd: '/opt/symphony-data',
+          installDir: '/opt/symphony',
+          platform: 'linux',
+        }),
+      );
+    });
+
+    it('throws when projectCwd is not absolute', () => {
+      assert.throws(
+        () => assertWorkspaceIsolated({
+          projectCwd: 'relative/path',
+          installDir: '/opt/symphony',
+          platform: 'linux',
+        }),
+        /must be an absolute path/,
+      );
+    });
+
+    it('throws when installDir is not absolute', () => {
+      assert.throws(
+        () => assertWorkspaceIsolated({
+          projectCwd: '/home/user/p',
+          installDir: 'relative/install',
+          platform: 'linux',
+        }),
+        /must be an absolute path/,
+      );
+    });
+
+    it('normalizes Windows backslashes for the comparison', () => {
+      assert.throws(
+        () => assertWorkspaceIsolated({
+          projectCwd: 'C:\\Project-TOAD\\toad-local\\sub',
+          installDir: 'C:/Project-TOAD/toad-local',
+          platform: 'win32',
+        }),
+        /is inside Symphony's install dir/,
+      );
+    });
+  });
+
+  describe('buildScrubbedAgentEnv', () => {
+    // Even with the right cwd, agents inherit env vars by default. The
+    // sidecar's process.env leaks Symphony's location via PWD,
+    // INIT_CWD, TOAD_PROJECT_CWD, TOAD_INSTALL_DIR, npm_*, etc.
+    // buildScrubbedAgentEnv forwards only a known-safe allow-list.
+
+    it('drops sidecar leak vars (TOAD_*, PWD, INIT_CWD, npm_*, SYMPHONY_*)', () => {
+      const out = buildScrubbedAgentEnv({
+        platform: 'linux',
+        parentEnv: {
+          PATH: '/usr/bin',
+          HOME: '/home/u',
+          TOAD_PROJECT_CWD: '/c/leaky',
+          TOAD_INSTALL_DIR: '/c/Project-TOAD/toad-local',
+          TOAD_API_PORT: '3001',
+          TOAD_DB_PATH: '/c/leaky/.toad/toad.db',
+          SYMPHONY_FOUNDRY_DB_PATH: '/c/leaky/.symphony/foundry.db',
+          PWD: '/c/Project-TOAD/toad-local',
+          INIT_CWD: '/c/Project-TOAD/toad-local',
+          npm_package_name: 'symphony-engine',
+          npm_config_local_prefix: '/c/Project-TOAD/toad-local',
+          npm_lifecycle_script: 'node scripts/dev-api-server.mjs',
+        },
+      });
+      assert.equal(out.PATH, '/usr/bin');
+      assert.equal(out.HOME, '/home/u');
+      assert.equal(out.TOAD_PROJECT_CWD, undefined);
+      assert.equal(out.TOAD_INSTALL_DIR, undefined);
+      assert.equal(out.TOAD_API_PORT, undefined);
+      assert.equal(out.TOAD_DB_PATH, undefined);
+      assert.equal(out.SYMPHONY_FOUNDRY_DB_PATH, undefined);
+      assert.equal(out.PWD, undefined);
+      assert.equal(out.INIT_CWD, undefined);
+      assert.equal(out.npm_package_name, undefined);
+      assert.equal(out.npm_config_local_prefix, undefined);
+      assert.equal(out.npm_lifecycle_script, undefined);
+    });
+
+    it('forwards provider auth vars so the CLI can authenticate', () => {
+      const out = buildScrubbedAgentEnv({
+        platform: 'linux',
+        parentEnv: {
+          PATH: '/usr/bin',
+          ANTHROPIC_API_KEY: 'sk-ant-xxx',
+          OPENAI_API_KEY: 'sk-oai-yyy',
+        },
+      });
+      assert.equal(out.ANTHROPIC_API_KEY, 'sk-ant-xxx');
+      assert.equal(out.OPENAI_API_KEY, 'sk-oai-yyy');
+    });
+
+    it('forwards Windows-specific allow-list vars on win32', () => {
+      const out = buildScrubbedAgentEnv({
+        platform: 'win32',
+        parentEnv: {
+          PATH: 'C:\\Windows;C:\\bin',
+          APPDATA: 'C:\\Users\\u\\AppData\\Roaming',
+          LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local',
+          USERPROFILE: 'C:\\Users\\u',
+          SYSTEMROOT: 'C:\\Windows',
+          PATHEXT: '.EXE;.CMD;.BAT',
+        },
+      });
+      assert.equal(out.APPDATA, 'C:\\Users\\u\\AppData\\Roaming');
+      assert.equal(out.LOCALAPPDATA, 'C:\\Users\\u\\AppData\\Local');
+      assert.equal(out.USERPROFILE, 'C:\\Users\\u');
+      assert.equal(out.SYSTEMROOT, 'C:\\Windows');
+      assert.equal(out.PATHEXT, '.EXE;.CMD;.BAT');
+    });
+
+    it('drops Windows-only vars when running on POSIX', () => {
+      // Defensive: should the parent env contain APPDATA on Linux (it
+      // shouldn't), don't forward it as a courtesy.
+      const out = buildScrubbedAgentEnv({
+        platform: 'linux',
+        parentEnv: {
+          PATH: '/usr/bin',
+          APPDATA: '/should/not/exist',
+        },
+      });
+      assert.equal(out.APPDATA, undefined);
+    });
+
+    it('honors caller additions (override allow-list)', () => {
+      const out = buildScrubbedAgentEnv({
+        platform: 'linux',
+        parentEnv: { PATH: '/usr/bin', PWD: '/leak' },
+        additions: { CLAUDE_CONFIG_DIR: '/tmp/conf', PWD: '/intentional' },
+      });
+      // Caller's CLAUDE_CONFIG_DIR is forwarded even though it's not in
+      // the allow-list — explicit additions win.
+      assert.equal(out.CLAUDE_CONFIG_DIR, '/tmp/conf');
+      // Caller's PWD overrides the (scrubbed-away) parent PWD.
+      assert.equal(out.PWD, '/intentional');
+    });
+
+    it('ignores non-string values in parentEnv', () => {
+      // process.env can sometimes have weird shapes after monkey-patching;
+      // defensive code path.
+      const out = buildScrubbedAgentEnv({
+        platform: 'linux',
+        parentEnv: { PATH: '/usr/bin', HOME: undefined, USER: 42 },
+      });
+      assert.equal(out.PATH, '/usr/bin');
+      assert.equal(out.HOME, undefined);
+      assert.equal(out.USER, undefined);
+    });
+
+    it('forwards XDG_* on POSIX but not on Windows', () => {
+      const posix = buildScrubbedAgentEnv({
+        platform: 'linux',
+        parentEnv: { PATH: '/usr/bin', XDG_CONFIG_HOME: '/home/u/.config' },
+      });
+      assert.equal(posix.XDG_CONFIG_HOME, '/home/u/.config');
+
+      const win = buildScrubbedAgentEnv({
+        platform: 'win32',
+        parentEnv: { PATH: 'C:\\bin', XDG_CONFIG_HOME: '/should/be/dropped' },
+      });
+      assert.equal(win.XDG_CONFIG_HOME, undefined);
     });
   });
 });

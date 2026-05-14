@@ -59,6 +59,231 @@ function normalizeForPattern(value) {
 }
 
 /**
+ * Validate that a (projectCwd, installDir) pair is safe to launch agents
+ * into. Throws with a precise reason otherwise.
+ *
+ * Per PROJECT.md §4: agents must never see Symphony's own folder. The
+ * only way that holds is if the workspace and install dir are wholly
+ * disjoint paths. This is the hard-refusal gate — called from
+ * #teamLaunch before any spawn, and from any code path that derives an
+ * agent cwd.
+ *
+ * Rules (any failure aborts the launch):
+ *   - projectCwd must be a non-empty absolute path.
+ *   - installDir must be a non-empty absolute path.
+ *   - projectCwd must not equal installDir.
+ *   - projectCwd must not be inside installDir.
+ *   - installDir must not be inside projectCwd.
+ *
+ * Path comparison normalizes to forward slashes + case-insensitive on
+ * Windows (filesystem semantics) and case-sensitive on POSIX.
+ *
+ * @param {object} input
+ * @param {string} input.projectCwd
+ * @param {string} input.installDir
+ * @param {string} [input.platform]   — process.platform override for testing.
+ * @returns {void}                    — throws on violation.
+ */
+export function assertWorkspaceIsolated({ projectCwd, installDir, platform = process.platform } = {}) {
+  if (typeof projectCwd !== 'string' || projectCwd.length === 0) {
+    throw new Error(
+      'agent isolation: projectCwd is missing — refusing to launch any agent. '
+      + 'Pick a workspace folder via the project picker before launching a team.',
+    );
+  }
+  if (typeof installDir !== 'string' || installDir.length === 0) {
+    throw new Error(
+      'agent isolation: installDir is missing — refusing to launch any agent. '
+      + 'The sidecar could not resolve Symphony\'s own install dir; this is a setup bug.',
+    );
+  }
+
+  // Use `path.resolve` to absolutize + normalize. If the input is already
+  // absolute, resolve is a no-op for the value itself.
+  // (Imported at top of file as `path`.)
+  // eslint-disable-next-line global-require
+  const ws = normalizeForCompare(path.resolve(projectCwd), platform);
+  const inst = normalizeForCompare(path.resolve(installDir), platform);
+
+  if (!path.isAbsolute(projectCwd)) {
+    throw new Error(
+      `agent isolation: projectCwd must be an absolute path, got "${projectCwd}". `
+      + 'Refusing to launch.',
+    );
+  }
+  if (!path.isAbsolute(installDir)) {
+    throw new Error(
+      `agent isolation: installDir must be an absolute path, got "${installDir}". `
+      + 'Refusing to launch.',
+    );
+  }
+
+  if (ws === inst) {
+    throw new Error(
+      `agent isolation: projectCwd (${projectCwd}) equals Symphony's install dir. `
+      + 'Refusing to launch any agent — the agent would see Symphony\'s own source. '
+      + 'Pick a different workspace folder via the project picker.',
+    );
+  }
+  if (isInside(ws, inst)) {
+    throw new Error(
+      `agent isolation: projectCwd (${projectCwd}) is inside Symphony's install dir (${installDir}). `
+      + 'Refusing to launch — the workspace must be entirely outside Symphony\'s folder. '
+      + 'Pick a workspace folder that is not a subdirectory of Symphony.',
+    );
+  }
+  if (isInside(inst, ws)) {
+    throw new Error(
+      `agent isolation: Symphony's install dir (${installDir}) is inside projectCwd (${projectCwd}). `
+      + 'Refusing to launch — the workspace must not contain Symphony\'s folder. '
+      + 'Move your Symphony install outside the workspace, or pick a narrower workspace.',
+    );
+  }
+}
+
+/**
+ * Lower-cases the path on Windows (filesystem is case-insensitive) and
+ * leaves it untouched on POSIX (where casing matters). Also converts
+ * backslashes to forward slashes so comparisons are robust to separator
+ * style.
+ */
+function normalizeForCompare(value, platform) {
+  const slashed = String(value).replace(/\\/g, '/').replace(/\/+$/, '');
+  return platform === 'win32' ? slashed.toLowerCase() : slashed;
+}
+
+/**
+ * Returns true when `child` is a strict descendant of `parent`. Both
+ * must be pre-normalized via normalizeForCompare.
+ *
+ * "Strict" means: equality is NOT a descendant relationship — the caller
+ * checks equality separately so the error message can be different.
+ */
+function isInside(child, parent) {
+  if (child === parent) return false;
+  return child.startsWith(parent + '/');
+}
+
+/**
+ * Build a scrubbed environment for agent child processes — strip every
+ * env var that leaks Symphony's install path or sidecar-specific state.
+ * Pass the result as the spawn's `env` (not merged with process.env).
+ *
+ * Why: child processes inherit env from their parent by default, and
+ * `process.env` in the sidecar contains:
+ *   - TOAD_PROJECT_CWD / TOAD_INSTALL_DIR / TOAD_DB_PATH / TOAD_API_PORT
+ *   - SYMPHONY_* counterparts
+ *   - PWD / INIT_CWD (point to the sidecar's launch dir = install dir)
+ *   - npm_* (npm injects ~20 vars revealing the package layout)
+ *
+ * Any of these in the agent's env teaches it where Symphony lives — even
+ * if the agent's cwd is correctly set to the workspace.
+ *
+ * What survives: a small allow-list of vars the CLI / OS needs to
+ * function (PATH for binary resolution, HOME for config files, locale,
+ * temp dirs, terminal info), plus anything the caller explicitly added
+ * via `input.env` (intentional pass-through).
+ *
+ * @param {object} input
+ * @param {NodeJS.ProcessEnv} input.parentEnv — typically process.env
+ * @param {Record<string, string>} [input.additions] — caller-supplied vars (override allow-list)
+ * @param {string} [input.platform]
+ * @returns {Record<string, string>}
+ */
+export function buildScrubbedAgentEnv({ parentEnv = {}, additions = {}, platform = process.platform } = {}) {
+  // Vars that are safe AND necessary for the CLI to work. Anything not
+  // in this list is dropped.
+  const COMMON_ALLOW = [
+    'PATH',
+    'HOME',
+    'USER',
+    'LOGNAME',
+    'LANG',
+    'LC_ALL',
+    'LC_CTYPE',
+    'TZ',
+    'TERM',
+    'SHELL',
+    'TMPDIR',
+    'TMP',
+    'TEMP',
+    // Provider auth tokens — the CLI reads these to authenticate. Without
+    // them the agent boots unauthenticated and can't function.
+    'ANTHROPIC_API_KEY',
+    'ANTHROPIC_AUTH_TOKEN',
+    'OPENAI_API_KEY',
+    'CLAUDE_CODE_USE_BEDROCK',
+    'CLAUDE_CODE_USE_VERTEX',
+    // Color / TTY hints. Optional but harmless.
+    'NO_COLOR',
+    'FORCE_COLOR',
+    'COLORTERM',
+  ];
+  const WIN_ALLOW = [
+    'APPDATA',
+    'LOCALAPPDATA',
+    'USERPROFILE',
+    'USERNAME',
+    'COMPUTERNAME',
+    'SYSTEMROOT',
+    'WINDIR',
+    'COMSPEC',
+    'PATHEXT',
+    'PROGRAMFILES',
+    'PROGRAMFILES(X86)',
+    'PROGRAMDATA',
+    'PROGRAMW6432',
+    'COMMONPROGRAMFILES',
+    'COMMONPROGRAMFILES(X86)',
+    'COMMONPROGRAMW6432',
+    'SYSTEMDRIVE',
+    'HOMEDRIVE',
+    'HOMEPATH',
+    'PUBLIC',
+    'ALLUSERSPROFILE',
+    'PROCESSOR_ARCHITECTURE',
+    'PROCESSOR_IDENTIFIER',
+    'NUMBER_OF_PROCESSORS',
+    'OS',
+  ];
+  const POSIX_ALLOW = [
+    'XDG_CONFIG_HOME',
+    'XDG_DATA_HOME',
+    'XDG_CACHE_HOME',
+    'XDG_RUNTIME_DIR',
+    'XDG_SESSION_TYPE',
+    'DBUS_SESSION_BUS_ADDRESS',
+    'DISPLAY',
+    'WAYLAND_DISPLAY',
+    'SSH_AUTH_SOCK',
+  ];
+  const allow = new Set([
+    ...COMMON_ALLOW,
+    ...(platform === 'win32' ? WIN_ALLOW : POSIX_ALLOW),
+  ]);
+
+  const scrubbed = {};
+  for (const [key, value] of Object.entries(parentEnv)) {
+    if (typeof value !== 'string') continue;
+    // Allow-list (case-sensitive on POSIX, case-insensitive on Windows
+    // because env keys are case-insensitive there).
+    const lookup = platform === 'win32' ? key.toUpperCase() : key;
+    const allowedAsIs = allow.has(key);
+    const allowedCaseFold = platform === 'win32' && allow.has(lookup);
+    if (!allowedAsIs && !allowedCaseFold) continue;
+    scrubbed[key] = value;
+  }
+  // Caller-supplied additions override the allow-list. This is the
+  // explicit-intent escape hatch — e.g. a teammate config that sets
+  // CLAUDE_CONFIG_DIR to override claude's discovery, or a test that
+  // injects PWD=$tmp on purpose.
+  for (const [key, value] of Object.entries(additions || {})) {
+    if (typeof value === 'string') scrubbed[key] = value;
+  }
+  return scrubbed;
+}
+
+/**
  * Build the array of permission deny rules that enforce the §4
  * agent isolation contract.
  *

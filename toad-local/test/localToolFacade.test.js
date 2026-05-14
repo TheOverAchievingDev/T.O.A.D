@@ -2262,10 +2262,13 @@ test('LocalToolFacade team_launch writes workspace isolation deny rules into the
   }
 });
 
-test('LocalToolFacade team_launch skips isolation write when projectCwd is unset (tests, no-project mode)', async () => {
-  // Without projectCwd we have nowhere to write the settings file — the
-  // launch must still succeed for unit tests + the sidecar's "no project
-  // loaded" mode.
+test('LocalToolFacade team_launch REFUSES when installDir is set but projectCwd is missing (no-project mode in production)', async () => {
+  // Hard refusal: in production, installDir is always set (derived from
+  // import.meta.url in dev-api-server.mjs). projectCwd is null until the
+  // user picks a workspace. If team_launch is somehow called before a
+  // workspace is picked, we MUST refuse — without projectCwd the agent
+  // would inherit the sidecar's cwd, which IS Symphony's install dir on
+  // a dev checkout.
   const { facade, registry, launches } = createTeamLifecycleFacade({
     projectCwd: null,
     installDir: '/c/Project-TOAD/toad-local',
@@ -2276,11 +2279,69 @@ test('LocalToolFacade team_launch skips isolation write when projectCwd is unset
     teammates: [],
   }));
 
+  await assert.rejects(
+    () => facade.execute({
+      commandName: COMMANDS.TEAM_LAUNCH,
+      idempotencyKey: 'team-launch-noproj',
+      actor: { teamId: 'team-noproj', agentId: 'operator' },
+      args: { teamId: 'team-noproj' },
+    }),
+    /projectCwd is missing/,
+  );
+  assert.equal(launches.length, 0, 'no agents should have spawned');
+});
+
+test('LocalToolFacade team_launch REFUSES when projectCwd equals installDir (the very leak we are preventing)', async () => {
+  // This is the exact scenario the user reported: the sidecar booted
+  // with projectCwd === installDir === C:/Project-TOAD/toad-local/,
+  // and the agent spawned inside Symphony's own folder. Refuse hard.
+  const installAndProject = await fs.mkdtemp(path.join(os.tmpdir(), 'toad-iso-collision-'));
+  try {
+    const { facade, registry, launches } = createTeamLifecycleFacade({
+      projectCwd: installAndProject,
+      installDir: installAndProject,
+    });
+    registry.registerTeam(new (await import('../src/team/teamConfig.js')).TeamConfig({
+      teamId: 'team-collide',
+      lead: { agentId: 'lead', command: 'claude' },
+      teammates: [],
+    }));
+
+    await assert.rejects(
+      () => facade.execute({
+        commandName: COMMANDS.TEAM_LAUNCH,
+        idempotencyKey: 'team-launch-collide',
+        actor: { teamId: 'team-collide', agentId: 'operator' },
+        args: { teamId: 'team-collide' },
+      }),
+      /equals Symphony's install dir/,
+    );
+    assert.equal(launches.length, 0);
+  } finally {
+    await fs.rm(installAndProject, { recursive: true, force: true });
+  }
+});
+
+test('LocalToolFacade team_launch allows test mode when BOTH projectCwd and installDir are unset', async () => {
+  // The carve-out: a unit-test harness with fake launchAgent has
+  // neither projectCwd nor installDir. The isolation gate skips and
+  // the test gets to exercise the team_launch lifecycle without
+  // threading real paths.
+  const { facade, registry, launches } = createTeamLifecycleFacade({
+    projectCwd: null,
+    installDir: null,
+  });
+  registry.registerTeam(new (await import('../src/team/teamConfig.js')).TeamConfig({
+    teamId: 'team-test',
+    lead: { agentId: 'lead', command: 'claude' },
+    teammates: [],
+  }));
+
   await facade.execute({
     commandName: COMMANDS.TEAM_LAUNCH,
-    idempotencyKey: 'team-launch-noproj',
-    actor: { teamId: 'team-noproj', agentId: 'operator' },
-    args: { teamId: 'team-noproj' },
+    idempotencyKey: 'team-launch-test-mode',
+    actor: { teamId: 'team-test', agentId: 'operator' },
+    args: { teamId: 'team-test' },
   });
 
   assert.equal(launches.length, 1);
@@ -2395,9 +2456,13 @@ test('LocalToolFacade team_launch resolves relative member.cwd against projectCw
   // (a relative path) rather than the absolute project root. Now any
   // relative cwd on a team member is resolved against this.projectCwd
   // before being passed to launchAgent.
-  const { facade, registry, launches } = createTeamLifecycleFacade();
-  // Inject projectCwd so the resolver has a base.
-  facade.projectCwd = '/abs/project/root';
+  // Pass projectCwd + installDir so the §4 isolation gate has data and
+  // the disjoint check passes. /abs/project/root and /opt/symphony are
+  // unrelated absolute paths.
+  const { facade, registry, launches } = createTeamLifecycleFacade({
+    projectCwd: '/abs/project/root',
+    installDir: '/opt/symphony',
+  });
   registry.registerTeam(new (await import('../src/team/teamConfig.js')).TeamConfig({
     teamId: 'team-rel',
     lead: { agentId: 'lead', cwd: '.' },

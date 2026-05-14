@@ -21,6 +21,7 @@ import { ApiServer } from '../transport/apiServer.js';
 import { SideEffectLog } from '../delivery/sideEffectLog.js';
 import { resolveApiToken } from '../runtime/resolveApiToken.js';
 import { shouldInjectToadMcpConfig, withClaudeMcpPermissions, writeToadMcpConfig } from '../mcp/toadMcpConfig.js';
+import { buildScrubbedAgentEnv, assertWorkspaceIsolated } from '../runtime/claudeSettingsWriter.js';
 import { loadRiskPolicy } from '../policy/loadRiskPolicy.js';
 import { RiskPolicyStore } from '../policy/riskPolicyStore.js';
 import { SettingsStore } from '../settings/settingsStore.js';
@@ -401,7 +402,51 @@ export class LocalToadRuntime {
   }
 
   async launchAgent(input) {
-    const launchInput = this.#withToadMcpConfig(input);
+    // PROJECT.md §4 — every spawn passes the isolation gate.
+    //
+    // Two enforcement points here:
+    //
+    //   (1) When the runtime is configured with both projectCwd AND
+    //       installDir, we assert they are isolated AND require the
+    //       caller to pass an explicit cwd. Without cwd, the child
+    //       process would inherit the sidecar's process.cwd() — which
+    //       on a dev checkout IS Symphony's install dir, leaking the
+    //       very thing this contract forbids.
+    //
+    //   (2) Env scrubbing always happens (defense in depth). The
+    //       sidecar's process.env contains breadcrumbs to Symphony:
+    //       PWD, INIT_CWD, TOAD_*, npm_* — any of these in the agent's
+    //       env teaches it where Symphony lives. We forward only a
+    //       known-safe allow-list plus the caller's explicit input.env.
+    //
+    // Tests that construct LocalToadRuntime without projectCwd/installDir
+    // skip the (1) checks; they still get env scrubbing for free.
+    const isolated =
+      typeof this.projectCwd === 'string' && this.projectCwd.length > 0
+      && typeof this.installDir === 'string' && this.installDir.length > 0;
+    if (isolated) {
+      assertWorkspaceIsolated({
+        projectCwd: this.projectCwd,
+        installDir: this.installDir,
+      });
+      if (typeof input?.cwd !== 'string' || input.cwd.length === 0) {
+        throw new Error(
+          'launchAgent: cwd is required when projectCwd + installDir are configured. '
+          + 'Without an explicit cwd the child process inherits the sidecar\'s working '
+          + 'directory — which IS Symphony\'s install dir on a dev checkout, leaking '
+          + 'the very thing the §4 isolation contract forbids. Pass input.cwd = the '
+          + 'workspace path.',
+        );
+      }
+    }
+    const scrubbedInput = {
+      ...input,
+      env: buildScrubbedAgentEnv({
+        parentEnv: process.env,
+        additions: (input && typeof input.env === 'object') ? input.env : {},
+      }),
+    };
+    const launchInput = this.#withToadMcpConfig(scrubbedInput);
     const runtime = await this.supervisor.launchAgent(launchInput);
     const adapter = this.supervisor.getAdapter(runtime.runtimeId);
     if (adapter) {

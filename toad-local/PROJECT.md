@@ -67,36 +67,73 @@ This rule must be enforced **without breaking autonomy**. Vibe coders are not go
 
 This rule must also be enforced **without disabling the CLI's native tools**. Native Read / Edit / Write / Bash / Grep / Glob are the entire productivity story — without them agents can't `npm install`, run tests, or grep the code. We don't disable them; we constrain them.
 
-### The right enforcement mechanism
+### The enforcement mechanism: three layered defenses
 
-**Permission rules (allow/deny), not flags.**
+The isolation contract is enforced at three separate points in the spawn flow. Each defense covers a different failure mode; any one of them holding prevents the leak.
 
-Symphony writes a workspace-scoped `.claude/settings.json` (and per-provider equivalents) at materialize time. The file:
+#### Defense 1 — Hard refusal at team_launch (PRIMARY)
 
-1. **Allows** the agent's typical tools — Read, Edit, Write, Bash, Grep, Glob — so the autonomy flag still applies and no prompts fire for in-workspace work.
-2. **Denies** specific paths the agents must never touch:
-   - The Symphony app's own source (`toad-local/**`)
-   - The user's home directory outside the workspace
-   - System paths (`C:/Windows/**`, `/etc/**`, etc.)
-3. The deny patterns are computed at materialize time from `projectCwd` so they're specific to this workspace.
+Before any agent in a team spawns, `#teamLaunch` in `localToolFacade.js` calls `assertWorkspaceIsolated({ projectCwd, installDir })` (in `src/runtime/claudeSettingsWriter.js`). The assertion throws — refusing the launch — when any of these hold:
 
-Symphony's existing `src/runtime/claudeSettingsWriter.js` is the surface for this. It currently writes a permissive baseline; the fix is to add the deny rules.
+- `projectCwd` is missing/empty (no workspace picked yet).
+- `installDir` is missing/empty (the sidecar couldn't resolve Symphony's own location).
+- Either path is not absolute.
+- `projectCwd === installDir` (the exact bug the user hit: sidecar booted with `projectCwd = toad-local`).
+- `projectCwd` is inside `installDir`.
+- `installDir` is inside `projectCwd`.
 
-### Empirical work required
+Comparison is case-insensitive on Windows and case-sensitive on POSIX, with backslash → slash normalization. Sibling paths sharing a prefix (`/opt/symphony-data` vs `/opt/symphony`) do NOT trip the check.
 
-The interaction between `--dangerously-skip-permissions` and `permissions.deny` rules needs to be verified before shipping. Three possible outcomes:
+This is the primary guarantee: **if the workspace and install dir can see each other, agents do not spawn — full stop.**
 
-1. **Best case**: deny rules fire even under skip-permissions. The fix is exactly what's described above.
+#### Defense 2 — Mandatory explicit cwd at launchAgent
+
+`LocalToadRuntime.launchAgent` refuses to spawn when `input.cwd` is missing/empty, because Node's `child_process.spawn` with `cwd: undefined` inherits the parent's `process.cwd()`. The sidecar's `process.cwd()` on a dev checkout IS `toad-local/` — exactly Symphony's install dir. Without an explicit cwd, every agent would inherit it.
+
+This catches a different failure than Defense 1: even with a validated workspace, a stale team config with no `member.cwd` (and a `teamCwd` that normalized to `.`) used to spawn the agent with no cwd at all. Refuse.
+
+The check is conditional on both `projectCwd` and `installDir` being configured — unit tests with neither set keep working without threading paths through.
+
+#### Defense 3 — Env scrubbing
+
+Every spawn passes through `buildScrubbedAgentEnv` (in `claudeSettingsWriter.js`). The sidecar's `process.env` is a billboard for Symphony's location:
+
+- `TOAD_PROJECT_CWD`, `TOAD_INSTALL_DIR`, `TOAD_DB_PATH`, `TOAD_API_PORT`
+- `SYMPHONY_FOUNDRY_DB_PATH`
+- `PWD`, `INIT_CWD` (point to wherever npm/the shell launched the sidecar from)
+- `npm_package_name`, `npm_config_local_prefix`, `npm_lifecycle_script`, ... (npm injects ~20 vars exposing the package layout)
+
+The scrubber builds a fresh env containing only an allow-listed set: `PATH`, `HOME`, locale, terminal info, OS paths (Windows: `APPDATA`/`LOCALAPPDATA`/`USERPROFILE`/etc; POSIX: `XDG_*`/`DISPLAY`/`SSH_AUTH_SOCK`/etc), and provider auth tokens (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) the CLI needs to authenticate. Anything else is dropped. The caller's `input.env` overrides the allow-list (explicit-intent escape hatch).
+
+#### Defense 4 — permissions.deny rules (DEFENSE IN DEPTH)
+
+Symphony writes a workspace-scoped `.claude/settings.local.json` at team_launch time. The file contains `permissions.deny` patterns naming `installDir/**` + OS system paths + caller-supplied extras, expanded over every path-aware tool (`Read`, `Edit`, `Write`, `NotebookEdit`, `Grep`, `Glob`, `Bash`). If Claude Code's permission engine honors deny patterns under `--dangerously-skip-permissions`, this is a redundant catch-net for anything that gets past Defenses 1-3. If it doesn't honor them, Defenses 1-3 still hold.
+
+Symphony's `src/runtime/claudeSettingsWriter.js` is the surface for all of the above.
+
+### Empirical work required for Defense 4
+
+The interaction between `--dangerously-skip-permissions` and `permissions.deny` rules needs verification before relying on it. Three possible outcomes:
+
+1. **Best case**: deny rules fire even under skip-permissions. Defense 4 is fully effective.
 2. **Middle case**: skip-permissions overrides deny. We switch to a different permission mode (`acceptEdits` instead of `bypassPermissions`) that respects deny rules without prompting on allowed actions.
-3. **Worst case**: no permission mode gives us "no prompts + enforced deny rules." We fall back to `--add-dir <workspace>` as the sole allowed directory + cwd, and document the limitation. OS-level sandboxing (AppContainer, chroot) is the heavier fallback if even that fails.
+3. **Worst case**: no permission mode gives us "no prompts + enforced deny rules." Defense 4 is decorative; Defenses 1-3 carry the contract alone. OS-level sandboxing (AppContainer, chroot, Linux namespaces) is the heavier fallback if a path through Defenses 1-3 emerges.
 
-The investigation is a Symphony slice of its own — not a Band-Aid. PROJECT.md will be updated if any of these turn out to require an architectural change.
+Defenses 1-3 do NOT depend on the outcome of this investigation. They run regardless.
+
+### Install location guidance
+
+`projectCwd === installDir` is the failure mode that triggered this contract being written. To minimize the chance of operator confusion:
+
+- **Dev checkouts** should NOT live in a path that looks like a workspace. Avoid `C:\Projects\symphony\`, `~/dev/symphony/`, etc. — those are paths users typically pick for their workspaces. Prefer `C:\Symphony\` or `~/.local/share/symphony/` (clearly not user content).
+- **Packaged builds** install to standard application directories: `%LOCALAPPDATA%\Symphony\` on Windows, `/Applications/Symphony.app/` on macOS, `/opt/symphony/` or `~/.local/share/symphony/` on Linux. These are never workspace candidates.
+- **The bat launchers** (`start-desktop.bat`, `restart-desktop.bat`) must NOT spawn the Node API server directly. The Tauri shell spawns it with the correct `TOAD_PROJECT_CWD` env var derived from the user's saved active-project. Bat-spawned API servers race Tauri's spawn for port 3001 and often win — with the wrong `projectCwd`. This was the trigger for the user's bug report; the bat scripts now only launch Tauri.
 
 ### What's enforced vs what's social
 
 Symphony's own MCP file tools (`ide_read_file`, `ide_write_file`, `ide_tree_list` in `src/ide/ideFileTools.js`) are already sandboxed: absolute paths rejected, `..` traversal blocked, realpathSync used. That's good but insufficient — those tools are optional from the agent's perspective. The CLI's built-in tools are the dominant path and must be the enforcement point.
 
-Bottom line: **trust the CLI's permission rule system, configure it correctly, keep autonomy.**
+Bottom line: **the workspace and install dir are disjoint paths, the agent's cwd is the workspace, the agent's env doesn't leak Symphony's location, and the deny rules backstop the whole thing.**
 
 ## 5. The two-cwd model — INVARIANT
 

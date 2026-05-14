@@ -9,7 +9,7 @@ import {
   TASK_STATUS,
   TASK_TYPES,
 } from '../task/inMemoryTaskBoard.js';
-import { applyPermissionSuggestions, writeWorkspaceIsolationSettings } from '../runtime/claudeSettingsWriter.js';
+import { applyPermissionSuggestions, writeWorkspaceIsolationSettings, assertWorkspaceIsolated } from '../runtime/claudeSettingsWriter.js';
 import { formatCrossTeamText, CROSS_TEAM_SOURCE, CROSS_TEAM_SENT_SOURCE } from '../protocol/crossTeam.js';
 import { TeamConfig } from '../team/teamConfig.js';
 import { buildAgentSystemPrompt } from '../team/teamSystemPrompts.js';
@@ -1322,36 +1322,55 @@ export class LocalToolFacade {
     const members = [config.lead, ...config.teammates];
     const results = [];
 
-    // PROJECT.md §4 — agent isolation contract.
+    // PROJECT.md §4 — agent isolation contract: HARD REFUSAL gate.
     //
-    // Before any agent in this team spawns, write `permissions.deny` rules
-    // into `{projectCwd}/.claude/settings.local.json` so Claude Code's
-    // native CLI tools (Read/Edit/Write/Bash/Grep/Glob/NotebookEdit) refuse
-    // to touch Symphony's own source dir, OS system paths, and any extras
-    // the user configured. Native tools stay enabled — only their reach is
-    // constrained — so the dev/lead/reviewer/tester loops keep working.
+    // Before any agent in this team spawns, prove the workspace is safe:
+    //   1. projectCwd must be set (we have a workspace).
+    //   2. installDir must be set (we know where Symphony lives).
+    //   3. The two paths must be disjoint — neither equal nor nested.
     //
-    // Skipped when projectCwd isn't set (e.g. :memory: tests, the
-    // "no project loaded" sidecar mode) or when installDir isn't known
-    // (older constructor callers that haven't been updated yet). The
-    // writer is idempotent on repeat invocations so a Stop + Resume cycle
-    // re-running team_launch doesn't re-write the same rules.
-    if (
-      typeof this.projectCwd === 'string'
-      && this.projectCwd.length > 0
-      && typeof this.installDir === 'string'
-      && this.installDir.length > 0
-    ) {
+    // If any of those fail, refuse to launch with a clear error. Silently
+    // continuing has caused agents to spawn inside Symphony's own folder
+    // (and read its source) — never again. The defaults that get the
+    // sidecar here in an unsafe state are bugs (env var misset, picker
+    // skipped, install layout broken), and the operator needs to know.
+    //
+    // Test-mode carve-out: when BOTH projectCwd and installDir are unset
+    // we're in a unit-test harness with a fake launchAgent — there's
+    // nothing real to refuse, and forcing every test to thread both
+    // values through would be noise. The carve-out only triggers when
+    // the facade is fully unconfigured; production (dev-api-server.mjs)
+    // always sets installDir, so the carve-out can never silently fire
+    // there.
+    //
+    // The deny-rule writer that follows is defense in depth — it only
+    // helps if `--dangerously-skip-permissions` honors deny patterns
+    // (empirical, see §4 outcomes 1/2/3). The hard refusal above is the
+    // primary guarantee: agents simply don't get to spawn when the
+    // workspace can see Symphony.
+    const isolationConfigured =
+      (typeof this.projectCwd === 'string' && this.projectCwd.length > 0)
+      || (typeof this.installDir === 'string' && this.installDir.length > 0);
+    if (isolationConfigured) {
+      assertWorkspaceIsolated({
+        projectCwd: this.projectCwd,
+        installDir: this.installDir,
+      });
+
+      // Defense in depth: write `permissions.deny` rules into the workspace's
+      // `.claude/settings.local.json` so Claude Code's native CLI tools
+      // refuse to touch Symphony's source if they ever try. Idempotent on
+      // repeat launches (Stop + Resume).
       try {
         await writeWorkspaceIsolationSettings({
           projectCwd: this.projectCwd,
           installDir: this.installDir,
         });
       } catch (err) {
-        // Best-effort. A failure here means the agent will still run with
-        // the operator's pre-existing settings, but we shouldn't block the
-        // team_launch — the deny rules are a defense-in-depth layer, not
-        // a prerequisite for the team running at all.
+        // Best-effort at this point — the assertion above already proved
+        // the workspace is safe. A write failure means the secondary
+        // defense isn't in place, but the primary (correct cwd, scrubbed
+        // env, validated workspace) still holds.
         // eslint-disable-next-line no-console
         console.warn(
           `[team_launch] writeWorkspaceIsolationSettings failed: ${err?.message || err}`,

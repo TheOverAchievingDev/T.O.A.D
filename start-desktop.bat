@@ -1,11 +1,23 @@
 @echo off
 setlocal enabledelayedexpansion
 
-REM Symphony desktop dev launcher: starts the backend API server and the
-REM Tauri desktop shell (which internally spawns the Vite UI dev server
-REM via tauri.conf.json's beforeDevCommand, so we don't open a separate
-REM UI window). Use this instead of start-dev.bat when you need the
-REM desktop-only features (native folder picker, native dialogs, IPC).
+REM Symphony desktop dev launcher.
+REM
+REM IMPORTANT: This script does NOT spawn the Node API server itself.
+REM The Tauri shell (src-tauri/src/main.rs) spawns the API server as a
+REM child process with the correct TOAD_PROJECT_CWD env var derived from
+REM the user's saved active-project. If we ALSO spawn the API here, two
+REM API servers race for port 3001 and the bat-spawned one (with the
+REM wrong cwd — Symphony's own install dir) often wins. That has caused
+REM agents to spawn inside Symphony's folder and read its source. See
+REM PROJECT.md §4: the agent isolation contract requires the sidecar's
+REM projectCwd to come from Tauri's `switch_project` flow, not from
+REM `process.cwd()` of a bat-spawned npm run.
+REM
+REM This script:
+REM   - Starts ONLY the Tauri shell, which internally spawns:
+REM       - the Node API server (with TOAD_PROJECT_CWD set correctly)
+REM       - the Vite UI dev server (via tauri.conf.json beforeDevCommand)
 REM
 REM Web-only mode (start-dev.bat) is faster to iterate on UI but cannot
 REM exercise Tauri APIs like the folder picker — pick the script that
@@ -26,7 +38,7 @@ echo.
 echo  Symphony desktop dev environment
 echo  --------------------------------
 echo    Project: %PROJECT_ROOT%
-echo    API:     http://127.0.0.1:3001
+echo    API:     http://127.0.0.1:3001  (spawned by Tauri with correct TOAD_PROJECT_CWD)
 echo    UI:      http://localhost:5173  (proxied by Tauri webview)
 echo    Shell:   Tauri desktop (Symphony AI window)
 if defined VITE_TOAD_API_TOKEN (
@@ -35,16 +47,14 @@ if defined VITE_TOAD_API_TOKEN (
   echo    Auth:    off
 )
 echo.
-echo  Two new console windows will open. Close them to stop the servers.
+echo  One new console window will open. Close it to stop the dev environment.
 echo  The Tauri window will open shortly after Vite binds to port 5173.
 echo.
 
-REM Backend (HTTP+SSE bridge, persistent SQLite at toad-local\.toad\toad.db).
-start "Symphony API" cmd /k "cd /d "%TOAD_LOCAL%" && npm run api:dev"
-
-REM Tauri shell (runs `cargo run` against src-tauri/ AND spawns the Vite UI
-REM dev server via beforeDevCommand from tauri.conf.json). Inherit
-REM VITE_TOAD_API_TOKEN so the proxied UI sees it.
+REM Tauri shell — internally spawns BOTH the Node API server (with
+REM TOAD_PROJECT_CWD env var from the persisted active-project) AND the
+REM Vite UI dev server (via beforeDevCommand from tauri.conf.json).
+REM Inherit VITE_TOAD_API_TOKEN so the proxied UI sees it.
 start "Symphony Tauri" cmd /k "cd /d "%TOAD_UI%" && set "VITE_TOAD_API_TOKEN=!VITE_TOAD_API_TOKEN!" && npm run tauri:dev"
 
 REM No browser-open step — Tauri opens its own window once cargo builds
