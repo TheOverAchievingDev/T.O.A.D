@@ -2137,7 +2137,7 @@ test('LocalToolFacade rejects team_* commands when no teamConfigRegistry is conf
   );
 });
 
-function createTeamLifecycleFacade({ teamRuntimes = [], adapters = new Map() } = {}) {
+function createTeamLifecycleFacade({ teamRuntimes = [], adapters = new Map(), projectCwd = null, installDir = null } = {}) {
   const launches = [];
   const stops = [];
   const markedStopped = [];
@@ -2167,6 +2167,8 @@ function createTeamLifecycleFacade({ teamRuntimes = [], adapters = new Map() } =
     teamConfigRegistry: registry,
     runtimeRegistry,
     adapters,
+    projectCwd,
+    installDir,
     launchAgent(input) {
       launches.push(input);
       runtimeRegistry.runtimes.set(input.runtimeId, {
@@ -2213,6 +2215,114 @@ test('LocalToolFacade team_launch launches every member with derived runtime IDs
   assert.equal(result.teamId, 'team-alpha');
   assert.equal(result.members.length, 3);
   assert.deepEqual(result.members.map((m) => m.status), ['starting', 'starting', 'starting']);
+});
+
+test('LocalToolFacade team_launch writes workspace isolation deny rules into the project (PROJECT.md §4)', async () => {
+  // The team_launch flow must write `permissions.deny` rules naming
+  // Symphony's install dir into `{projectCwd}/.claude/settings.local.json`
+  // BEFORE the per-member spawn loop, so the first agent's first turn
+  // already sees a constrained native-tool surface. This is the §4
+  // contract enforcement.
+  const tmpProject = await fs.mkdtemp(path.join(os.tmpdir(), 'toad-tl-isolation-'));
+  const installDir = '/c/Project-TOAD/toad-local';
+  try {
+    const { facade, registry, launches } = createTeamLifecycleFacade({
+      projectCwd: tmpProject,
+      installDir,
+    });
+    registry.registerTeam(new (await import('../src/team/teamConfig.js')).TeamConfig({
+      teamId: 'team-iso',
+      lead: { agentId: 'lead', command: 'claude' },
+      teammates: [{ agentId: 'worker', command: 'claude' }],
+    }));
+
+    await facade.execute({
+      commandName: COMMANDS.TEAM_LAUNCH,
+      idempotencyKey: 'team-launch-iso',
+      actor: { teamId: 'team-iso', agentId: 'operator' },
+      args: { teamId: 'team-iso' },
+    });
+
+    assert.equal(launches.length, 2);
+
+    const settingsPath = path.join(tmpProject, '.claude', 'settings.local.json');
+    const raw = await fs.readFile(settingsPath, 'utf-8');
+    const settings = JSON.parse(raw);
+    // The install dir is denied to every path-aware tool. Spot-check the
+    // riskiest ones — Read (file access), Bash (command access), Write.
+    assert.ok(Array.isArray(settings.permissions.deny));
+    assert.ok(settings.permissions.deny.includes(`Read(${installDir}/**)`));
+    assert.ok(settings.permissions.deny.includes(`Bash(${installDir}/**)`));
+    assert.ok(settings.permissions.deny.includes(`Write(${installDir}/**)`));
+    // And the workspace itself is NOT denied — that would brick the team.
+    const workspaceDeny = settings.permissions.deny.find((r) => r.includes(tmpProject));
+    assert.equal(workspaceDeny, undefined, 'workspace must not appear in deny list');
+  } finally {
+    await fs.rm(tmpProject, { recursive: true, force: true });
+  }
+});
+
+test('LocalToolFacade team_launch skips isolation write when projectCwd is unset (tests, no-project mode)', async () => {
+  // Without projectCwd we have nowhere to write the settings file — the
+  // launch must still succeed for unit tests + the sidecar's "no project
+  // loaded" mode.
+  const { facade, registry, launches } = createTeamLifecycleFacade({
+    projectCwd: null,
+    installDir: '/c/Project-TOAD/toad-local',
+  });
+  registry.registerTeam(new (await import('../src/team/teamConfig.js')).TeamConfig({
+    teamId: 'team-noproj',
+    lead: { agentId: 'lead', command: 'claude' },
+    teammates: [],
+  }));
+
+  await facade.execute({
+    commandName: COMMANDS.TEAM_LAUNCH,
+    idempotencyKey: 'team-launch-noproj',
+    actor: { teamId: 'team-noproj', agentId: 'operator' },
+    args: { teamId: 'team-noproj' },
+  });
+
+  assert.equal(launches.length, 1);
+});
+
+test('LocalToolFacade team_launch isolation write is idempotent across repeat launches (Stop + Resume)', async () => {
+  // PROJECT.md §4 says the writer is idempotent so a Stop + Resume cycle
+  // (which re-runs team_launch) doesn't re-add the same deny rules.
+  const tmpProject = await fs.mkdtemp(path.join(os.tmpdir(), 'toad-tl-iso-idem-'));
+  const installDir = '/c/Project-TOAD/toad-local';
+  try {
+    const { facade, registry } = createTeamLifecycleFacade({
+      projectCwd: tmpProject,
+      installDir,
+    });
+    registry.registerTeam(new (await import('../src/team/teamConfig.js')).TeamConfig({
+      teamId: 'team-iso',
+      lead: { agentId: 'lead', command: 'claude' },
+      teammates: [],
+    }));
+
+    await facade.execute({
+      commandName: COMMANDS.TEAM_LAUNCH,
+      idempotencyKey: 'team-launch-iso-1',
+      actor: { teamId: 'team-iso', agentId: 'operator' },
+      args: { teamId: 'team-iso' },
+    });
+    const settingsPath = path.join(tmpProject, '.claude', 'settings.local.json');
+    const firstSettings = JSON.parse(await fs.readFile(settingsPath, 'utf-8'));
+    const firstDenyCount = firstSettings.permissions.deny.length;
+
+    await facade.execute({
+      commandName: COMMANDS.TEAM_LAUNCH,
+      idempotencyKey: 'team-launch-iso-2',
+      actor: { teamId: 'team-iso', agentId: 'operator' },
+      args: { teamId: 'team-iso' },
+    });
+    const secondSettings = JSON.parse(await fs.readFile(settingsPath, 'utf-8'));
+    assert.equal(secondSettings.permissions.deny.length, firstDenyCount);
+  } finally {
+    await fs.rm(tmpProject, { recursive: true, force: true });
+  }
 });
 
 test('LocalToolFacade team_launch throws when the team config is missing', async () => {

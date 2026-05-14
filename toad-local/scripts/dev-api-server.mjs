@@ -1,4 +1,4 @@
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LocalToadRuntime } from '../src/app/LocalToadRuntime.js';
 import { FoundryRuntime } from '../src/foundry/foundryRuntime.js';
@@ -25,7 +25,21 @@ const projectCwd =
 const dbPath =
   process.env.TOAD_DB_PATH ||
   (projectCwd ? join(projectCwd, '.toad', 'toad.db') : ':memory:');
-const runtime = new LocalToadRuntime({ projectCwd, dbPath });
+
+// Symphony's own install dir — `toad-local/` when running this script from
+// the dev checkout, or the bundled app resources dir in a packaged build.
+// Derived from this file's own URL: `<installDir>/scripts/dev-api-server.mjs`
+// → resolve('..') from the script's dir gives us `<installDir>`.
+//
+// Threaded to LocalToadRuntime so team_launch can write deny rules naming
+// this dir into the workspace's `.claude/settings.local.json` (PROJECT.md §4).
+// TOAD_INSTALL_DIR env var overrides for non-standard layouts (e.g. CI).
+const installDir =
+  (typeof process.env.TOAD_INSTALL_DIR === 'string' && process.env.TOAD_INSTALL_DIR.length > 0)
+    ? process.env.TOAD_INSTALL_DIR
+    : resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+const runtime = new LocalToadRuntime({ projectCwd, dbPath, installDir });
 
 // §-drift wiring — Task 16:
 // LocalToadRuntime constructs db / taskBoard / eventLog / foundryStore /
@@ -158,6 +172,7 @@ if (projectCwd) {
   console.log('Symphony AI running with no project loaded — pick a folder in the UI to begin.');
 }
 console.log(`Symphony AI database at ${dbPath}`);
+console.log(`Symphony AI install dir at ${installDir} (agents denied access via .claude/settings.local.json on team_launch)`);
 
 async function shutdown() {
   if (driftMonitor && typeof driftMonitor.stop === 'function') {

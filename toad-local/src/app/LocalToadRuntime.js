@@ -52,6 +52,21 @@ export class LocalToadRuntime {
     foundryStore = null,
     adapters = new Map(),
     projectCwd = null,
+    /**
+     * Symphony's own install directory — `toad-local/` when running from a
+     * dev checkout, or the bundled app resources dir in a packaged build.
+     * Used by the team_launch flow to write `permissions.deny` rules into
+     * `{projectCwd}/.claude/settings.local.json` so spawned agents can't
+     * Read/Edit/Write/Grep/Glob/Bash their way into Symphony's own source.
+     *
+     * Per PROJECT.md §4: the agent isolation contract. Native CLI tools
+     * stay enabled (with --dangerously-skip-permissions for autonomy);
+     * we constrain them via deny patterns naming forbidden paths.
+     *
+     * When null, the team_launch flow skips isolation rule writing — this
+     * keeps unit tests with no install context clean.
+     */
+    installDir = null,
     spawnProcess,
     createAdapter,
     supervisor = null,
@@ -88,6 +103,7 @@ export class LocalToadRuntime {
     this.foundryStore = foundryStore || new SqliteFoundryStore({ filePath: defaultFoundryDbPath() });
     this.adapters = adapters;
     this.projectCwd = projectCwd;
+    this.installDir = installDir;
     this.dbPath = dbPath;
     this.sideEffectRetentionDays = sideEffectRetentionDays;
     this.supervisor =
@@ -168,6 +184,7 @@ export class LocalToadRuntime {
         deliveryWorker: this.deliveryWorker,
         adapters,
         projectCwd,
+        installDir,
         readModel: this.readModel,
         launchAgent: (input) => this.launchAgent(input),
         stopAgent: ({ runtimeId, signal } = {}) =>

@@ -6,6 +6,8 @@ import os from 'node:os';
 import {
   applyPermissionSuggestions,
   addPermissionRules,
+  buildWorkspaceIsolationRules,
+  writeWorkspaceIsolationSettings,
 } from '../src/runtime/claudeSettingsWriter.js';
 
 describe('claudeSettingsWriter', () => {
@@ -191,6 +193,222 @@ describe('claudeSettingsWriter', () => {
       const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
       assert.ok(settings.permissions.allow.includes('Bash'));
       assert.ok(settings.permissions.allow.includes('Write'));
+    });
+  });
+
+  describe('buildWorkspaceIsolationRules', () => {
+    // Per PROJECT.md §4: agents must never read or write outside their
+    // workspace. The native CLI tools stay enabled — we constrain them
+    // via deny rules naming specific outside-the-workspace paths.
+
+    const PATH_AWARE_TOOLS = ['Read', 'Edit', 'Write', 'NotebookEdit', 'Grep', 'Glob', 'Bash'];
+
+    it('throws when projectCwd is missing', () => {
+      assert.throws(
+        () => buildWorkspaceIsolationRules({ installDir: '/c/install' }),
+        /projectCwd required/,
+      );
+    });
+
+    it('throws when installDir is missing', () => {
+      assert.throws(
+        () => buildWorkspaceIsolationRules({ projectCwd: '/c/workspace' }),
+        /installDir required/,
+      );
+    });
+
+    it('emits one rule per path-aware tool for the install directory', () => {
+      const rules = buildWorkspaceIsolationRules({
+        projectCwd: '/c/workspace',
+        installDir: '/c/install',
+        platform: 'linux',
+      });
+      for (const tool of PATH_AWARE_TOOLS) {
+        assert.ok(
+          rules.includes(`${tool}(/c/install/**)`),
+          `expected ${tool}(/c/install/**) in rules, got: ${rules.join(', ')}`,
+        );
+      }
+    });
+
+    it('emits one rule per path-aware tool for each extraDeny path', () => {
+      const rules = buildWorkspaceIsolationRules({
+        projectCwd: '/c/workspace',
+        installDir: '/c/install',
+        extraDeny: ['/home/user/.ssh', '/home/user/.aws'],
+        platform: 'linux',
+      });
+      for (const tool of PATH_AWARE_TOOLS) {
+        assert.ok(rules.includes(`${tool}(/home/user/.ssh/**)`));
+        assert.ok(rules.includes(`${tool}(/home/user/.aws/**)`));
+      }
+    });
+
+    it('never includes projectCwd in deny rules even if passed via extraDeny', () => {
+      const rules = buildWorkspaceIsolationRules({
+        projectCwd: '/c/workspace',
+        installDir: '/c/install',
+        extraDeny: ['/c/workspace'], // defensive — caller mistake
+        platform: 'linux',
+      });
+      for (const tool of PATH_AWARE_TOOLS) {
+        assert.ok(
+          !rules.includes(`${tool}(/c/workspace/**)`),
+          `workspace path must not appear in deny rules, but ${tool}(/c/workspace/**) did`,
+        );
+      }
+    });
+
+    it('normalizes Windows backslashes to forward slashes in patterns', () => {
+      const rules = buildWorkspaceIsolationRules({
+        projectCwd: 'C:\\workspace',
+        installDir: 'C:\\Project-TOAD\\toad-local',
+        platform: 'win32',
+      });
+      // Backslashes → forward slashes so Claude Code's glob matcher works.
+      assert.ok(rules.some((r) => r === 'Read(C:/Project-TOAD/toad-local/**)'));
+      assert.ok(!rules.some((r) => r.includes('\\')));
+    });
+
+    it('includes Windows system paths on win32 platform', () => {
+      const rules = buildWorkspaceIsolationRules({
+        projectCwd: 'C:/workspace',
+        installDir: 'C:/install',
+        platform: 'win32',
+      });
+      assert.ok(rules.includes('Read(C:/Windows/**)'));
+      assert.ok(rules.includes('Bash(C:/Program Files/**)'));
+    });
+
+    it('includes POSIX system paths on non-win32 platform', () => {
+      const rules = buildWorkspaceIsolationRules({
+        projectCwd: '/home/user/workspace',
+        installDir: '/opt/symphony',
+        platform: 'linux',
+      });
+      assert.ok(rules.includes('Read(/etc/**)'));
+      assert.ok(rules.includes('Read(/sys/**)'));
+      assert.ok(rules.includes('Bash(/proc/**)'));
+      assert.ok(rules.includes('Read(/root/**)'));
+    });
+
+    it('does not leak POSIX paths onto win32 or vice versa', () => {
+      const winRules = buildWorkspaceIsolationRules({
+        projectCwd: 'C:/workspace',
+        installDir: 'C:/install',
+        platform: 'win32',
+      });
+      assert.ok(!winRules.some((r) => r.includes('/etc/')));
+      assert.ok(!winRules.some((r) => r.includes('/proc/')));
+
+      const linuxRules = buildWorkspaceIsolationRules({
+        projectCwd: '/workspace',
+        installDir: '/install',
+        platform: 'linux',
+      });
+      assert.ok(!linuxRules.some((r) => r.includes('C:/Windows')));
+      assert.ok(!linuxRules.some((r) => r.includes('Program Files')));
+    });
+
+    it('strips trailing slashes from input paths before appending /**', () => {
+      const rules = buildWorkspaceIsolationRules({
+        projectCwd: '/c/workspace',
+        installDir: '/c/install/',
+        platform: 'linux',
+      });
+      assert.ok(rules.includes('Read(/c/install/**)'));
+      // No double-slash artifacts like /c/install//**.
+      assert.ok(!rules.some((r) => r.includes('//**')));
+    });
+
+    it('ignores empty strings in extraDeny', () => {
+      const rules = buildWorkspaceIsolationRules({
+        projectCwd: '/c/workspace',
+        installDir: '/c/install',
+        extraDeny: ['', '/home/user/.ssh', ''],
+        platform: 'linux',
+      });
+      // No bare "Read(/**)" rules from the empties.
+      assert.ok(!rules.some((r) => r === 'Read(/**)'));
+      assert.ok(rules.includes('Read(/home/user/.ssh/**)'));
+    });
+  });
+
+  describe('writeWorkspaceIsolationSettings', () => {
+    it('writes deny rules into .claude/settings.local.json', async () => {
+      const result = await writeWorkspaceIsolationSettings({
+        projectCwd: tmpDir,
+        installDir: '/c/Project-TOAD/toad-local',
+        platform: 'linux',
+      });
+      assert.ok(result.added > 0);
+      assert.ok(Array.isArray(result.rules));
+      assert.ok(result.rules.length > 0);
+
+      const settingsPath = path.join(tmpDir, '.claude', 'settings.local.json');
+      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+      assert.ok(Array.isArray(settings.permissions.deny));
+      assert.ok(settings.permissions.deny.includes('Read(/c/Project-TOAD/toad-local/**)'));
+      assert.ok(settings.permissions.deny.includes('Bash(/c/Project-TOAD/toad-local/**)'));
+    });
+
+    it('is idempotent — second call adds zero new rules', async () => {
+      await writeWorkspaceIsolationSettings({
+        projectCwd: tmpDir,
+        installDir: '/c/install',
+        platform: 'linux',
+      });
+      const second = await writeWorkspaceIsolationSettings({
+        projectCwd: tmpDir,
+        installDir: '/c/install',
+        platform: 'linux',
+      });
+      assert.equal(second.added, 0);
+    });
+
+    it('preserves pre-existing allow entries when writing deny rules', async () => {
+      const settingsPath = path.join(tmpDir, '.claude', 'settings.local.json');
+      fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+      fs.writeFileSync(settingsPath, JSON.stringify({
+        permissions: { allow: ['Bash(npm install:*)'] },
+      }));
+
+      await writeWorkspaceIsolationSettings({
+        projectCwd: tmpDir,
+        installDir: '/c/install',
+        platform: 'linux',
+      });
+
+      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+      // allow list untouched
+      assert.deepStrictEqual(settings.permissions.allow, ['Bash(npm install:*)']);
+      // deny list now populated
+      assert.ok(settings.permissions.deny.includes('Read(/c/install/**)'));
+    });
+
+    it('merges with existing deny entries without duplicating', async () => {
+      const settingsPath = path.join(tmpDir, '.claude', 'settings.local.json');
+      fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+      fs.writeFileSync(settingsPath, JSON.stringify({
+        permissions: { deny: ['Read(/c/install/**)', 'Bash(rm -rf:*)'] },
+      }));
+
+      const result = await writeWorkspaceIsolationSettings({
+        projectCwd: tmpDir,
+        installDir: '/c/install',
+        platform: 'linux',
+      });
+      // Pre-existing Read(/c/install/**) is not re-added.
+      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+      const readInstallCount = settings.permissions.deny.filter(
+        (r) => r === 'Read(/c/install/**)',
+      ).length;
+      assert.equal(readInstallCount, 1);
+      // Custom Bash(rm -rf:*) survives.
+      assert.ok(settings.permissions.deny.includes('Bash(rm -rf:*)'));
+      // And the new rules landed (6 path-aware tools × the install dir,
+      // minus the one Read rule that pre-existed, plus the system paths).
+      assert.ok(result.added > 0);
     });
   });
 });

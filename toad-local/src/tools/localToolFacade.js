@@ -9,7 +9,7 @@ import {
   TASK_STATUS,
   TASK_TYPES,
 } from '../task/inMemoryTaskBoard.js';
-import { applyPermissionSuggestions } from '../runtime/claudeSettingsWriter.js';
+import { applyPermissionSuggestions, writeWorkspaceIsolationSettings } from '../runtime/claudeSettingsWriter.js';
 import { formatCrossTeamText, CROSS_TEAM_SOURCE, CROSS_TEAM_SENT_SOURCE } from '../protocol/crossTeam.js';
 import { TeamConfig } from '../team/teamConfig.js';
 import { buildAgentSystemPrompt } from '../team/teamSystemPrompts.js';
@@ -84,7 +84,7 @@ export class LocalToolFacade {
   #claudeQuotaCache = null;
   #claudeQuotaInflight = null;
 
-  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, foundryStore = null, foundryRuntime = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null, mergeIntegrator = null, remoteMergePolicy = null, riskPolicy = null, settingsStore = null, riskPolicyStore = null, githubFetch = null, githubClientId = null, providerAuthSpawn = null, providerAuthSpawnSync = null, providerAuthReadFile = null, providerAuthStat = null, claudeUsageProbe = null, driftEngine = null, runGit = null, deliveryWorker = null, pluginAuthReadFile = null, pluginAuthStat = null, pluginAuthSpawn = null, pluginAuthSpawnSync = null, pluginResources = null, pluginJobs = null, railwayToolImpls = null, easToolImpls = null, vercelToolImpls = null }) {
+  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, installDir = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, foundryStore = null, foundryRuntime = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null, mergeIntegrator = null, remoteMergePolicy = null, riskPolicy = null, settingsStore = null, riskPolicyStore = null, githubFetch = null, githubClientId = null, providerAuthSpawn = null, providerAuthSpawnSync = null, providerAuthReadFile = null, providerAuthStat = null, claudeUsageProbe = null, driftEngine = null, runGit = null, deliveryWorker = null, pluginAuthReadFile = null, pluginAuthStat = null, pluginAuthSpawn = null, pluginAuthSpawnSync = null, pluginResources = null, pluginJobs = null, railwayToolImpls = null, easToolImpls = null, vercelToolImpls = null }) {
     if (!broker) throw new TypeError('broker is required');
     if (!taskBoard) throw new TypeError('taskBoard is required');
     this.broker = broker;
@@ -102,6 +102,10 @@ export class LocalToolFacade {
     this.approvalBroker = approvalBroker;
     this.adapters = adapters;
     this.projectCwd = projectCwd;
+    // Symphony's install dir — needed for the team_launch isolation pass
+    // that writes deny rules naming Symphony's own source as off-limits to
+    // spawned agents. See PROJECT.md §4 and #teamLaunch below.
+    this.installDir = typeof installDir === 'string' && installDir.length > 0 ? installDir : null;
     this.readModel = readModel;
     this.launchAgent = typeof launchAgent === 'function' ? launchAgent : null;
     this.stopAgent = typeof stopAgent === 'function' ? stopAgent : null;
@@ -1317,6 +1321,44 @@ export class LocalToolFacade {
     }
     const members = [config.lead, ...config.teammates];
     const results = [];
+
+    // PROJECT.md §4 — agent isolation contract.
+    //
+    // Before any agent in this team spawns, write `permissions.deny` rules
+    // into `{projectCwd}/.claude/settings.local.json` so Claude Code's
+    // native CLI tools (Read/Edit/Write/Bash/Grep/Glob/NotebookEdit) refuse
+    // to touch Symphony's own source dir, OS system paths, and any extras
+    // the user configured. Native tools stay enabled — only their reach is
+    // constrained — so the dev/lead/reviewer/tester loops keep working.
+    //
+    // Skipped when projectCwd isn't set (e.g. :memory: tests, the
+    // "no project loaded" sidecar mode) or when installDir isn't known
+    // (older constructor callers that haven't been updated yet). The
+    // writer is idempotent on repeat invocations so a Stop + Resume cycle
+    // re-running team_launch doesn't re-write the same rules.
+    if (
+      typeof this.projectCwd === 'string'
+      && this.projectCwd.length > 0
+      && typeof this.installDir === 'string'
+      && this.installDir.length > 0
+    ) {
+      try {
+        await writeWorkspaceIsolationSettings({
+          projectCwd: this.projectCwd,
+          installDir: this.installDir,
+        });
+      } catch (err) {
+        // Best-effort. A failure here means the agent will still run with
+        // the operator's pre-existing settings, but we shouldn't block the
+        // team_launch — the deny rules are a defense-in-depth layer, not
+        // a prerequisite for the team running at all.
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[team_launch] writeWorkspaceIsolationSettings failed: ${err?.message || err}`,
+        );
+      }
+    }
+
     // Pull the project root so the system prompt can tell agents where the
     // code they're working on actually lives. Falls back to '.' if no cwd
     // was set on the lead — agents will still boot, just without a path.
