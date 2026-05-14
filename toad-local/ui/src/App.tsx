@@ -937,6 +937,19 @@ function AppInner() {
                   });
               }}
               onPauseTeam={handlePauseTeam}
+              onSwapAgentProvider={async ({ agentId, providerId }) => {
+                const teamId = team.name || activeTeamId;
+                if (!teamId) {
+                  throw new Error('No active team to swap provider for.');
+                }
+                await callToadApi({
+                  actor: { teamId, agentId: 'ui-client', role: 'human' },
+                  method: 'agent_swap_provider',
+                  args: { teamId, agentId, providerId },
+                  idempotencyKey: `swap-${teamId}-${agentId}-${providerId}-${Date.now()}`,
+                });
+                refresh();
+              }}
             />
           )}
           {tweaks.screen === 'code' && (

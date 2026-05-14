@@ -265,6 +265,8 @@ export class LocalToolFacade {
         return this.#agentLaunch(actor, args);
       case COMMANDS.AGENT_STOP:
         return this.#agentStop(actor, args);
+      case COMMANDS.AGENT_SWAP_PROVIDER:
+        return this.#agentSwapProvider(actor, args);
       case COMMANDS.TEAM_CREATE:
         return this.#teamCreate(actor, args);
       case COMMANDS.TEAM_LIST:
@@ -1273,6 +1275,196 @@ export class LocalToolFacade {
     const input = { runtimeId };
     if (typeof args.signal === 'string' && args.signal.length > 0) input.signal = args.signal;
     return this.stopAgent(input);
+  }
+
+  /**
+   * agent_swap_provider — swap a single agent's provider mid-team.
+   *
+   * The agent's process is stopped, the team config is updated with
+   * the new providerId + corresponding CLI command, and team_launch
+   * relaunches the (now-stopped) target with the new provider while
+   * leaving the rest of the team alive (team_launch skips members
+   * with a live adapter). The same runtimeId is reused so prior
+   * runtime_events + message_send history stay attached.
+   *
+   * After the relaunch, posts a system message to the lead so it can
+   * adjust delegations if needed ("the developer is now on Codex,
+   * was Claude — continuing prior task").
+   *
+   * Args:
+   *   - teamId      string  Required. Existing team.
+   *   - agentId     string  Required. Lead or teammate agentId.
+   *   - providerId  string  Required. 'anthropic' | 'openai' | 'gemini' | 'opencode'.
+   *
+   * Returns:
+   *   { teamId, agentId, previousProviderId, providerId, command, relaunched }
+   */
+  async #agentSwapProvider(actor, args) {
+    if (!this.teamConfigRegistry) {
+      throw new Error('agent_swap_provider: teamConfigRegistry is not configured');
+    }
+    if (!this.launchAgent) {
+      throw new Error('agent_swap_provider: launchAgent is not configured');
+    }
+    if (!this.stopAgent) {
+      throw new Error('agent_swap_provider: stopAgent is not configured');
+    }
+    const teamId = requireString(args.teamId, 'args.teamId');
+    const agentId = requireString(args.agentId, 'args.agentId');
+    const providerId = requireString(args.providerId, 'args.providerId');
+
+    // Provider → CLI command mapping. Centralized here so swap, create,
+    // and any future "switch provider" flow all use the same canonical
+    // names. Throwing on unknown providers (rather than silently falling
+    // through to 'claude') prevents the operator from being stuck with
+    // a wrong-binary agent that spawns and immediately ENOENTs.
+    const PROVIDER_COMMANDS = {
+      anthropic: 'claude',
+      openai: 'codex',
+      gemini: 'gemini',
+      opencode: 'opencode',
+    };
+    const command = PROVIDER_COMMANDS[providerId];
+    if (!command) {
+      const known = Object.keys(PROVIDER_COMMANDS).join(', ');
+      throw new Error(
+        `agent_swap_provider: unknown providerId "${providerId}". Known: ${known}.`,
+      );
+    }
+
+    const config = this.teamConfigRegistry.getTeam(teamId);
+    if (!config) {
+      throw new Error(`agent_swap_provider: no config for teamId ${teamId}`);
+    }
+
+    // Locate the target member (lead OR one of teammates) and capture
+    // the previous providerId for the lead-notification message below.
+    const isLead = config.lead?.agentId === agentId;
+    let previousProviderId;
+    if (isLead) {
+      previousProviderId = config.lead.providerId || null;
+    } else {
+      const teammate = (config.teammates || []).find((m) => m && m.agentId === agentId);
+      if (!teammate) {
+        throw new Error(
+          `agent_swap_provider: no member with agentId "${agentId}" in team "${teamId}"`,
+        );
+      }
+      previousProviderId = teammate.providerId || null;
+    }
+
+    if (previousProviderId === providerId) {
+      // Idempotent no-op — operator double-clicked or the UI sent the
+      // same provider twice. Don't churn the agent for no reason.
+      return {
+        teamId,
+        agentId,
+        previousProviderId,
+        providerId,
+        command,
+        relaunched: false,
+      };
+    }
+
+    // Build the updated TeamConfig. The original is immutable from
+    // outside (we don't have a setter on TeamConfig), so we re-construct
+    // from its toJSON snapshot with the target member's fields swapped.
+    const snapshot = typeof config.toJSON === 'function'
+      ? config.toJSON()
+      : { teamId: config.teamId, lead: config.lead, teammates: config.teammates };
+    const nextLead = isLead
+      ? { ...snapshot.lead, providerId, command }
+      : snapshot.lead;
+    const nextTeammates = isLead
+      ? snapshot.teammates
+      : snapshot.teammates.map((m) =>
+        m && m.agentId === agentId ? { ...m, providerId, command } : m,
+      );
+    const updated = new TeamConfig({
+      teamId: snapshot.teamId,
+      lead: nextLead,
+      teammates: nextTeammates,
+      validation: snapshot.validation,
+    });
+    this.teamConfigRegistry.registerTeam(updated);
+
+    // Stop the target agent if it's running so the relaunch below
+    // picks it up. Look up the runtime by the derived runtimeId
+    // (`runtime-<teamId>-<agentId>`), which matches what team_launch
+    // uses to compose member runtimeIds.
+    const runtimeId = `runtime-${teamId}-${agentId}`;
+    let wasRunning = false;
+    if (this.runtimeRegistry && typeof this.runtimeRegistry.getRuntime === 'function') {
+      const existing = this.runtimeRegistry.getRuntime(runtimeId);
+      if (existing && existing.status === 'running') {
+        wasRunning = true;
+        try {
+          await this.stopAgent({ runtimeId, signal: 'SIGTERM' });
+        } catch (err) {
+          // Stop failure shouldn't block the swap — the previous binary
+          // might already be wedged. Log and proceed; team_launch's
+          // stale-row cleanup will catch the dangling registry row.
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[agent_swap_provider] stopAgent(${runtimeId}) failed: ${err?.message || err}`,
+          );
+        }
+      }
+    }
+
+    // Relaunch via team_launch — it only spawns members whose adapter
+    // isn't live, so the rest of the team is untouched. The target
+    // (just stopped, or never started) spawns with the new command +
+    // providerId pulled from the updated team config.
+    let relaunched = false;
+    try {
+      await this.#teamLaunch(actor, { teamId });
+      relaunched = true;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[agent_swap_provider] team_launch after swap failed: ${err?.message || err}`,
+      );
+    }
+
+    // Notify the lead. Skip when the swapped agent IS the lead (no one
+    // to tell) and when broker/launchAgent are missing in test harness.
+    if (!isLead && this.broker && typeof this.broker.appendMessage === 'function') {
+      try {
+        const previousBrand = previousProviderId || 'unknown';
+        const text = [
+          `[system] ${agentId} is now running on ${providerId} (was ${previousBrand}).`,
+          wasRunning
+            ? 'Their prior process was stopped and relaunched; runtime history is preserved.'
+            : 'They were not running at swap time; new provider takes effect on next launch.',
+          'Continue delegating as normal — Symphony handles the protocol switch transparently.',
+        ].join(' ');
+        this.broker.appendMessage({
+          teamId,
+          fromAgentId: 'symphony',
+          toAgentId: config.lead.agentId,
+          kind: MESSAGE_KINDS.SYSTEM,
+          body: { text },
+          idempotencyKey: `agent-swap-notify-${teamId}-${agentId}-${Date.now()}`,
+        });
+      } catch (err) {
+        // Notification failure is non-fatal — swap already happened.
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[agent_swap_provider] lead notification failed: ${err?.message || err}`,
+        );
+      }
+    }
+
+    return {
+      teamId,
+      agentId,
+      previousProviderId,
+      providerId,
+      command,
+      relaunched,
+      wasRunning,
+    };
   }
 
   #teamCreate(actor, args) {

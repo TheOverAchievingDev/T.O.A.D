@@ -1,6 +1,17 @@
+import { useState } from 'react';
 import type { Agent, UiTask, ValidationKind, UiValidationRun } from '@/types';
 import type { DriftFinding, DriftRunResult } from '@/hooks/useDrift';
 import { Icon } from '../Icon';
+import { providerLabel, type ProviderId } from '@/data/providerLabels';
+
+/**
+ * Providers the operator can swap a live agent to. Order matches the
+ * dropdown render. Keep in sync with the backend's
+ * agent_swap_provider PROVIDER_COMMANDS map — both are the source of
+ * truth for "which providers exist?" and they must agree or the
+ * dropdown will offer choices the backend rejects.
+ */
+const SWAPPABLE_PROVIDERS: ProviderId[] = ['anthropic', 'openai', 'gemini', 'opencode'];
 
 /**
  * Phase 2 Inspector — right column of the FOR-me Cockpit.
@@ -37,6 +48,13 @@ export interface InspectorProps {
   onOpenDriftScreen?: () => void;
   /** Optional CTA — open the full Task detail modal. */
   onOpenTaskDetail?: (taskId: string) => void;
+
+  /** Optional provider-swap handler. When provided, the Agent pane
+   *  renders a "Swap provider" control next to the Provider row.
+   *  Returns a promise so the pane can show "Swapping…" while the
+   *  backend stop→update→relaunch cycle runs (typically 1-3 seconds).
+   *  When omitted, the control is hidden. */
+  onSwapAgentProvider?: (input: { agentId: string; providerId: string }) => Promise<void>;
 }
 
 interface TabSpec {
@@ -57,6 +75,7 @@ export function Inspector({
   drift,
   onOpenDriftScreen,
   onOpenTaskDetail,
+  onSwapAgentProvider,
 }: InspectorProps) {
   return (
     <div className="insp">
@@ -75,7 +94,7 @@ export function Inspector({
       </div>
       <div className="insp-body">
         {activeTab === 'task' && <TaskPane task={selectedTask} onOpenDetail={onOpenTaskDetail} />}
-        {activeTab === 'agent' && <AgentPane agent={selectedAgent} />}
+        {activeTab === 'agent' && <AgentPane agent={selectedAgent} onSwapProvider={onSwapAgentProvider} />}
         {activeTab === 'drift' && <DriftPane drift={drift} onOpenDriftScreen={onOpenDriftScreen} />}
       </div>
     </div>
@@ -215,9 +234,33 @@ function verdictLabel(v: 'passed' | 'failed' | 'not_run'): string {
 // Agent pane
 // ============================================================
 
-function AgentPane({ agent }: { agent: Agent | null }) {
+function AgentPane({
+  agent,
+  onSwapProvider,
+}: {
+  agent: Agent | null;
+  onSwapProvider?: InspectorProps['onSwapAgentProvider'];
+}) {
+  const [swapPending, setSwapPending] = useState(false);
+  const [swapError, setSwapError] = useState<string | null>(null);
+
   if (!agent) return <EmptyPane label="Select an agent to inspect." />;
   const pct = agent.tokenLimit > 0 ? Math.min(100, Math.round((agent.tokens / agent.tokenLimit) * 100)) : 0;
+  const handleSwap: React.ChangeEventHandler<HTMLSelectElement> = async (e) => {
+    const next = e.target.value as ProviderId;
+    if (!onSwapProvider) return;
+    if (!next || next === agent.provider) return;
+    setSwapPending(true);
+    setSwapError(null);
+    try {
+      await onSwapProvider({ agentId: agent.id, providerId: next });
+    } catch (err) {
+      setSwapError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSwapPending(false);
+    }
+  };
+
   return (
     <>
       <div className="insp-section">
@@ -225,9 +268,44 @@ function AgentPane({ agent }: { agent: Agent | null }) {
         <div className="kv">
           <span className="k">Name</span><span className="v">{agent.name}</span>
           <span className="k">Role</span><span className="v">{agent.role}</span>
-          <span className="k">Provider</span><span className="v mono">{agent.provider} / {agent.model}</span>
+          <span className="k">Provider</span>
+          {onSwapProvider ? (
+            <span className="v" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <select
+                className="insp-provider-select"
+                value={agent.provider}
+                onChange={handleSwap}
+                disabled={swapPending}
+                title="Swap this agent's provider. The agent will stop, the team config updates, and the agent relaunches with the new CLI. Conversation history is preserved."
+                style={{
+                  background: 'transparent',
+                  color: 'inherit',
+                  border: '1px solid var(--border, oklch(0.4 0.02 60))',
+                  borderRadius: 4,
+                  padding: '1px 4px',
+                  font: 'inherit',
+                }}
+              >
+                {SWAPPABLE_PROVIDERS.map((p) => (
+                  <option key={p} value={p}>{providerLabel(p)}</option>
+                ))}
+                {!SWAPPABLE_PROVIDERS.includes(agent.provider as ProviderId) && (
+                  <option value={agent.provider}>{providerLabel(agent.provider as ProviderId)}</option>
+                )}
+              </select>
+              <span className="mono" style={{ opacity: 0.6 }}>/ {agent.model}</span>
+              {swapPending && <span style={{ opacity: 0.6, fontSize: 11 }}>swapping…</span>}
+            </span>
+          ) : (
+            <span className="v mono">{agent.provider} / {agent.model}</span>
+          )}
           <span className="k">Status</span><span className="v">{agent.status}</span>
         </div>
+        {swapError && (
+          <div style={{ marginTop: 6, fontSize: 11, color: 'var(--danger, #d97757)' }}>
+            Swap failed: {swapError}
+          </div>
+        )}
       </div>
       <div className="insp-section">
         <h5>Token use</h5>

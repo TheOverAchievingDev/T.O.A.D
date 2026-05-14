@@ -60,6 +60,8 @@ export interface CockpitScreenV2Props {
   /** Pause the team (team_stop on every live runtime). When omitted,
    *  the Resume button stays as Resume even if the team is running. */
   onPauseTeam?: () => void | Promise<void>;
+  /** Swap an agent's provider mid-team — fires agent_swap_provider. */
+  onSwapAgentProvider?: (input: { agentId: string; providerId: string }) => Promise<void>;
   onCreateTask?: () => void;
   onRefreshDrift?: () => Promise<void>;
   onOpenTaskDetail?: (taskId: string) => void;
@@ -97,6 +99,7 @@ export function CockpitScreenV2(props: CockpitScreenV2Props) {
       reopenContext={props.reopenContext}
       onResumeTeam={props.onResumeTeam}
       onPauseTeam={props.onPauseTeam}
+      onSwapAgentProvider={props.onSwapAgentProvider}
       onCreateTask={props.onCreateTask}
       onRefreshDrift={props.onRefreshDrift}
       onOpenTaskDetail={props.onOpenTaskDetail}

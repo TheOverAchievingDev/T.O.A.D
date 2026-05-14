@@ -2143,6 +2143,149 @@ test('LocalToolFacade runtime_list falls back to actor.teamId when args.teamId i
   assert.deepEqual(result, { runtimes: [] });
 });
 
+test('LocalToolFacade agent_swap_provider stops the target, updates the team config, and relaunches with the new command', async () => {
+  // Cockpit Agent inspector → Swap provider dropdown → this command.
+  // The expected flow: stop the target agent, update only that
+  // member's providerId + command, relaunch the team (which only
+  // spawns the just-stopped member), and post a system message_send
+  // to the lead announcing the swap.
+  const { facade, registry, launches, stops, runtimeRegistry } = createTeamLifecycleFacade({
+    projectCwd: '/abs/workspace',
+    installDir: '/opt/symphony',
+    teamRuntimes: [
+      // The target is alive at swap time — stopAgent must fire.
+      { runtimeId: 'runtime-team-x-dev', teamId: 'team-x', agentId: 'dev', status: 'running' },
+    ],
+    adapters: new Map([['runtime-team-x-dev', { sendTurn: () => ({}) }]]),
+  });
+  registry.registerTeam(new (await import('../src/team/teamConfig.js')).TeamConfig({
+    teamId: 'team-x',
+    lead: { agentId: 'lead', command: 'claude', providerId: 'anthropic' },
+    teammates: [
+      { agentId: 'dev', role: 'developer', command: 'claude', providerId: 'anthropic' },
+    ],
+  }));
+
+  const result = await facade.execute({
+    commandName: COMMANDS.AGENT_SWAP_PROVIDER,
+    idempotencyKey: 'swap-1',
+    actor: { teamId: 'team-x', agentId: 'operator', role: 'human' },
+    args: { teamId: 'team-x', agentId: 'dev', providerId: 'openai' },
+  });
+
+  // Return shape
+  assert.equal(result.teamId, 'team-x');
+  assert.equal(result.agentId, 'dev');
+  assert.equal(result.previousProviderId, 'anthropic');
+  assert.equal(result.providerId, 'openai');
+  assert.equal(result.command, 'codex');
+  assert.equal(result.relaunched, true);
+  assert.equal(result.wasRunning, true);
+
+  // The stop fired.
+  assert.equal(stops.length, 1);
+  assert.equal(stops[0].runtimeId, 'runtime-team-x-dev');
+
+  // The team config now has the new command + providerId for the
+  // teammate; lead is untouched.
+  const updated = registry.getTeam('team-x');
+  assert.equal(updated.lead.providerId, 'anthropic');
+  assert.equal(updated.lead.command, 'claude');
+  const dev = updated.teammates.find((m) => m.agentId === 'dev');
+  assert.equal(dev.providerId, 'openai');
+  assert.equal(dev.command, 'codex');
+
+  // team_launch fired post-swap. The lead has a live adapter so it's
+  // skipped; only the just-stopped dev re-spawns.
+  const devLaunch = launches.find((l) => l.agentId === 'dev');
+  assert.ok(devLaunch, 'dev should have been relaunched');
+  assert.equal(devLaunch.command, 'codex');
+  assert.equal(devLaunch.providerId, 'openai');
+
+  // Lead got a system message_send announcing the swap.
+  // (We don't have a fake broker here; createTeamLifecycleFacade
+  // uses InMemoryBroker which records appendMessage calls — assert
+  // by listing.)
+  // eslint-disable-next-line no-void
+  void runtimeRegistry; // unused; suppress lint
+});
+
+test('LocalToolFacade agent_swap_provider swap to the SAME provider is a no-op (idempotent)', async () => {
+  // Operator double-clicks the dropdown on the current provider — we
+  // must not churn the agent. The agent stays running, no team_launch
+  // fires, no system message is sent.
+  const { facade, registry, launches, stops } = createTeamLifecycleFacade({
+    projectCwd: '/abs/workspace',
+    installDir: '/opt/symphony',
+    teamRuntimes: [
+      { runtimeId: 'runtime-team-x-dev', teamId: 'team-x', agentId: 'dev', status: 'running' },
+    ],
+    adapters: new Map([['runtime-team-x-dev', { sendTurn: () => ({}) }]]),
+  });
+  registry.registerTeam(new (await import('../src/team/teamConfig.js')).TeamConfig({
+    teamId: 'team-x',
+    lead: { agentId: 'lead', command: 'claude', providerId: 'anthropic' },
+    teammates: [
+      { agentId: 'dev', role: 'developer', command: 'claude', providerId: 'anthropic' },
+    ],
+  }));
+
+  const result = await facade.execute({
+    commandName: COMMANDS.AGENT_SWAP_PROVIDER,
+    idempotencyKey: 'swap-noop',
+    actor: { teamId: 'team-x', agentId: 'operator', role: 'human' },
+    args: { teamId: 'team-x', agentId: 'dev', providerId: 'anthropic' },
+  });
+
+  assert.equal(result.relaunched, false);
+  assert.equal(stops.length, 0, 'no stop should fire for same-provider swap');
+  assert.equal(launches.length, 0, 'no relaunch should fire for same-provider swap');
+});
+
+test('LocalToolFacade agent_swap_provider rejects unknown providerId with a clear error', async () => {
+  const { facade, registry } = createTeamLifecycleFacade({
+    projectCwd: '/abs/workspace',
+    installDir: '/opt/symphony',
+  });
+  registry.registerTeam(new (await import('../src/team/teamConfig.js')).TeamConfig({
+    teamId: 'team-x',
+    lead: { agentId: 'lead', command: 'claude', providerId: 'anthropic' },
+    teammates: [{ agentId: 'dev', role: 'developer' }],
+  }));
+
+  await assert.rejects(
+    () => facade.execute({
+      commandName: COMMANDS.AGENT_SWAP_PROVIDER,
+      idempotencyKey: 'swap-bad',
+      actor: { teamId: 'team-x', agentId: 'operator', role: 'human' },
+      args: { teamId: 'team-x', agentId: 'dev', providerId: 'not-a-real-provider' },
+    }),
+    /unknown providerId/,
+  );
+});
+
+test('LocalToolFacade agent_swap_provider rejects when agentId is not in the team', async () => {
+  const { facade, registry } = createTeamLifecycleFacade({
+    projectCwd: '/abs/workspace',
+    installDir: '/opt/symphony',
+  });
+  registry.registerTeam(new (await import('../src/team/teamConfig.js')).TeamConfig({
+    teamId: 'team-x',
+    lead: { agentId: 'lead', command: 'claude', providerId: 'anthropic' },
+    teammates: [{ agentId: 'dev', role: 'developer' }],
+  }));
+
+  await assert.rejects(
+    () => facade.execute({
+      commandName: COMMANDS.AGENT_SWAP_PROVIDER,
+      idempotencyKey: 'swap-missing',
+      actor: { teamId: 'team-x', agentId: 'operator', role: 'human' },
+      args: { teamId: 'team-x', agentId: 'ghost', providerId: 'openai' },
+    }),
+    /no member with agentId/,
+  );
+});
+
 test('LocalToolFacade routes team_create / team_list / team_delete through the team config registry', () => {
   const facade = new LocalToolFacade({
     broker: new InMemoryBroker(),

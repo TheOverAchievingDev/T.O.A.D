@@ -68,6 +68,10 @@ export interface CockpitForMeProps {
    *  cockpit. Same handler the menubar's Pause Team uses (App.tsx
    *  handlePauseTeam → team_stop). */
   onPauseTeam?: () => void | Promise<void>;
+  /** Optional provider-swap handler — wires the Inspector's "Provider"
+   *  dropdown to agent_swap_provider. App.tsx passes this when the
+   *  active team is known; the dropdown is hidden when omitted. */
+  onSwapAgentProvider?: (input: { agentId: string; providerId: string }) => Promise<void>;
   onCreateTask?: () => void;
   onRefreshDrift?: () => Promise<void>;
   onOpenTaskDetail?: (taskId: string) => void;
@@ -98,6 +102,7 @@ export function CockpitForMe({
   reopenContext = null,
   onResumeTeam,
   onPauseTeam,
+  onSwapAgentProvider,
   onCreateTask,
   onRefreshDrift,
   onOpenTaskDetail,
@@ -379,6 +384,7 @@ export function CockpitForMe({
             drift={drift}
             onOpenTaskDetail={onOpenTaskDetail}
             onOpenDriftScreen={onOpenDriftScreen}
+            onSwapAgentProvider={onSwapAgentProvider}
           />
         </PaneSplitter>
       </PaneSplitter>
