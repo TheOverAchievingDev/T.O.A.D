@@ -1754,14 +1754,19 @@ export class LocalToolFacade {
 
     // Enrich each runtime with derivable stats. Real CPU/memory sampling
     // would need a per-pid lib (pidusage) — left as 0 for now and the UI
-    // hides those columns when 0. Uptime + req count are cheap to compute
-    // from data we already have.
+    // hides those columns when 0. Uptime + req count + token totals are
+    // cheap to compute from data we already have.
     const now = Date.now();
     const events = this.eventLog && typeof this.eventLog.listEvents === 'function'
       ? this.eventLog.listEvents({ teamId })
       : [];
     const reqsByRuntime = new Map();
     let lastEventByRuntime = new Map();
+    // Per-runtime token + cost totals. The Cockpit inspector's "Used
+    // X / 200,000" meter reads tokensIn + tokensOut on each runtime row.
+    // Without this aggregation the meter is always 0 even when an agent
+    // has been talking — that's the bug the user hit on the live screen.
+    const tokensByRuntime = new Map();
     for (const e of events) {
       if (e.eventType === 'tool_use') {
         reqsByRuntime.set(e.runtimeId, (reqsByRuntime.get(e.runtimeId) || 0) + 1);
@@ -1769,6 +1774,25 @@ export class LocalToolFacade {
       if (e.createdAt) {
         const prev = lastEventByRuntime.get(e.runtimeId);
         if (!prev || prev < e.createdAt) lastEventByRuntime.set(e.runtimeId, e.createdAt);
+      }
+      // Token + cost: same filter as project_state_describe — only
+      // turn_completed events with payload.raw.type === 'result' carry
+      // the usage block from the stream-json result frame.
+      if (e.eventType === 'turn_completed') {
+        const raw = e.payload?.raw;
+        if (raw && raw.type === 'result' && typeof e.runtimeId === 'string' && e.runtimeId.length > 0) {
+          let bucket = tokensByRuntime.get(e.runtimeId);
+          if (!bucket) {
+            bucket = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
+            tokensByRuntime.set(e.runtimeId, bucket);
+          }
+          const u = raw.usage;
+          if (u && typeof u === 'object') {
+            if (typeof u.input_tokens === 'number') bucket.tokensIn += u.input_tokens;
+            if (typeof u.output_tokens === 'number') bucket.tokensOut += u.output_tokens;
+          }
+          if (typeof raw.total_cost_usd === 'number') bucket.costUsd += raw.total_cost_usd;
+        }
       }
     }
 
@@ -1780,11 +1804,15 @@ export class LocalToolFacade {
       const hh = String(Math.floor(uptimeSec / 3600)).padStart(2, '0');
       const mm = String(Math.floor((uptimeSec % 3600) / 60)).padStart(2, '0');
       const ss = String(uptimeSec % 60).padStart(2, '0');
+      const tokens = tokensByRuntime.get(r.runtimeId) || { tokensIn: 0, tokensOut: 0, costUsd: 0 };
       return {
         ...r,
         uptime: `${hh}:${mm}:${ss}`,
         reqs: reqsByRuntime.get(r.runtimeId) || 0,
         lastEventAt: lastEventByRuntime.get(r.runtimeId) || null,
+        tokensIn: tokens.tokensIn,
+        tokensOut: tokens.tokensOut,
+        costUsd: tokens.costUsd,
       };
     });
     return { runtimes: enriched };

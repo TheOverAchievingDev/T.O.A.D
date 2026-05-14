@@ -141,10 +141,37 @@ export function CockpitForMe({
     prevTasksRef.current = tasks;
   }, [tasks]);
 
-  // Promote the in-progress task to the default selection if the
-  // previous selection vanished (task completed or list refreshed).
+  // Auto-promote the selected task as work moves on. The Cockpit FOR me
+  // view has no task list — selectedTaskId is only ever set by this
+  // effect, not by user clicks — so we always follow the live focal
+  // task. Triggers:
+  //
+  //   - Selection is null → pick a default.
+  //   - Selected task disappeared from the list → pick a new default.
+  //   - Selected task is no longer in-progress → jump to whichever IS
+  //     in-progress, so the "Your team is working on T-002 — …" hero
+  //     reflects the team's current focus.
+  //
+  // Before this fix the title pinned to whichever task was in-progress
+  // at mount and never updated when the team moved on (Bug B from the
+  // 2026-05-14 triage screenshot — title stuck on T-001 long after the
+  // team had moved past it).
   useEffect(() => {
-    if (selectedTaskId && tasks.some((t) => t.id === selectedTaskId)) return;
+    if (selectedTaskId) {
+      const current = tasks.find((t) => t.id === selectedTaskId);
+      if (!current) {
+        const next = pickDefaultTask(tasks);
+        setSelectedTaskId(next?.id ?? null);
+        return;
+      }
+      if (current.status !== 'in-progress') {
+        const inProgress = tasks.find((t) => t.status === 'in-progress' && t.id !== selectedTaskId);
+        if (inProgress) {
+          setSelectedTaskId(inProgress.id);
+        }
+      }
+      return;
+    }
     const next = pickDefaultTask(tasks);
     setSelectedTaskId(next?.id ?? null);
   }, [tasks, selectedTaskId]);

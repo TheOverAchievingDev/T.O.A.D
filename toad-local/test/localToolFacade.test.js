@@ -2049,6 +2049,76 @@ test('LocalToolFacade runtime_list returns the runtimeRegistry rows for the requ
   }
 });
 
+test('LocalToolFacade runtime_list enriches each runtime with tokensIn/tokensOut/costUsd from turn_completed events', () => {
+  // The Cockpit inspector's "Used X / 200,000" meter and the Costs
+  // screen both rely on per-runtime token totals. Without this
+  // enrichment the meter always reads 0 even when an agent has been
+  // actively spending tokens — the bug the user reported in the live
+  // session (Bug A, 2026-05-14 triage). The aggregation matches
+  // project_state_describe's filter: only turn_completed events with
+  // payload.raw.type === 'result' carry the usage block.
+  const fakeRegistry = {
+    listRuntimes({ teamId }) {
+      return [
+        { runtimeId: `runtime-${teamId}-lead`, teamId, agentId: 'lead', status: 'running', pid: 1001, startedAt: '2026-05-02T10:00:00Z' },
+        { runtimeId: `runtime-${teamId}-dev`,  teamId, agentId: 'dev',  status: 'running', pid: 1002, startedAt: '2026-05-02T10:00:01Z' },
+        { runtimeId: `runtime-${teamId}-qa`,   teamId, agentId: 'qa',   status: 'running', pid: 1003, startedAt: '2026-05-02T10:00:02Z' },
+      ];
+    },
+  };
+  const fakeEventLog = {
+    // The facade only accepts an eventLog that has appendEvent (it's used
+    // as the duck-type guard). Tests don't exercise appendEvent, just
+    // listEvents, but the no-op stub is required.
+    appendEvent() {},
+    listEvents() {
+      return [
+        // Lead: two turn_completed results — 100 + 250 in, 50 + 80 out, $0.01 + $0.02
+        { eventType: 'turn_completed', runtimeId: 'runtime-team-x-lead', createdAt: '2026-05-02T10:00:10Z',
+          payload: { raw: { type: 'result', usage: { input_tokens: 100, output_tokens: 50 }, total_cost_usd: 0.01 } } },
+        { eventType: 'turn_completed', runtimeId: 'runtime-team-x-lead', createdAt: '2026-05-02T10:00:20Z',
+          payload: { raw: { type: 'result', usage: { input_tokens: 250, output_tokens: 80 }, total_cost_usd: 0.02 } } },
+        // Dev: one turn_completed result — 500 in, 200 out, $0.05
+        { eventType: 'turn_completed', runtimeId: 'runtime-team-x-dev', createdAt: '2026-05-02T10:00:15Z',
+          payload: { raw: { type: 'result', usage: { input_tokens: 500, output_tokens: 200 }, total_cost_usd: 0.05 } } },
+        // Noise: tool_use events and a non-result turn_completed — neither contributes.
+        { eventType: 'tool_use', runtimeId: 'runtime-team-x-lead', createdAt: '2026-05-02T10:00:12Z', payload: {} },
+        { eventType: 'turn_completed', runtimeId: 'runtime-team-x-dev', createdAt: '2026-05-02T10:00:18Z',
+          payload: { raw: { type: 'assistant', message: { content: [] } } } },
+        // QA has no events — should default to zeros without an undefined leak.
+      ];
+    },
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    runtimeRegistry: fakeRegistry,
+    eventLog: fakeEventLog,
+  });
+
+  const result = facade.execute({
+    commandName: COMMANDS.RUNTIME_LIST,
+    idempotencyKey: 'runtime-list-tokens',
+    actor: { teamId: 'team-x', agentId: 'operator', role: 'human' },
+    args: { teamId: 'team-x' },
+  });
+
+  const byAgent = Object.fromEntries(result.runtimes.map((r) => [r.agentId, r]));
+  // Lead accumulated 350 in / 130 out / $0.03 across two result frames.
+  assert.equal(byAgent.lead.tokensIn, 350);
+  assert.equal(byAgent.lead.tokensOut, 130);
+  assert.ok(Math.abs(byAgent.lead.costUsd - 0.03) < 1e-9);
+  // Dev had one result frame: 500 / 200 / $0.05. The assistant-type
+  // turn_completed must NOT have contributed.
+  assert.equal(byAgent.dev.tokensIn, 500);
+  assert.equal(byAgent.dev.tokensOut, 200);
+  assert.ok(Math.abs(byAgent.dev.costUsd - 0.05) < 1e-9);
+  // QA had no result events — zeros, not undefined.
+  assert.equal(byAgent.qa.tokensIn, 0);
+  assert.equal(byAgent.qa.tokensOut, 0);
+  assert.equal(byAgent.qa.costUsd, 0);
+});
+
 test('LocalToolFacade runtime_list falls back to actor.teamId when args.teamId is omitted', () => {
   // The UI sometimes calls runtime_list without an explicit teamId — the
   // facade should derive it from the actor (same pattern as task_list).
