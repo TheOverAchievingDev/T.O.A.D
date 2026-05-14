@@ -173,11 +173,11 @@ export function Titlebar({
           <button
             type="button"
             className="stop-team-btn"
-            title={`Stop ${liveRuntimes} running agent${liveRuntimes === 1 ? '' : 's'} (Shift+F5)`}
+            title={`Stop ${liveRuntimes} running agent${liveRuntimes === 1 ? '' : 's'} across every team (Shift+F5)`}
             onClick={onStopTeam}
           >
             <Icon name="pause" size={11} />
-            <span>Stop team</span>
+            <span>Stop all agents</span>
             <span className="stop-team-count mono">{liveRuntimes}</span>
           </button>
         )}

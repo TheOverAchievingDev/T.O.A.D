@@ -527,28 +527,34 @@ function AppInner() {
         return;
       }
       case 'team:pause': {
-        // Pause Team — stop every agent in the active team. No
-        // dedicated team_pause MCP method exists; we loop over the
-        // active team's live runtimes and call agent_stop for each.
-        // The team config + history persist, so a later "Resume
-        // team" relaunches everyone from scratch.
-        const teamId = team.name || activeTeamId;
-        if (!teamId) {
-          // eslint-disable-next-line no-console
-          console.warn('[menu] Pause Team — no active team');
-          return;
-        }
+        // Pause Team — stop every live agent across ALL teams. We
+        // intentionally don't filter by current teamId because a
+        // common operator scenario (caught during the 2026-05-12
+        // session) is having multiple teams alive simultaneously —
+        // the old symphony-demo runtimes lingered while the operator
+        // started a new project. Filtering by current teamId would
+        // leave the other team running silently. agent_stop is
+        // idempotent on already-stopped runtimes, so the broad sweep
+        // is safe. Team config + history persist; Resume team
+        // relaunches from scratch.
         const targets = runtimes.filter((r) => (
-          r.id.startsWith(`runtime-${teamId}-`)
-          && (r.status === 'live' || r.status === 'launching')
+          r.status === 'live' || r.status === 'launching'
         ));
         if (targets.length === 0) {
           // eslint-disable-next-line no-console
-          console.warn(`[menu] Pause Team — no live runtimes for ${teamId}`);
+          console.warn('[menu] Pause Team — no live runtimes');
           return;
         }
+        // Extract teamId from a runtime id of the form
+        // `runtime-<teamId>-<agentId>`. Falls back to the active
+        // team's id, then 'system' so the call has a valid actor
+        // even for runtimes that don't follow the convention.
+        const teamIdForRuntime = (rt: typeof targets[number]): string => {
+          const m = rt.id.match(/^runtime-(.+?)-[^-]+$/);
+          return m?.[1] || team.name || activeTeamId || 'system';
+        };
         void Promise.allSettled(targets.map((rt) => callToadApi({
-          actor: { teamId, agentId: 'ui-client', role: 'human' },
+          actor: { teamId: teamIdForRuntime(rt), agentId: 'ui-client', role: 'human' },
           method: 'agent_stop',
           args: { runtimeId: rt.id, signal: 'SIGTERM' },
           idempotencyKey: `menu-pause-${rt.id}-${Date.now()}`,
