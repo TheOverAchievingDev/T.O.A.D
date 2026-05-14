@@ -526,18 +526,75 @@ function AppInner() {
           });
         return;
       }
-      case 'team:pause':
-        // team_pause MCP method isn't wired today — stub with a hint
-        // for the operator. Phase 3 polish adds the real handler.
-        // eslint-disable-next-line no-console
-        console.warn('[menu] Pause Team — coming in Phase 3 (team_pause MCP method not yet exposed)');
+      case 'team:pause': {
+        // Pause Team — stop every agent in the active team. No
+        // dedicated team_pause MCP method exists; we loop over the
+        // active team's live runtimes and call agent_stop for each.
+        // The team config + history persist, so a later "Resume
+        // team" relaunches everyone from scratch.
+        const teamId = team.name || activeTeamId;
+        if (!teamId) {
+          // eslint-disable-next-line no-console
+          console.warn('[menu] Pause Team — no active team');
+          return;
+        }
+        const targets = runtimes.filter((r) => (
+          r.id.startsWith(`runtime-${teamId}-`)
+          && (r.status === 'live' || r.status === 'launching')
+        ));
+        if (targets.length === 0) {
+          // eslint-disable-next-line no-console
+          console.warn(`[menu] Pause Team — no live runtimes for ${teamId}`);
+          return;
+        }
+        void Promise.allSettled(targets.map((rt) => callToadApi({
+          actor: { teamId, agentId: 'ui-client', role: 'human' },
+          method: 'agent_stop',
+          args: { runtimeId: rt.id, signal: 'SIGTERM' },
+          idempotencyKey: `menu-pause-${rt.id}-${Date.now()}`,
+        })))
+          .then(() => refresh())
+          .catch((err) => {
+            // eslint-disable-next-line no-console
+            console.warn('[menu] team:pause failures:', err);
+          });
         return;
-      case 'team:end':
-        // Destructive — needs a confirm dialog. Phase 3 wires the real
-        // tear-down via team_delete + confirmation modal.
-        // eslint-disable-next-line no-console
-        console.warn('[menu] End Team — coming in Phase 3 (destructive action needs confirm UX)');
+      }
+      case 'team:end': {
+        // Destructive — confirm first. Stops every live runtime AND
+        // deletes the team config so resume isn't an option. Uses a
+        // window.confirm for Phase 3 (proper modal lands in Phase 4
+        // discoverability polish).
+        const teamId = team.name || activeTeamId;
+        if (!teamId) {
+          // eslint-disable-next-line no-console
+          console.warn('[menu] End Team — no active team');
+          return;
+        }
+        const ok = window.confirm(
+          `End team "${teamId}"?\n\nThis stops every running agent and deletes the team config. The team's task history stays in the database; you can re-create the team later by re-running Foundry against this project.`
+        );
+        if (!ok) return;
+        const targets = runtimes.filter((r) => r.id.startsWith(`runtime-${teamId}-`));
+        void Promise.allSettled(targets.map((rt) => callToadApi({
+          actor: { teamId, agentId: 'ui-client', role: 'human' },
+          method: 'agent_stop',
+          args: { runtimeId: rt.id, signal: 'SIGKILL' },
+          idempotencyKey: `menu-end-${rt.id}-${Date.now()}`,
+        })))
+          .then(() => callToadApi({
+            actor: { teamId, agentId: 'ui-client', role: 'human' },
+            method: 'team_delete',
+            args: { teamId },
+            idempotencyKey: `menu-end-team-${teamId}-${Date.now()}`,
+          }))
+          .then(() => refresh())
+          .catch((err) => {
+            // eslint-disable-next-line no-console
+            console.warn('[menu] team:end failures:', err);
+          });
         return;
+      }
       case 'drift:run':
         // Manual drift trigger — reuses the existing drift.refresh()
         // path that the Drift screen's Refresh button uses.
@@ -655,6 +712,7 @@ function AppInner() {
         pendingNotifications={0}
         liveRuntimes={runtimes.filter((r) => r.status === 'live').length}
         totalRuntimes={runtimes.length}
+        onStopTeam={() => handleMenuAction('team:pause')}
       />
 
       {error && (

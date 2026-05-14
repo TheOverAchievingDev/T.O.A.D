@@ -310,6 +310,40 @@
   font-family: var(--font-mono-new);
 }
 
+/* Stop-team button — only renders when liveRuntimes > 0. Sits in the
+ * titlebar right zone between the persona pill and the ambient icons
+ * so it's impossible to miss when agents are actively running.
+ * Closes the "I don't know how to make the agents stop" gap. */
+.stop-team-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--signal-red);
+  background: oklch(0.68 0.18 25 / 0.18);
+  color: var(--signal-red);
+  border-radius: var(--radius-md);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  margin-right: 4px;
+  -webkit-app-region: no-drag;
+}
+.stop-team-btn:hover {
+  background: oklch(0.68 0.18 25 / 0.32);
+  color: oklch(0.95 0.05 25);
+}
+.stop-team-btn .stop-team-count {
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: oklch(0.68 0.18 25 / 0.35);
+  color: oklch(0.95 0.05 25);
+}
+
 /* Persona toggle pill (FOR me / WITH me) */
 .mode-pill {
   display: inline-flex;

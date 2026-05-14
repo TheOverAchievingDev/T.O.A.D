@@ -59,6 +59,13 @@ export interface TitlebarProps {
   liveRuntimes?: number;
   totalRuntimes?: number;
 
+  /** Optional kill-switch. When provided AND liveRuntimes > 0, the
+   *  titlebar shows a prominent "Stop team" button between the
+   *  persona pill and the ambient icons. Click stops every live
+   *  agent in the active team via agent_stop. Closes the "I don't
+   *  know how to make the agents stop reading my files" gap. */
+  onStopTeam?: () => void;
+
   /** Optional Tauri window controls slot. Lets the platform glue
    *  inject minimize/maximize/close at the very right edge. */
   windowControls?: ReactNode;
@@ -88,6 +95,7 @@ export function Titlebar({
   pendingNotifications = 0,
   liveRuntimes = 0,
   totalRuntimes = 0,
+  onStopTeam,
   windowControls,
 }: TitlebarProps) {
   const [phIndex, setPhIndex] = useState(0);
@@ -161,6 +169,18 @@ export function Titlebar({
             WITH me
           </button>
         </div>
+        {onStopTeam && liveRuntimes > 0 && (
+          <button
+            type="button"
+            className="stop-team-btn"
+            title={`Stop ${liveRuntimes} running agent${liveRuntimes === 1 ? '' : 's'} (Shift+F5)`}
+            onClick={onStopTeam}
+          >
+            <Icon name="pause" size={11} />
+            <span>Stop team</span>
+            <span className="stop-team-count mono">{liveRuntimes}</span>
+          </button>
+        )}
         <button
           className="icon-btn"
           type="button"
