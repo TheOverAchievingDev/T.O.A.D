@@ -9,6 +9,7 @@ import { checkDependencyDrift } from './checkDependencyDrift.js';
 import { checkStructuralDeclaredAbsent } from './checkStructuralDeclaredAbsent.js';
 import { checkStructuralUndeclaredPresent } from './checkStructuralUndeclaredPresent.js';
 import { checkConstitution } from './checkConstitution.js';
+import { checkContractDrift } from './checkContractDrift.js';
 import { checkLlmSemantic } from './checkLlmSemantic.js';
 
 /**
@@ -56,6 +57,13 @@ export const ALL_CHECKS = Object.freeze([
   // zero-change here). check_provider_logic_leakage stays as-is for
   // now; folding it into a constitution rule is a later cleanup.
   { name: 'check_constitution', tier: 1, mode: 'observe', fn: checkConstitution },
+  // L1.4a — contract drift, PRESENCE only (last L1 deterministic
+  // stage; reviewer order: dependency → structural → constitution →
+  // contract). Reads spec.contracts + snapshot.contractScan (pre-run
+  // by buildSnapshot). §4a fence: presence now, arity is L1.4b, type
+  // correctness NEVER (the compiler/validation_run owns types).
+  // mode:'observe' — flags, never blocks delivery.
+  { name: 'check_contract_drift', tier: 1, mode: 'observe', fn: checkContractDrift },
   // LLM tier 1 — Haiku/Mini/Flash, always runs
   { name: 'check_llm_semantic_t1', tier: 1, fn: (args) => checkLlmSemantic({ ...args, tier: 1 }) },
   // LLM tier 2 — Opus/GPT-5/Gemini-Pro, escalation only

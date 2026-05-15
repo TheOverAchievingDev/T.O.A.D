@@ -5,6 +5,7 @@ import { loadProjectSpec } from './spec/loadProjectSpec.js';
 import { parseManifestDeps } from './spec/parseManifestDeps.js';
 import { enumerateSourceModules } from './spec/enumerateSourceModules.js';
 import { scanConstitution } from './spec/scanConstitution.js';
+import { scanContracts } from './spec/scanContracts.js';
 
 const COMMITS_DEFAULT = 30;
 const DOC_CAP = 8 * 1024;
@@ -267,6 +268,36 @@ export async function buildSnapshot({ teamId, deps = {}, compareAgainst = 'found
     }
   }
 
+  // L1.4a contract presence scan: bounded whole-tree presence check
+  // of spec.contracts[] (does a fn with each declared identifier exist
+  // as a DEFINITION?). §4a fence — presence only, never typecheck.
+  // Resolved HERE so checkContractDrift stays a pure function over the
+  // snapshot. Only runs when contracts are declared; leaving it null
+  // when contracts ARE declared but cwd is unknown makes the check
+  // emit an honest "not enforced" meta rather than a silent pass.
+  let contractScan = null;
+  if (spec && Array.isArray(spec.contracts) && spec.contracts.length > 0
+      && specProjectCwd) {
+    try {
+      contractScan = scanContracts({
+        projectCwd: specProjectCwd,
+        contracts: spec.contracts,
+        language: spec.stack?.language,
+        readdirSyncImpl: deps.readdirSyncImpl,
+        statSyncImpl: deps.statSyncImpl,
+        readFileSyncImpl: deps.readFileSyncImpl,
+      });
+    } catch (err) {
+      // Defensive — scanContracts is already fail-soft, but never let
+      // a contract scan throw out of a drift run.
+      contractScan = {
+        results: [], missing: [], webContractIds: [], unsupported: [],
+        error: `contract scan threw: ${err && err.message ? err.message : err}`,
+        truncated: false,
+      };
+    }
+  }
+
   return {
     teamId,
     asOf: new Date().toISOString(),
@@ -296,6 +327,9 @@ export async function buildSnapshot({ teamId, deps = {}, compareAgainst = 'found
     constitutionHits,
     constitutionUnsupported,
     constitutionError,
+    // L1.4a: contract presence scan result (null = not run; the check
+    // turns null-with-declared-contracts into an honest meta).
+    contractScan,
   };
 }
 
