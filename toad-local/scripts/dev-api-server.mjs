@@ -8,6 +8,7 @@ import { ALL_CHECKS } from '../src/drift/checks/index.js';
 import { SqlitePluginJobs } from '../src/plugins/pluginJobs.js';
 import { SqlitePluginResources } from '../src/plugins/pluginResources.js';
 import { DriftMonitor } from '../src/drift/driftMonitor.js';
+import { sweepZombies } from '../src/runtime/spawnLedger.js';
 
 // Project resolution:
 //   - TOAD_PROJECT_CWD env (set by the Tauri shell when the user picks a
@@ -163,6 +164,36 @@ if (runtime.toolFacade) {
 }
 
 await runtime.start();
+
+// Cross-project zombie sweep. Each Symphony spawn records its PID in
+// ~/.symphony/active-pids/. On every sidecar boot, we kill any PIDs
+// still alive that don't belong to the current sidecar session —
+// catches the case where a previous sidecar was killed without clean
+// shutdown (Tauri project-switch respawn, taskkill on the API window,
+// crash). Without this, claude.exe processes accumulate across project
+// switches because each project's runtime_instances table only knows
+// about its own spawns. Operator reported 15 stranded claude.exe
+// processes on 2026-05-15 — this sweep is the antidote.
+//
+// Runs AFTER runtime.start() (which does per-project reconcileOrphans)
+// so the in-DB orphan path still handles same-project crash recovery
+// and we layer the cross-project sweep on top.
+try {
+  const swept = sweepZombies({ currentSessionId: runtime.supervisor?.sessionId });
+  if (swept.killed > 0 || swept.errors.length > 0) {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[runtime] zombie sweep: killed ${swept.killed}, not-found ${swept.notFound}, errors ${swept.errors.length}`,
+    );
+    for (const err of swept.errors) {
+      // eslint-disable-next-line no-console
+      console.warn(`[runtime] zombie sweep: ${err}`);
+    }
+  }
+} catch (err) {
+  // eslint-disable-next-line no-console
+  console.warn(`[runtime] zombie sweep failed: ${err?.message || err}`);
+}
 
 const port = process.env.TOAD_API_PORT || '3001';
 console.log(`Symphony AI API listening on http://127.0.0.1:${port}`);

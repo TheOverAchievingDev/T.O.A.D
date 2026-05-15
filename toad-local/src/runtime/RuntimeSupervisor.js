@@ -1,7 +1,9 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { ClaudeStreamJsonAdapter } from './ClaudeStreamJsonAdapter.js';
+import { recordSpawn, removeSpawn } from './spawnLedger.js';
 
 /**
  * Resolve a bare command name (e.g. `claude`) to an absolute path on
@@ -41,12 +43,23 @@ export class RuntimeSupervisor {
     runtimeRegistry = null,
     spawnProcess = spawn,
     createAdapter = createClaudeAdapter,
+    /**
+     * Per-sidecar session id used by the cross-project spawn ledger
+     * (~/.symphony/active-pids/). Entries created with this id are
+     * recognized by sweepZombies as belonging to the current sidecar
+     * and left alone; entries from other sessions (older sidecars
+     * that died before they could clean up) get killed on the next
+     * sidecar boot. Defaulted to a random UUID so each sidecar
+     * lifetime is distinguishable.
+     */
+    sessionId = randomUUID(),
   } = {}) {
     if (!runtimeDirectory) throw new TypeError('runtimeDirectory is required');
     this.runtimeDirectory = runtimeDirectory;
     this.runtimeRegistry = runtimeRegistry;
     this.spawnProcess = spawnProcess;
     this.createAdapter = createAdapter;
+    this.sessionId = sessionId;
   }
 
   async launchAgent(input) {
@@ -182,6 +195,23 @@ export class RuntimeSupervisor {
     this.#registerRunningRuntime(record);
     this.#attachExitListener(record);
 
+    // Cross-project spawn ledger: record this PID in
+    // `~/.symphony/active-pids/` so any future Symphony sidecar boot
+    // can detect + kill it as a zombie if THIS sidecar dies without
+    // clean shutdown. Without this, claude.exe processes spawned
+    // before a project switch (Tauri kills the old sidecar without
+    // propagating to its grandchildren) accumulate forever — the
+    // 15 leaked processes the operator reported on 2026-05-15 came
+    // from this exact path.
+    if (typeof record.pid === 'number' && record.pid > 0) {
+      recordSpawn({
+        pid: record.pid,
+        command: resolvedCommand,
+        runtimeId,
+        sessionId: this.sessionId,
+      });
+    }
+
     return this.#snapshot(record);
   }
 
@@ -218,6 +248,12 @@ export class RuntimeSupervisor {
         stoppedAt: record.stoppedAt,
       });
     }
+    // The PID is no longer ours to track. Drop the ledger entry so
+    // a future sidecar boot doesn't try to kill an unrelated process
+    // that the OS recycled this PID to.
+    if (typeof record.pid === 'number' && record.pid > 0) {
+      removeSpawn(record.pid);
+    }
     return this.#snapshot(record);
   }
 
@@ -240,6 +276,11 @@ export class RuntimeSupervisor {
       record.exitCode = typeof code === 'number' ? code : null;
       record.signal = typeof signal === 'string' ? signal : record.signal;
       record.stoppedAt = new Date().toISOString();
+      // The child exited cleanly after a stopAgent call; the PID is
+      // gone and shouldn't appear in the cross-project ledger anymore.
+      if (typeof record.pid === 'number' && record.pid > 0) {
+        removeSpawn(record.pid);
+      }
       return;
     }
     if (record.restartCount < record.restartPolicy.maxRestarts) {
@@ -259,6 +300,12 @@ export class RuntimeSupervisor {
         signal: record.signal,
         stoppedAt: record.stoppedAt,
       });
+    }
+    // Unexpected exit too — the OS process is gone, so the ledger
+    // entry would be a stale pointer at best, a dangerous one if the
+    // PID gets reused, so drop it.
+    if (typeof record.pid === 'number' && record.pid > 0) {
+      removeSpawn(record.pid);
     }
   }
 

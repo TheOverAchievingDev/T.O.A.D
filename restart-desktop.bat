@@ -55,6 +55,25 @@ REM when cargo tries to rebuild.
 taskkill /F /IM cargo.exe >nul 2>&1
 taskkill /F /IM rustc.exe >nul 2>&1
 
+REM Belt-and-suspenders cleanup of leaked claude.exe processes.
+REM
+REM The graceful path: the sidecar's spawn ledger
+REM (src/runtime/spawnLedger.js) tracks every spawned PID in
+REM %USERPROFILE%\.symphony\active-pids\ and the next sidecar boot
+REM sweeps any zombie PIDs that don't belong to the current session.
+REM That handles project switches and clean shutdowns.
+REM
+REM But if the operator's claude session is wedged (e.g. usage-cap
+REM hang, network stall), the spawn ledger still has the PID and the
+REM sweep WILL kill it — but only on the NEXT boot. This taskkill is
+REM the "give me a clean slate right now" escape hatch.
+REM
+REM Side effect: this also kills any interactive `claude` sessions
+REM the operator has open in other terminals. Acceptable because the
+REM operator just asked for a full restart.
+echo  Killing leaked claude.exe processes...
+taskkill /F /IM claude.exe >nul 2>&1
+
 REM Give the OS a moment to free the sockets + file locks.
 timeout /t 3 /nobreak >nul
 
