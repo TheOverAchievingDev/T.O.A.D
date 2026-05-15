@@ -262,6 +262,26 @@ export function DriftScreen({ teamId, data, loading, error, refresh, onOpenTask 
                     }
                     return null;
                   })()}
+                  {f.kind && (
+                    <span
+                      title={f.kind === 'conformance'
+                        ? 'Conformance — did the agents follow the right process?'
+                        : 'Drift — does the code match the spec?'}
+                      style={{
+                        fontSize: 9, padding: '2px 6px', borderRadius: 3,
+                        background: f.kind === 'conformance'
+                          ? 'rgba(255,255,255,0.06)'
+                          : 'rgba(217, 119, 87, 0.16)',
+                        color: f.kind === 'conformance'
+                          ? 'var(--fg-muted)'
+                          : 'var(--clay, #d97757)',
+                        textTransform: 'uppercase', letterSpacing: '0.04em',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {f.kind === 'conformance' ? 'Conformance' : 'Drift'}
+                    </span>
+                  )}
                   <span style={{ fontWeight: 600, fontSize: 12, flex: 1 }}>{f.title}</span>
                   {isRemediated && (
                     <span

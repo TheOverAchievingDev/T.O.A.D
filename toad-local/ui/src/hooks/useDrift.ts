@@ -9,6 +9,13 @@ export interface DriftFinding {
   category: 'architecture' | 'checklist' | 'slice_scope' | 'test_truth' | 'risk';
   severity: 'info' | 'low' | 'medium' | 'high' | 'critical';
   checkName: string;
+  /**
+   * PROJECT.md §8 taxonomy, server-derived from checkName:
+   *   'conformance' — did the AGENTS follow the PROCESS?
+   *   'drift'       — does the ARTIFACT match the SPEC? (code-vs-spec)
+   * Optional for back-compat with pre-taxonomy persisted payloads.
+   */
+  kind?: 'conformance' | 'drift' | null;
   title: string;
   evidence: string[];
   expected: string;
