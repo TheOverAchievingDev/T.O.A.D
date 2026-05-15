@@ -74,6 +74,13 @@ export interface CockpitForMeProps {
   onSwapAgentProvider?: (input: { agentId: string; providerId: string }) => Promise<void>;
   onCreateTask?: () => void;
   onRefreshDrift?: () => Promise<void>;
+  /** When true, the Run Drift button renders as "Running drift…" with
+   *  a spinner and is disabled. Without this, clicking the button on a
+   *  slow drift run (LLM judge takes ~30s) produces no visible change
+   *  for half a minute and the operator clicks again and again — the
+   *  2026-05-15 "nothing happens when I press Run Drift" report was
+   *  this gap, not a backend bug. */
+  driftRefreshing?: boolean;
   onOpenTaskDetail?: (taskId: string) => void;
   onOpenDriftScreen?: () => void;
 }
@@ -105,6 +112,7 @@ export function CockpitForMe({
   onSwapAgentProvider,
   onCreateTask,
   onRefreshDrift,
+  driftRefreshing = false,
   onOpenTaskDetail,
   onOpenDriftScreen,
 }: CockpitForMeProps) {
@@ -363,8 +371,22 @@ export function CockpitForMe({
                 </button>
               )}
               {onRefreshDrift && (
-                <button type="button" className="btn" onClick={() => { void onRefreshDrift(); }}>
-                  <Icon name="eye" size={12} /> Run drift
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => { void onRefreshDrift(); }}
+                  disabled={driftRefreshing}
+                  title={driftRefreshing
+                    ? 'Drift judge is running (this can take up to 30s)'
+                    : 'Re-run all drift checks now'}
+                  style={driftRefreshing ? { opacity: 0.65, cursor: 'wait' } : undefined}
+                >
+                  <Icon
+                    name={driftRefreshing ? 'refresh' : 'eye'}
+                    size={12}
+                    className={driftRefreshing ? 'spin' : undefined}
+                  />
+                  {driftRefreshing ? ' Running drift…' : ' Run drift'}
                 </button>
               )}
               <div style={{ flex: 1 }} />

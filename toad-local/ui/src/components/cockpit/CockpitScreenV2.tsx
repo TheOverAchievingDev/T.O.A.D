@@ -64,6 +64,9 @@ export interface CockpitScreenV2Props {
   onSwapAgentProvider?: (input: { agentId: string; providerId: string }) => Promise<void>;
   onCreateTask?: () => void;
   onRefreshDrift?: () => Promise<void>;
+  /** True while a manual Run Drift is in flight; wires the button to
+   *  the spinner + disabled state in CockpitForMe. */
+  driftRefreshing?: boolean;
   onOpenTaskDetail?: (taskId: string) => void;
   onOpenDriftScreen?: () => void;
   onMessageSent?: () => void;
@@ -102,6 +105,7 @@ export function CockpitScreenV2(props: CockpitScreenV2Props) {
       onSwapAgentProvider={props.onSwapAgentProvider}
       onCreateTask={props.onCreateTask}
       onRefreshDrift={props.onRefreshDrift}
+      driftRefreshing={props.driftRefreshing}
       onOpenTaskDetail={props.onOpenTaskDetail}
       onOpenDriftScreen={props.onOpenDriftScreen}
     />

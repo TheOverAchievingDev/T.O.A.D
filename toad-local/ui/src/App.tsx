@@ -23,7 +23,7 @@ import { RuntimeDrawer } from '@/components/RuntimeDrawer';
 import { DiagnosticsDrawer } from '@/components/DiagnosticsDrawer';
 import { CommandPalette } from '@/components/CommandPalette';
 import { SettingsScreen } from '@/components/settings/SettingsScreen';
-import { ToastProvider } from '@/components/ToastSystem';
+import { ToastProvider, useToasts } from '@/components/ToastSystem';
 import { LogViewerDrawer } from '@/components/LogViewerDrawer';
 import { CostsScreen } from '@/components/CostsScreen';
 import { AuditLogScreen } from '@/components/AuditLogScreen';
@@ -118,6 +118,55 @@ function AppInner() {
   // Each consumer gets the slice it needs as a prop.
   const drift = useDrift({ teamId: team.name || activeTeamId });
   const perTaskDrift = drift.data?.perTaskScores ?? {};
+  const toasts = useToasts();
+
+  // Manual Run Drift handler. Visual feedback ladder:
+  //   click  → blocking toast "Running drift…" + button shows spinner
+  //   ok     → toast replaced with "Drift complete: N findings, status X"
+  //   error  → toast replaced with the failure reason
+  //   no-team → toast says to pick a team, no API call fires
+  // The button's spinner state comes from drift.refreshing — see
+  // CockpitForMe driftRefreshing prop.
+  const handleRunDrift = useCallback(async () => {
+    const toastId = `drift-run-${Date.now()}`;
+    toasts.toast({
+      id: toastId,
+      severity: 'blocking',
+      title: 'Running drift…',
+      body: 'Comparing the team\'s current work against the Foundry spec.',
+      source: 'drift',
+    });
+    try {
+      const result = await drift.refresh();
+      if (!result) {
+        // Falsy can mean cancelled (unmounted) or no-op periodic; the
+        // manual path always either throws on no-team or returns a
+        // DriftRunResult, so this is the "we cancelled the run" case.
+        toasts.dismiss(toastId);
+        return;
+      }
+      const findings = Array.isArray(result.findings) ? result.findings.length : 0;
+      const status = result.status ?? 'unknown';
+      toasts.toast({
+        id: toastId,
+        severity: status === 'healthy' ? 'success' : status === 'critical' ? 'error' : 'warn',
+        title: `Drift complete · ${status}`,
+        body: findings === 0
+          ? 'No drift findings.'
+          : `${findings} finding${findings === 1 ? '' : 's'} — team score ${result.teamScore}.`,
+        source: 'drift',
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toasts.toast({
+        id: toastId,
+        severity: 'error',
+        title: 'Drift run failed',
+        body: message,
+        source: 'drift',
+      });
+    }
+  }, [drift, toasts]);
 
   // Single source of truth for "load the active team + reopen context
   // from the current project's DB." Called once on app mount (via the
@@ -661,9 +710,12 @@ function AppInner() {
         return;
       }
       case 'drift:run':
-        // Manual drift trigger — reuses the existing drift.refresh()
-        // path that the Drift screen's Refresh button uses.
-        void drift.refresh();
+        // Manual drift trigger — reuses handleRunDrift so the menu
+        // entry and the cockpit Run Drift button share the same
+        // toast + spinner feedback. Without this, clicking "Run
+        // drift" from the menubar produced no visible change for
+        // 30s (2026-05-15 report).
+        void handleRunDrift();
         return;
       case 'validations:run':
         // Validations need the active task's id, which lives in the
@@ -974,7 +1026,8 @@ function AppInner() {
               setTweak={setTweak}
               reopenContext={reopenContext}
               onCreateTask={() => setTaskCreateOpen(true)}
-              onRefreshDrift={async () => { await drift.refresh(); }}
+              onRefreshDrift={handleRunDrift}
+              driftRefreshing={drift.refreshing}
               onOpenTaskDetail={(id) => {
                 setSelectedTaskId(id);
                 setTweak('screen', 'task');
@@ -1049,7 +1102,7 @@ function AppInner() {
               data={drift.data}
               loading={drift.loading}
               error={drift.error}
-              refresh={drift.refresh}
+              refresh={handleRunDrift}
               onOpenTask={(id) => {
                 setSelectedTaskId(id);
                 setTweak('screen', 'task');

@@ -294,6 +294,15 @@ input, textarea, select { font-family: inherit; }
   to { transform: rotate(360deg); }
 }
 
+/* Generic spinner utility — apply to any inline element that should
+   rotate while a background op is in flight (Run drift button, etc.).
+   Reuses status-spin so we don't proliferate keyframes. */
+.spin {
+  animation: status-spin 0.9s linear infinite;
+  transform-origin: center;
+  display: inline-block;
+}
+
 .kbd {
   display: inline-block;
   padding: 1px 5px;
