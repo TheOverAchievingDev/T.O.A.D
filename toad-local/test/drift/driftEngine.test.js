@@ -83,11 +83,85 @@ test('DriftEngine.runDrift includes last 30 history rows in the result', async (
   const db = bootstrapDb();
   const store = new SqliteDriftStore({ db });
   const engine = new DriftEngine({ deps: makeDeps(), store });
+  // manual (not periodic) — this asserts history WINDOWING, and under
+  // the periodic-cooldown contract only manual/task_event force a
+  // distinct run each call. 35 manual runs → history windowed to 30.
   for (let i = 0; i < 35; i += 1) {
-    await engine.runDrift({ teamId: 'team-a', trigger: 'periodic' });
+    await engine.runDrift({ teamId: 'team-a', trigger: 'manual' });
   }
   const result = await engine.runDrift({ teamId: 'team-a', trigger: 'manual' });
   assert.equal(result.history.length, 30);
+});
+
+// ── Periodic-trigger cooldown (the 2026-05-15 double-trigger fix) ──
+// The backend monitor (5min) AND the UI poll (60s) both issue
+// trigger:'periodic' runDrift calls. Without a guard every periodic
+// call does a full whole-tree re-scan (buildSnapshot walks the
+// project: scanConstitution + scanContracts) + a new persisted run.
+// Only `manual` (explicit operator intent) and `task_event` (real
+// activity must surface immediately) force a fresh compute; a
+// `periodic` call within periodicCooldownMs of the last computed run
+// returns that result unchanged.
+
+test('periodic within cooldown returns the cached result, persists no new run', async () => {
+  const db = bootstrapDb();
+  const store = new SqliteDriftStore({ db });
+  let clock = 1_000_000;
+  const engine = new DriftEngine({ deps: makeDeps(), store, now: () => clock });
+
+  const first = await engine.runDrift({ teamId: 'team-a', trigger: 'periodic' });
+  assert.equal(store.listScoreHistory({ teamId: 'team-a', limit: 50 }).length, 1);
+
+  clock += 60_000; // a UI 60s poll — well inside the 5min cooldown
+  const second = await engine.runDrift({ teamId: 'team-a', trigger: 'periodic' });
+  assert.equal(second.runId, first.runId, 'cached run reused, not recomputed');
+  assert.equal(second.cached, true);
+  assert.equal(
+    store.listScoreHistory({ teamId: 'team-a', limit: 50 }).length,
+    1,
+    'no second persisted run — the whole-tree re-scan was skipped',
+  );
+});
+
+test('manual always recomputes even within the periodic cooldown', async () => {
+  const db = bootstrapDb();
+  const store = new SqliteDriftStore({ db });
+  let clock = 1_000_000;
+  const engine = new DriftEngine({ deps: makeDeps(), store, now: () => clock });
+
+  const first = await engine.runDrift({ teamId: 'team-a', trigger: 'periodic' });
+  clock += 1_000;
+  const manual = await engine.runDrift({ teamId: 'team-a', trigger: 'manual' });
+  assert.notEqual(manual.runId, first.runId);
+  assert.notEqual(manual.cached, true);
+  assert.equal(store.listScoreHistory({ teamId: 'team-a', limit: 50 }).length, 2);
+});
+
+test('task_event always recomputes even within the periodic cooldown', async () => {
+  const db = bootstrapDb();
+  const store = new SqliteDriftStore({ db });
+  let clock = 1_000_000;
+  const engine = new DriftEngine({ deps: makeDeps(), store, now: () => clock });
+
+  const first = await engine.runDrift({ teamId: 'team-a', trigger: 'periodic' });
+  clock += 1_000;
+  const evt = await engine.runDrift({ teamId: 'team-a', trigger: 'task_event' });
+  assert.notEqual(evt.runId, first.runId, 'real lifecycle activity must surface immediately');
+  assert.equal(store.listScoreHistory({ teamId: 'team-a', limit: 50 }).length, 2);
+});
+
+test('periodic recomputes once the cooldown has elapsed', async () => {
+  const db = bootstrapDb();
+  const store = new SqliteDriftStore({ db });
+  let clock = 1_000_000;
+  const engine = new DriftEngine({ deps: makeDeps(), store, now: () => clock });
+
+  const first = await engine.runDrift({ teamId: 'team-a', trigger: 'periodic' });
+  clock += 300_000 + 1; // past the 5min default cooldown
+  const later = await engine.runDrift({ teamId: 'team-a', trigger: 'periodic' });
+  assert.notEqual(later.runId, first.runId);
+  assert.notEqual(later.cached, true);
+  assert.equal(store.listScoreHistory({ teamId: 'team-a', limit: 50 }).length, 2);
 });
 
 test('DriftEngine awaits async check.fn results', async () => {

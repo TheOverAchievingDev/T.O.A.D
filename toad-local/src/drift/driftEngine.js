@@ -8,6 +8,13 @@ const DEFAULT_SETTINGS = Object.freeze({
   drift: Object.freeze({
     llmTierEnabled: true,
     escalationThreshold: 41,
+    // Periodic-trigger cooldown. The backend monitor (5min) AND the UI
+    // poll (60s) both issue trigger:'periodic'. Without this, every
+    // periodic call does a full whole-tree re-scan (buildSnapshot walks
+    // the project) + a new persisted run — the 2026-05-15 usage spike.
+    // 5min matches DriftMonitor's DEFAULT_INTERVAL_MS so the slowest
+    // periodic caller sets the real cadence; manual + task_event bypass.
+    periodicCooldownMs: 300_000,
     tier2CooldownMs: 300_000,
     tier2ScoreDelta: 10,
     tier1ModelOverride: null,
@@ -40,6 +47,11 @@ const DEFAULT_SETTINGS = Object.freeze({
 export class DriftEngine {
   #inflight = new Map();
   #tier2Cooldown = new Map(); // teamId -> { lastRunAt, lastScore }
+  // teamId -> this.now() of the last COMPUTED+persisted run. In-memory
+  // (lost on sidecar restart — acceptable, same as #tier2Cooldown:
+  // first periodic after a restart simply recomputes). Drives the
+  // periodic-trigger cooldown.
+  #lastRunAt = new Map();
 
   constructor({
     deps,
@@ -102,12 +114,33 @@ export class DriftEngine {
       };
     }
 
+    const driftSettings = this.settings.drift ?? DEFAULT_SETTINGS.drift;
+
+    // Periodic-trigger cooldown (the 2026-05-15 double-trigger fix).
+    // The backend DriftMonitor (5min) AND the UI poll (60s) both issue
+    // trigger:'periodic'. Without this guard every periodic call does a
+    // full whole-tree re-scan (buildSnapshot walks the project tree:
+    // scanConstitution + scanContracts) + a new persisted run. Only
+    // `manual` (explicit operator intent) and `task_event` (real
+    // lifecycle activity must surface immediately) force a fresh
+    // compute; a `periodic` call within periodicCooldownMs of the last
+    // computed run returns that run's persisted result unchanged.
+    if (trigger === 'periodic') {
+      const cooldownMs = typeof driftSettings.periodicCooldownMs === 'number'
+        ? driftSettings.periodicCooldownMs
+        : DEFAULT_SETTINGS.drift.periodicCooldownMs;
+      const last = this.#lastRunAt.get(teamId);
+      if (cooldownMs > 0 && last != null && (this.now() - last) < cooldownMs) {
+        const cached = this.#cachedResult({ teamId });
+        if (cached) return cached;
+      }
+    }
+
     // Step A: Read correction linkages BEFORE building snapshot / running checks.
     const linkages = (typeof this.store.getCorrectionLinkages === 'function')
       ? this.store.getCorrectionLinkages({ teamId })
       : new Map();
 
-    const driftSettings = this.settings.drift ?? DEFAULT_SETTINGS.drift;
     const compareAgainst = driftSettings.compareAgainst ?? 'foundry_docs';
     const snapshot = await buildSnapshot({
       teamId,
@@ -224,6 +257,10 @@ export class DriftEngine {
       trigger,
       findings: allFindings,
     });
+    // Mark this team's last computed+persisted run for the
+    // periodic-trigger cooldown (set AFTER a successful recordRun so a
+    // failed/partial run doesn't suppress the next periodic retry).
+    this.#lastRunAt.set(teamId, this.now());
 
     // Step D: Reap resolved corrections after persisting.
     if (typeof this.store.reapResolvedCorrections === 'function') {
@@ -247,6 +284,37 @@ export class DriftEngine {
         tier1: tier1Status,
         tier2: tier2Status,
       },
+    };
+  }
+
+  /**
+   * Reconstruct the most recent persisted DriftRunResult for a team
+   * from the store (no checks, no buildSnapshot, no LLM). Returns null
+   * if nothing is persisted yet (→ caller falls through and computes).
+   * Shape mirrors #runDriftInner's return so the UI/caller can't tell
+   * a cached periodic tick from a fresh one beyond the `cached` flag
+   * and the LLM tiers being honestly reported as skipped:cooldown.
+   */
+  #cachedResult({ teamId }) {
+    if (typeof this.store.listScoreHistory !== 'function'
+        || typeof this.store.listLatestFindings !== 'function') return null;
+    const hist = this.store.listScoreHistory({ teamId, limit: 30 });
+    if (!Array.isArray(hist) || hist.length === 0) return null;
+    const latest = hist[0]; // listScoreHistory orders created_at DESC
+    return {
+      runId: latest.runId,
+      asOf: latest.createdAt,
+      teamScore: latest.teamScore,
+      status: latest.status,
+      findings: this.store.listLatestFindings({ teamId }),
+      categoryScores: latest.categoryScores ?? {},
+      perTaskScores: latest.perTaskScores ?? {},
+      history: hist.map((h) => ({
+        runId: h.runId, teamScore: h.teamScore, createdAt: h.createdAt,
+      })),
+      trigger: latest.trigger,
+      cached: true,
+      llm: { tier1: 'skipped:cooldown', tier2: 'skipped:cooldown' },
     };
   }
 
