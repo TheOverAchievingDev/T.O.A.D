@@ -164,6 +164,10 @@ export function projectTask(events) {
     testCommands: [],
     expectedDeliverables: [],
     dependencyTaskIds: [],
+    // L1.2a structural-drift roadmap link: explicit task→spec-module
+    // tokens ("module:<name>"/"endpoint:<method> <path>"). Read by
+    // checkStructuralDeclaredAbsent; never inferred from titles.
+    delivers: [],
     validations: [],
     latestValidation: {},
     consecutiveTestFailures: 0,
@@ -208,6 +212,8 @@ export function projectTask(events) {
       task.testCommands = normalizeStringList(event.payload.testCommands);
       task.expectedDeliverables = normalizeStringList(event.payload.expectedDeliverables);
       task.dependencyTaskIds = normalizeStringList(event.payload.dependencyTaskIds);
+      // L1.2a: explicit structural-delivery link (see init above).
+      task.delivers = normalizeStringList(event.payload.delivers);
     }
     if (event.eventType === TASK_EVENT_TYPES.ASSIGNED) {
       task.ownerId = event.payload.ownerId || null;

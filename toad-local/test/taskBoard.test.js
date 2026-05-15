@@ -534,6 +534,32 @@ test('§1 follow-up: defaults are sensible when fields are omitted', () => {
   assert.deepEqual(t.dependencyTaskIds, []);
 });
 
+test('L1.2a producer: task_create projects `delivers` (structural roadmap link)', () => {
+  // `delivers` is the EXPLICIT task→spec-module link the L1.2a
+  // roadmap-aware structural check reads (never inferred from titles).
+  // Tokens: "module:<name>" / "endpoint:<method> <path>".
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 't', taskId: 'd-1', eventType: TASK_EVENT_TYPES.CREATED, actorId: 'lead',
+    payload: {
+      subject: 'build the sampler',
+      delivers: ['module:sampler', 'module:heuristics'],
+    },
+  });
+  const t = board.getTask({ teamId: 't', taskId: 'd-1' });
+  assert.deepEqual(t.delivers, ['module:sampler', 'module:heuristics']);
+});
+
+test('L1.2a producer: `delivers` defaults to [] when omitted', () => {
+  const board = new InMemoryTaskBoard();
+  board.appendEvent({
+    teamId: 't', taskId: 'd-2', eventType: TASK_EVENT_TYPES.CREATED, actorId: 'lead',
+    payload: { subject: 'no delivers' },
+  });
+  const t = board.getTask({ teamId: 't', taskId: 'd-2' });
+  assert.deepEqual(t.delivers, []);
+});
+
 test('REVIEW_DECIDED feedback items preserve severity (§17)', () => {
   const board = new InMemoryTaskBoard();
   board.appendEvent({

@@ -4123,6 +4123,15 @@ function normalizeTaskRiskContractArgs(args) {
   if (expectedDeliverables) payload.expectedDeliverables = expectedDeliverables;
   const dependencyTaskIds = normalizeStringList(args.dependencyTaskIds);
   if (dependencyTaskIds) payload.dependencyTaskIds = dependencyTaskIds;
+  // L1.2a structural-drift roadmap link. Explicit task→spec-module
+  // tokens ("module:<name>" / "endpoint:<method> <path>"). Sanitized
+  // as a plain string list — the consumer (checkStructuralDeclaredAbsent)
+  // matches tokens exactly and fails GENTLY on a malformed token (a
+  // non-matching delivers entry degrades to the "no delivery task"
+  // low finding, never a false high/critical), so strict format
+  // validation here would be YAGNI.
+  const delivers = normalizeStringList(args.delivers);
+  if (delivers) payload.delivers = delivers;
   return payload;
 }
 

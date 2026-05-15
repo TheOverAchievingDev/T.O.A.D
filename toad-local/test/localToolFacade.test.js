@@ -5676,6 +5676,34 @@ test('task_create accepts §1 follow-up fields and validates enums', () => {
   );
 });
 
+test('L1.2a producer: task_create accepts `delivers` and projects it onto the task', () => {
+  // Activates the L1.2a roadmap-aware structural check, which reads the
+  // EXPLICIT task→module link off snapshot.tasks[].delivers.
+  const facade = new LocalToolFacade({ broker: new InMemoryBroker(), taskBoard: new InMemoryTaskBoard() });
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'deliv-create',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: {
+      taskId: 'deliv-1',
+      subject: 'build sampler module',
+      delivers: ['module:sampler'],
+    },
+  });
+  const t = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'deliv-1' });
+  assert.deepEqual(t.delivers, ['module:sampler']);
+
+  // Omitted → empty array (honest-dormant: no token, check stays informational).
+  facade.execute({
+    commandName: COMMANDS.TASK_CREATE,
+    idempotencyKey: 'deliv-create-none',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'deliv-2', subject: 'no delivers' },
+  });
+  const t2 = facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'deliv-2' });
+  assert.deepEqual(t2.delivers, []);
+});
+
 // --- §14 follow-up: command rules in risk classifier ---
 
 test('review_request pulls Bash commands from runtime_events and matches commandRules', () => {

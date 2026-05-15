@@ -105,7 +105,7 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
   makeTool({
     name: COMMANDS.TASK_CREATE,
     title: 'Create Task',
-    description: 'Create a task on the current team task board. Optional `baseRef` pins the task worktree to a specific commit; otherwise it defaults to HEAD at planning time. `baseBranch` records the integration target name for §19 merge workflow.',
+    description: 'Create a task on the current team task board. Optional `baseRef` pins the task worktree to a specific commit; otherwise it defaults to HEAD at planning time. `baseBranch` records the integration target name for §19 merge workflow. `delivers` links the task to the spec.json structure entries it implements, as explicit tokens ("module:<name>" e.g. "module:sampler", or "endpoint:<METHOD> <path>" e.g. "endpoint:POST /login"); set it whenever a task builds a declared module/endpoint so structural drift is judged against delivery progress instead of wolf-crying on every unbuilt module.',
     required: ['taskId', 'subject'],
     properties: {
       taskId: { type: 'string', minLength: 1 },
@@ -125,6 +125,7 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
       testCommands: STRING_LIST_SCHEMA,
       expectedDeliverables: STRING_LIST_SCHEMA,
       dependencyTaskIds: STRING_LIST_SCHEMA,
+      delivers: STRING_LIST_SCHEMA,
       type: {
         type: 'string',
         enum: ['feature', 'bug'],
