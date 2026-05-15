@@ -178,13 +178,91 @@ The supervisor + runtime registry coordinate the lifecycle of every agent proces
 
 ## 8. Quality gates
 
-Three orthogonal mechanisms keep the team honest:
+Three orthogonal mechanisms keep the team honest. Two terms that were
+historically conflated and are now **deliberately separated** (naming
+matters — improvements to one looked like regressions in the other):
 
-- **Drift monitor** (`src/drift/`). Periodic (5min) + event-triggered checks. 8 deterministic checks + 1 LLM judge. Emits findings the operator sees in the Drift screen. Finds: tasks marked done without merge evidence, role permission violations, missing test artifacts, invalid lifecycle transitions, semantic drift from steering docs.
-- **Validations** (`validation_run`). Per-task lint/typecheck/test/build runs. Agents fire them; results land on the task; the merge gate checks them.
-- **Risk policy + approvals**. Tasks with `requiresHumanApproval: true` block at the human-gate step. Risk classification (`src/policy/riskClassifier.js`) auto-tags tasks touching sensitive paths.
+- **Conformance / process invariants** (`src/drift/checks/check*.js`,
+  the 7 deterministic checks). "Did the *agents* follow the right
+  *process*?" — lifecycle transitions valid, review had findings,
+  done has merge evidence, role permissions respected, test artifacts
+  present, scope contract honored. These are behavioral audits of
+  agent conduct. They keep their own findings stream + UI pip.
+- **Drift** (the L1/L2/L3 layered system, under construction). "Does
+  the *artifact* match the *spec*?" — code-vs-spec alignment. This is
+  a different product from conformance and gets its own surface.
+- **Validations** (`validation_run`). Per-task lint/typecheck/test/
+  build. Agents fire them; results land on the task; the merge gate
+  checks them. (This is where *type* correctness lives — drift
+  deliberately does not re-implement a type system.)
+- **Risk policy + approvals**. `requiresHumanApproval: true` blocks at
+  the human gate; `src/policy/riskClassifier.js` auto-tags sensitive
+  paths.
 
-These three are **not** the agent isolation contract. They're behavior gates, not security boundaries. Even with all three passing, a misbehaving agent could still try to read outside the workspace — which is why §4 must be enforced at the CLI permission layer.
+None of these are the agent isolation contract (§4). They are behavior
+gates, not security boundaries.
+
+### 8a. The layered drift model
+
+Drift detection is three layers of increasing cost, each filtering
+work for the next. Design + rationale: `docs/superpowers/specs/
+2026-05-15-spec-yaml-schema.md`.
+
+- **Layer 1 — deterministic checks** (raw parse/AST/grep, milliseconds,
+  no LLM). Reads `docs/foundry/spec.json` — the machine-checkable
+  projection of the seven prose foundry docs. Four staged checks:
+  dependency drift → structural drift → constitution-grep → contract
+  drift. Highest signal, lowest cost; most real drift lives here.
+- **Layer 2 — embedding similarity** (cheap math, no LLM inference).
+  Mid-level semantic drift with no clean rule. Deferred until L1/L3
+  are stable.
+- **Layer 3 — LLM judgment, sparingly**. Fires only at task
+  boundaries AND only when L1/L2 surfaced ambiguity. Sees a *scoped*
+  payload (relevant spec section + the specific diff + the L1/L2
+  flag), never the whole brief. Haiku for the common case; escalate
+  to Sonnet only when Haiku itself flags ambiguity.
+
+`spec.json` is the contract every L1 check reads. Foundry emits it on
+materialize; `foundry_extract_spec` bootstraps existing prose-only
+projects. It is a *projection* of the prose docs, not a replacement —
+the prose stays for humans and the L3 judge.
+
+### 8b. The broker is the drift vantage point — ARCHITECTURAL ADVANTAGE
+
+This is a first-class structural property of Symphony, not an
+implementation detail. **Every meaningful inter-agent action —
+`message_send`, `task_update`, `validation_run`, `review_request` —
+flows through the SQLite broker (`src/broker/sqliteBroker.js`), code
+Symphony fully controls.** Most multi-agent systems have agents talk
+to each other through opaque channels (direct API calls, shared
+memory, framework message buses) and can only audit *after* the fact
+by reading artifacts. Symphony can observe — and optionally *gate* —
+the actual instruction *as it is sent, before the recipient acts on
+it*.
+
+Concrete consequence: when the lead tells a worker "implement OAuth,"
+the broker sees that message. A Layer-1 check can verify OAuth is in
+the authorized scope per `spec.json` *before delivery* — drift
+detection **before** the work happens, not post-hoc cleanup.
+
+Two enforcement modes, declared per-check:
+
+- **observe** (default, ~90%): check runs after `appendMessage`;
+  violation produces a finding, delivery is not blocked. Zero latency
+  added to agent throughput.
+- **gate** (`severity: critical` constitution rules only): check runs
+  at the `appendMessage → DeliveryWorker.deliverMessage` seam; a
+  violation blocks the message and returns a rejection the lead's
+  system prompt is told to respect.
+
+Prerequisite, tracked as its own slice: `SqliteBroker` has no observer
+seam today (`SqliteTaskBoard` has `subscribe(fn)`; the broker's
+`appendMessage` just writes). The hook must be added at the
+append→deliver boundary. It is not a free property — but the
+*architecture that makes it possible* is, and that is what's worth
+preserving here as doctrine: **do not route agent communication
+around the broker. The broker's universality is the drift system's
+power.**
 
 ## 9. Provider architecture
 
