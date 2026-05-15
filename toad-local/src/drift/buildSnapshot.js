@@ -4,6 +4,7 @@ import { runGit as defaultRunGit } from '../git/runGit.js';
 import { loadProjectSpec } from './spec/loadProjectSpec.js';
 import { parseManifestDeps } from './spec/parseManifestDeps.js';
 import { enumerateSourceModules } from './spec/enumerateSourceModules.js';
+import { scanConstitution } from './spec/scanConstitution.js';
 
 const COMMITS_DEFAULT = 30;
 const DOC_CAP = 8 * 1024;
@@ -239,6 +240,33 @@ export async function buildSnapshot({ teamId, deps = {}, compareAgainst = 'found
     sourceModulesError = e.error;
   }
 
+  // L1.3 constitution scan: bounded whole-tree application of
+  // spec.constitution.rules[]. Whole-tree (not diff-scoped) because
+  // constitution rules are standing invariants. Resolved HERE so
+  // checkConstitution stays pure. Only runs when rules are declared.
+  let constitutionHits = [];
+  let constitutionUnsupported = [];
+  let constitutionError = null;
+  if (spec && spec.constitution && Array.isArray(spec.constitution.rules)
+      && spec.constitution.rules.length > 0 && specProjectCwd) {
+    try {
+      const c = scanConstitution({
+        projectCwd: specProjectCwd,
+        rules: spec.constitution.rules,
+        readdirSyncImpl: deps.readdirSyncImpl,
+        statSyncImpl: deps.statSyncImpl,
+        readFileSyncImpl: deps.readFileSyncImpl,
+      });
+      constitutionHits = c.hits;
+      constitutionUnsupported = c.unsupportedRules;
+      constitutionError = c.error;
+    } catch (err) {
+      // Defensive — scanConstitution is already fail-soft, but never
+      // let a constitution scan throw out of a drift run.
+      constitutionError = `constitution scan threw: ${err && err.message ? err.message : err}`;
+    }
+  }
+
   return {
     teamId,
     asOf: new Date().toISOString(),
@@ -263,6 +291,11 @@ export async function buildSnapshot({ teamId, deps = {}, compareAgainst = 'found
     // unsupported; [] = no source yet).
     sourceModules,
     sourceModulesError,
+    // L1.3: constitution scan results (hits + unsupported detector
+    // rule ids + scan error).
+    constitutionHits,
+    constitutionUnsupported,
+    constitutionError,
   };
 }
 

@@ -8,6 +8,7 @@ import { checkDoneWithoutMergeEvidence } from './checkDoneWithoutMergeEvidence.j
 import { checkDependencyDrift } from './checkDependencyDrift.js';
 import { checkStructuralDeclaredAbsent } from './checkStructuralDeclaredAbsent.js';
 import { checkStructuralUndeclaredPresent } from './checkStructuralUndeclaredPresent.js';
+import { checkConstitution } from './checkConstitution.js';
 import { checkLlmSemantic } from './checkLlmSemantic.js';
 
 /**
@@ -46,6 +47,15 @@ export const ALL_CHECKS = Object.freeze([
   // sanctioned") so it never flags every file on an under-specced
   // project.
   { name: 'check_structural_undeclared_present', tier: 1, mode: 'observe', fn: checkStructuralUndeclaredPresent },
+  // L1.3 — constitution drift. Generalizes the hardcoded
+  // check_provider_logic_leakage prototype into spec-driven rules
+  // (spec.constitution.rules[]). Whole-tree scan in buildSnapshot;
+  // per-rule severity + mode. Registry mode stays 'observe' — even
+  // gate-mode RULES only flag until the broker append→deliver seam
+  // lands (the finding carries constitutionMode so that slice is
+  // zero-change here). check_provider_logic_leakage stays as-is for
+  // now; folding it into a constitution rule is a later cleanup.
+  { name: 'check_constitution', tier: 1, mode: 'observe', fn: checkConstitution },
   // LLM tier 1 — Haiku/Mini/Flash, always runs
   { name: 'check_llm_semantic_t1', tier: 1, fn: (args) => checkLlmSemantic({ ...args, tier: 1 }) },
   // LLM tier 2 — Opus/GPT-5/Gemini-Pro, escalation only
