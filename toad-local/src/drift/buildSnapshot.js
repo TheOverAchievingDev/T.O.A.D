@@ -194,6 +194,31 @@ export async function buildSnapshot({ teamId, deps = {}, compareAgainst = 'found
     manifestError = r.error;
   }
 
+  // L1.2a structural presence map: for each declared `kind: module`
+  // entry, does its `evidence` source path exist? Resolved HERE (not
+  // in the check) so checkStructuralDeclaredAbsent stays a pure
+  // function over the snapshot. existsSync is fail-soft — a probe
+  // throw is treated as "absent" rather than crashing the drift run.
+  let structurePresence = null;
+  if (spec && spec.structure && Array.isArray(spec.structure.required) && specProjectCwd) {
+    const exists = typeof deps.existsSyncImpl === 'function'
+      ? deps.existsSyncImpl
+      : defaultExistsSync;
+    structurePresence = {};
+    for (const entry of spec.structure.required) {
+      if (!entry || entry.kind !== 'module' || typeof entry.name !== 'string') continue;
+      const evidence = typeof entry.evidence === 'string' && entry.evidence.length > 0
+        ? entry.evidence
+        : null;
+      if (!evidence) { structurePresence[entry.name] = false; continue; }
+      try {
+        structurePresence[entry.name] = exists(join(specProjectCwd, evidence)) === true;
+      } catch {
+        structurePresence[entry.name] = false;
+      }
+    }
+  }
+
   return {
     teamId,
     asOf: new Date().toISOString(),
@@ -212,6 +237,8 @@ export async function buildSnapshot({ teamId, deps = {}, compareAgainst = 'found
     specError,
     manifestDeps,
     manifestError,
+    // L1.2a: declared module → does its evidence path exist on disk?
+    structurePresence,
   };
 }
 

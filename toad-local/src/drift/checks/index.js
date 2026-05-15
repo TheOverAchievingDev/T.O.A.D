@@ -6,6 +6,7 @@ import { checkReviewWithoutFindings } from './checkReviewWithoutFindings.js';
 import { checkProviderLogicLeakage } from './checkProviderLogicLeakage.js';
 import { checkDoneWithoutMergeEvidence } from './checkDoneWithoutMergeEvidence.js';
 import { checkDependencyDrift } from './checkDependencyDrift.js';
+import { checkStructuralDeclaredAbsent } from './checkStructuralDeclaredAbsent.js';
 import { checkLlmSemantic } from './checkLlmSemantic.js';
 
 /**
@@ -30,6 +31,12 @@ export const ALL_CHECKS = Object.freeze([
   // observer seam, a separate slice). First real code-vs-spec drift
   // Symphony ships. See PROJECT.md §8a + the schema design doc.
   { name: 'check_dependency_drift', tier: 1, mode: 'observe', fn: checkDependencyDrift },
+  // L1.2a — declared-but-absent structural drift, roadmap-aware.
+  // Reads spec.structure + snapshot.structurePresence + task.delivers.
+  // Honest-dormant (one info meta) until the `delivers` field is
+  // adopted, so it never wolf-cries on early-stage projects. L1.2b
+  // (undeclared-present, scope-only) is a separate follow-up entry.
+  { name: 'check_structural_declared_absent', tier: 1, mode: 'observe', fn: checkStructuralDeclaredAbsent },
   // LLM tier 1 — Haiku/Mini/Flash, always runs
   { name: 'check_llm_semantic_t1', tier: 1, fn: (args) => checkLlmSemantic({ ...args, tier: 1 }) },
   // LLM tier 2 — Opus/GPT-5/Gemini-Pro, escalation only
