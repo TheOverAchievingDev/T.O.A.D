@@ -235,6 +235,90 @@ test('truncated scan suppresses missing→high and emits one honest incomplete m
   assert.match(findings[0].actual, /incomplete|cap|truncat/i);
 });
 
+// ── L1.4b: arity-mismatch findings ─────────────────────────────────
+// found:true proves an implementation exists, so an arity mismatch is
+// unambiguous genuine drift (the fn is there but shaped differently
+// from the spec) — medium, less severe than wholly-missing high.
+// Either arity null → NO arity finding (presence-only, never wolf-cry).
+
+test('found + arity mismatch (both numeric) → one medium architecture finding', () => {
+  const findings = checkContractDrift({
+    snapshot: snap({
+      contractScan: {
+        results: [
+          { id: 'killer.kill', identifier: 'kill', found: true, declaredArity: 1, foundArity: 2 },
+          { id: 'safety.is_protected', identifier: 'is_protected', found: true, declaredArity: 1, foundArity: 1 },
+        ],
+        missing: [], webContractIds: [], unsupported: [], error: null, truncated: false,
+      },
+    }),
+  });
+  assert.equal(findings.length, 1);
+  const f = findings[0];
+  assert.equal(f.severity, 'medium');
+  assert.equal(f.category, 'architecture');
+  assert.equal(f.checkName, 'check_contract_drift');
+  assert.match(f.title, /killer\.kill/);
+  assert.match(f.actual, /1.*2|declared 1|found 2/);
+});
+
+test('found + arity equal → no finding', () => {
+  const findings = checkContractDrift({
+    snapshot: snap({
+      contractScan: {
+        results: [{ id: 'killer.kill', identifier: 'kill', found: true, declaredArity: 2, foundArity: 2 }],
+        missing: [], webContractIds: [], unsupported: [], error: null, truncated: false,
+      },
+    }),
+  });
+  assert.deepEqual(findings, []);
+});
+
+test('found + arity ambiguous (a null) → NO arity finding (presence-only, no wolf-cry)', () => {
+  for (const [d, f] of [[1, null], [null, 2], [null, null]]) {
+    const findings = checkContractDrift({
+      snapshot: snap({
+        contractScan: {
+          results: [{ id: 'killer.kill', identifier: 'kill', found: true, declaredArity: d, foundArity: f }],
+          missing: [], webContractIds: [], unsupported: [], error: null, truncated: false,
+        },
+      }),
+    });
+    assert.deepEqual(findings, [], `declared=${d} found=${f} must not flag`);
+  }
+});
+
+test('arity mismatch on an unreviewed spec is clamped to info (ruling #4)', () => {
+  const s = snap({
+    contractScan: {
+      results: [{ id: 'killer.kill', identifier: 'kill', found: true, declaredArity: 1, foundArity: 3 }],
+      missing: [], webContractIds: [], unsupported: [], error: null, truncated: false,
+    },
+  });
+  s.spec.provenance.reviewed = false;
+  const findings = checkContractDrift({ snapshot: s });
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].severity, 'info');
+  assert.equal(findings[0].specReviewed, false);
+});
+
+test('missing (high) and arity-mismatch (medium) coexist independently', () => {
+  const findings = checkContractDrift({
+    snapshot: snap({
+      structurePresence: { killer: true, safety: true },
+      contractScan: {
+        results: [
+          { id: 'killer.kill', identifier: 'kill', found: false, declaredArity: 1, foundArity: null },
+          { id: 'safety.is_protected', identifier: 'is_protected', found: true, declaredArity: 1, foundArity: 2 },
+        ],
+        missing: ['killer.kill'], webContractIds: [], unsupported: [], error: null, truncated: false,
+      },
+    }),
+  });
+  const tags = findings.map((x) => `${x.severity}`).sort();
+  assert.deepEqual(tags, ['high', 'medium']);
+});
+
 test('no spec / no contracts declared → no findings, no walk side effects', () => {
   assert.deepEqual(checkContractDrift({ snapshot: { teamId: 't' } }), []);
   assert.deepEqual(

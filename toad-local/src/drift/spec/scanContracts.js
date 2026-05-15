@@ -119,6 +119,148 @@ function resolveIdentifier(contract) {
   return seg.length > 0 ? seg[seg.length - 1] : null;
 }
 
+// ── L1.4b arity (§4a: presence + ARITY, never types) ───────────────
+// Discipline: return a number ONLY when the parse is unambiguous. ANY
+// uncertainty → null, so checkContractDrift degrades to presence-only
+// and never wolf-cries on a count it isn't sure of.
+
+const SCAN_CAP = 4000; // bound the paren scan; a real signature is tiny
+
+/**
+ * From an opening '(' at openIdx, return the substring strictly inside
+ * its matching ')'. null if unbalanced within SCAN_CAP (→ ambiguous).
+ */
+function extractBalancedParen(str, openIdx) {
+  if (str[openIdx] !== '(') return null;
+  let depth = 0;
+  const end = Math.min(str.length, openIdx + SCAN_CAP);
+  for (let i = openIdx; i < end; i += 1) {
+    const ch = str[i];
+    if (ch === '(') depth += 1;
+    else if (ch === ')') {
+      depth -= 1;
+      if (depth === 0) return str.slice(openIdx + 1, i);
+    }
+  }
+  return null;
+}
+
+/**
+ * Skip a balanced `<...>` generic clause starting at idx (str[idx]
+ * === '<'). Returns the index just past the matching '>', or -1 if
+ * unbalanced. Treats `->`/`=>` as NOT closing a generic.
+ */
+function skipGenerics(str, idx) {
+  if (str[idx] !== '<') return idx;
+  let depth = 0;
+  const end = Math.min(str.length, idx + SCAN_CAP);
+  for (let i = idx; i < end; i += 1) {
+    const ch = str[i];
+    if (ch === '<') depth += 1;
+    else if (ch === '>') {
+      if (str[i - 1] === '-' || str[i - 1] === '=') continue; // -> / =>
+      depth -= 1;
+      if (depth === 0) return i + 1;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Count top-level arguments in a parameter substring. Depth-aware over
+ * () [] {} <> so generic / tuple / closure / array commas are not
+ * separators. Returns null on any ambiguity (unbalanced, JS
+ * destructuring / rest / default — logical arity not a fixed count).
+ */
+function arityFromParams(paramStr, lang) {
+  if (typeof paramStr !== 'string') return null;
+  const s = paramStr.trim();
+  if (s.length === 0) return 0;
+  const segs = [];
+  let depth = 0;
+  let cur = '';
+  for (let i = 0; i < s.length; i += 1) {
+    const ch = s[i];
+    if (ch === '(' || ch === '[' || ch === '{') { depth += 1; cur += ch; continue; }
+    if (ch === ')' || ch === ']' || ch === '}') {
+      depth -= 1; if (depth < 0) return null; cur += ch; continue;
+    }
+    if (ch === '<') { depth += 1; cur += ch; continue; }
+    if (ch === '>') {
+      if (s[i - 1] === '-' || s[i - 1] === '=') { cur += ch; continue; } // ->/=>
+      depth -= 1; if (depth < 0) return null; cur += ch; continue;
+    }
+    if (ch === ',' && depth === 0) { segs.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  if (depth !== 0) return null;
+  if (cur.trim().length > 0) segs.push(cur);
+  const params = segs.map((x) => x.trim()).filter((x) => x.length > 0);
+  if (params.length === 0) return 0;
+
+  if (RUST_LANGS.has(lang)) {
+    // self / &self / &mut self / &'a self is a RECEIVER, not an arg.
+    if (/^&?\s*(?:'[A-Za-z_]\w*\s+)?(?:mut\s+)?self$/.test(params[0])) {
+      params.shift();
+    }
+  }
+  if (JS_LANGS.has(lang)) {
+    for (const p of params) {
+      // rest, destructuring, or a default value → logical arity is not
+      // a fixed number we can compare honestly. Bail (presence-only).
+      if (p.startsWith('...') || p.startsWith('{') || p.startsWith('[')) return null;
+      if (/(^|[^=!<>])=(?!=)/.test(p)) return null; // default value
+    }
+  }
+  return params.length;
+}
+
+function declaredArity(signature, lang) {
+  if (typeof signature !== 'string' || signature.length === 0) return null;
+  // First '(' in a (single-line) signature is the param list — a Rust
+  // generic clause `<...>` has no parens so it never precedes wrongly.
+  const open = signature.indexOf('(');
+  if (open < 0) return null;
+  const inner = extractBalancedParen(signature, open);
+  if (inner === null) return null;
+  return arityFromParams(inner, lang);
+}
+
+/**
+ * Given content and a definition regex match, locate the parameter
+ * '(' and return the found definition's arity (or null if ambiguous).
+ * Rust: match ends at `<` or `(` (the `[<(]` matcher) — skip a
+ * generic clause if present. JS: scan a small window from the
+ * identifier to the first '('.
+ */
+function foundArityFromMatch(content, match, lang) {
+  if (!match) return null;
+  const matchEnd = match.index + match[0].length;
+  if (RUST_LANGS.has(lang)) {
+    let i = matchEnd - 1; // the [<(] char
+    if (content[i] === '<') {
+      i = skipGenerics(content, i);
+      if (i < 0) return null;
+      while (i < content.length && /\s/.test(content[i])) i += 1;
+    }
+    if (content[i] !== '(') return null;
+    const inner = extractBalancedParen(content, i);
+    return inner === null ? null : arityFromParams(inner, lang);
+  }
+  // JS: find the first '(' within a bounded window after the match
+  // start; bail if we hit a statement terminator first.
+  const winEnd = Math.min(content.length, match.index + 200);
+  for (let i = match.index; i < winEnd; i += 1) {
+    const ch = content[i];
+    if (ch === '(') {
+      const inner = extractBalancedParen(content, i);
+      return inner === null ? null : arityFromParams(inner, lang);
+    }
+    if (ch === ';' || ch === '{') return null; // no clean param list
+  }
+  return null;
+}
+
 function isWebContract(c) {
   return (c && (
     (c.request_schema && typeof c.request_schema === 'object')
@@ -154,7 +296,11 @@ export function scanContracts({
     if (isWebContract(c)) { out.webContractIds.push(id); continue; }
     const identifier = resolveIdentifier(c);
     if (!identifier) { out.webContractIds.push(id); continue; }
-    internal.push({ id, identifier });
+    internal.push({
+      id,
+      identifier,
+      signature: typeof c.signature === 'string' ? c.signature : null,
+    });
   }
   if (internal.length === 0) return out;
 
@@ -167,9 +313,14 @@ export function scanContracts({
     return out;
   }
 
-  // Compile matchers once per contract.
+  // Compile matchers once per contract. declaredArity is parsed once
+  // from the signature here (§4a: identifier + arg count only).
   const compiled = internal.map((c) => ({
-    ...c, found: false, res: defMatchers(lang, c.identifier),
+    ...c,
+    found: false,
+    foundArity: null,
+    declaredArity: declaredArity(c.signature, lang),
+    res: defMatchers(lang, c.identifier),
   }));
 
   const root = projectCwd.replace(/\\/g, '/').replace(/\/+$/, '');
@@ -206,14 +357,27 @@ export function scanContracts({
         if (c.found) continue;
         for (const re of c.res) {
           re.lastIndex = 0;
-          if (re.test(content)) { c.found = true; break; }
+          const m = re.exec(content);
+          if (m) {
+            c.found = true;
+            // Capture arity from the SAME (first) definition match.
+            // Ambiguous parse → null → presence-only for this contract.
+            c.foundArity = foundArityFromMatch(content, m, lang);
+            break;
+          }
         }
       }
     }
   }
 
   for (const c of compiled) {
-    out.results.push({ id: c.id, identifier: c.identifier, found: c.found });
+    out.results.push({
+      id: c.id,
+      identifier: c.identifier,
+      found: c.found,
+      declaredArity: c.declaredArity,
+      foundArity: c.found ? c.foundArity : null,
+    });
     if (!c.found) out.missing.push(c.id);
   }
   return out;

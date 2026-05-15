@@ -163,6 +163,156 @@ test('empty / absent contracts list → empty result, no walk', () => {
   assert.equal(r.error, null);
 });
 
+// ── L1.4b: arity (declared vs found arg count) ─────────────────────
+// §4a: presence + arity, NEVER types. Discipline: emit a numeric
+// arity ONLY when the parse is unambiguous; ANY ambiguity (generic
+// commas, tuples, closures, Rust self-receiver edge, multiline,
+// JS destructuring/rest) → null, so the check degrades to
+// presence-only and never wolf-cries on a parse it isn't sure of.
+
+test('rust arity: clean declared + clean found → both numeric and equal', () => {
+  const fs = vfs({
+    src: 'dir',
+    'src/k.rs': 'pub fn kill(pids: &[u32]) -> KillReport { todo!() }\n',
+  });
+  const r = scanContracts({
+    projectCwd: '/proj',
+    contracts: [{ id: 'killer.kill', signature: 'fn kill(pids: &[u32]) -> KillReport' }],
+    language: 'rust', ...fs,
+  });
+  const x = r.results[0];
+  assert.equal(x.found, true);
+  assert.equal(x.declaredArity, 1);
+  assert.equal(x.foundArity, 1);
+});
+
+test('rust arity: real mismatch is detected (declared 1, impl 2)', () => {
+  const fs = vfs({
+    src: 'dir',
+    'src/s.rs': 'pub fn score(row: &Row, cfg: &Cfg) -> S { todo!() }\n',
+  });
+  const r = scanContracts({
+    projectCwd: '/proj',
+    contracts: [{ id: 'h.score', signature: 'fn score(row: &Row) -> S' }],
+    language: 'rust', ...fs,
+  });
+  const x = r.results[0];
+  assert.equal(x.declaredArity, 1);
+  assert.equal(x.foundArity, 2);
+});
+
+test('rust arity: &self / &mut self receiver is excluded from the count', () => {
+  const fs = vfs({
+    src: 'dir',
+    'src/k.rs': 'impl Killer {\n  pub fn kill(&mut self, pids: &[u32]) -> R { todo!() }\n}\n',
+  });
+  const r = scanContracts({
+    projectCwd: '/proj',
+    contracts: [{ id: 'killer.kill', signature: 'fn kill(pids: &[u32]) -> R' }],
+    language: 'rust', ...fs,
+  });
+  const x = r.results[0];
+  assert.equal(x.declaredArity, 1);
+  assert.equal(x.foundArity, 1, 'self is a receiver, not a logical argument');
+});
+
+test('rust arity: generic comma in a param type is NOT a separator', () => {
+  const fs = vfs({
+    src: 'dir',
+    'src/m.rs': 'pub fn put(map: HashMap<K, V>, key: K) -> Option<V> { todo!() }\n',
+  });
+  const r = scanContracts({
+    projectCwd: '/proj',
+    contracts: [{ id: 'm.put', signature: 'fn put(map: HashMap<K, V>, key: K) -> Option<V>' }],
+    language: 'rust', ...fs,
+  });
+  const x = r.results[0];
+  assert.equal(x.declaredArity, 2);
+  assert.equal(x.foundArity, 2, 'the <K, V> comma must not inflate the count');
+});
+
+test('rust arity: tuple/array commas and a closure param are one arg each', () => {
+  const fs = vfs({
+    src: 'dir',
+    'src/f.rs': 'pub fn f(p: (u32, u32), cb: impl Fn(u32, u32) -> u32) -> () { }\n',
+  });
+  const r = scanContracts({
+    projectCwd: '/proj',
+    contracts: [{ id: 'a.f', signature: 'fn f(p: (u32, u32), cb: impl Fn(u32, u32) -> u32)' }],
+    language: 'rust', ...fs,
+  });
+  const x = r.results[0];
+  assert.equal(x.declaredArity, 2);
+  assert.equal(x.foundArity, 2);
+});
+
+test('rust arity: zero-arg fn → arity 0 (unambiguous)', () => {
+  const fs = vfs({ src: 'dir', 'src/t.rs': 'pub fn tick() { }\n' });
+  const r = scanContracts({
+    projectCwd: '/proj',
+    contracts: [{ id: 'a.tick', signature: 'fn tick()' }],
+    language: 'rust', ...fs,
+  });
+  assert.equal(r.results[0].declaredArity, 0);
+  assert.equal(r.results[0].foundArity, 0);
+});
+
+test('rust arity: generic fn `fn id<T>(...)` — generic clause skipped, params counted', () => {
+  const fs = vfs({
+    src: 'dir',
+    'src/k.rs': 'pub fn kill<T: Into<u32>>(pids: &[T], force: bool) -> R { todo!() }\n',
+  });
+  const r = scanContracts({
+    projectCwd: '/proj',
+    contracts: [{ id: 'killer.kill', signature: 'fn kill(pids: &[u32], force: bool) -> R' }],
+    language: 'rust', ...fs,
+  });
+  assert.equal(r.results[0].declaredArity, 2);
+  assert.equal(r.results[0].foundArity, 2);
+});
+
+test('rust arity: multi-line signature is parsed when delimiters balance', () => {
+  const fs = vfs({
+    src: 'dir',
+    'src/s.rs': 'pub fn score(\n    row: &Row,\n    cfg: &Cfg,\n) -> S {\n  todo!()\n}\n',
+  });
+  const r = scanContracts({
+    projectCwd: '/proj',
+    contracts: [{ id: 'h.score', signature: 'fn score(row: &Row, cfg: &Cfg) -> S' }],
+    language: 'rust', ...fs,
+  });
+  assert.equal(r.results[0].declaredArity, 2);
+  assert.equal(r.results[0].foundArity, 2);
+});
+
+test('arity ambiguity → foundArity null (presence kept, never wolf-cry)', () => {
+  // JS rest/destructuring makes logical arity ambiguous vs a declared
+  // fixed count — must NOT produce a number.
+  const fs = vfs({
+    src: 'dir',
+    'src/a.js': 'export function build(a, { b, c } = {}, ...rest) { return a; }\n',
+  });
+  const r = scanContracts({
+    projectCwd: '/proj',
+    contracts: [{ id: 'a.build', signature: 'function build(a, opts)' }],
+    language: 'javascript', ...fs,
+  });
+  const x = r.results[0];
+  assert.equal(x.found, true, 'presence still detected');
+  assert.equal(x.foundArity, null, 'destructuring/rest → no arity claim');
+});
+
+test('arity: a contract with no signature has declaredArity null (id-only, presence only)', () => {
+  const fs = vfs({ src: 'dir', 'src/s.rs': 'fn score(a: A, b: B) {}\n' });
+  const r = scanContracts({
+    projectCwd: '/proj',
+    contracts: [{ id: 'h.score' }],
+    language: 'rust', ...fs,
+  });
+  assert.equal(r.results[0].found, true);
+  assert.equal(r.results[0].declaredArity, null);
+});
+
 test('file-count cap is honored (pathological repo cannot hang the run)', () => {
   const tree = { src: 'dir' };
   for (let i = 0; i < 3000; i += 1) tree[`src/f${i}.rs`] = '// nothing\n';

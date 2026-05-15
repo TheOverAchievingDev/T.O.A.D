@@ -178,6 +178,43 @@ export function checkContractDrift({ snapshot } = {}) {
         provenance, reviewed,
       }));
     }
+
+    // L1.4b — arity. found:true already proves an implementation
+    // exists, so a confident declared≠found arg-count is unambiguous
+    // genuine drift: medium (the fn is there, just shaped differently
+    // — less severe than wholly-missing high). EITHER arity null means
+    // scanContracts wasn't sure (generics/self/closures/multiline/JS
+    // destructuring) → presence-only, never wolf-cry. §4a: arg COUNT
+    // only; types are the compiler's job (validation_run).
+    for (const res of (Array.isArray(scan.results) ? scan.results : [])) {
+      if (!res || res.found !== true) continue;
+      const da = res.declaredArity;
+      const fa = res.foundArity;
+      if (typeof da !== 'number' || typeof fa !== 'number') continue;
+      if (da === fa) continue;
+      findings.push(makeFinding(teamId, {
+        salient: `arity:${res.id}`,
+        severity: clamp('medium', reviewed),
+        title: `Declared contract "${res.id}" implemented with a different argument count`,
+        expected:
+          `spec.json declares "${res.id}" taking ${da} argument`
+          + `${da === 1 ? '' : 's'}`,
+        actual:
+          `The implementation of "${res.id}" takes ${fa} argument`
+          + `${fa === 1 ? '' : 's'} (declared ${da}, found ${fa}). `
+          + 'Presence + arity only — argument/return TYPES are the '
+          + "compiler's job (§4a), never drift's.",
+        recommendedCorrection:
+          `Reconcile the contract: update spec.json's signature for `
+          + `"${res.id}" to match the code, or fix the implementation's `
+          + 'parameter list to honor the declared contract.',
+        evidence: [
+          `spec declares contract: ${res.id} (arity ${da})`,
+          `implementation found with arity ${fa}`,
+        ],
+        reviewed, provenance,
+      }));
+    }
   }
 
   if (webIds.length > 0) {
