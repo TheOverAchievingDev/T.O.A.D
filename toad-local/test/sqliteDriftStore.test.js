@@ -308,3 +308,41 @@ test('SqliteDriftStore.reapResolvedCorrections works with a real-shaped taskBoar
   assert.equal(result.reaped, 1, 'reap must call getTask, not get');
   assert.equal(store.getCorrectionLinkages({ teamId: 'team-a' }).size, 0);
 });
+
+test('SqliteDriftStore.recordRun ensures the parent teams row exists before insert (FK defense)', () => {
+  // 2026-05-15 regression: a drift_run fired against a team_id that
+  // had no row in the teams table (UI cached a stale teamId across a
+  // project switch). drift_findings / drift_score_history both FK
+  // reference teams(team_id), so the insert exploded with
+  // "FOREIGN KEY constraint failed" instead of just recording. Every
+  // other store does INSERT...ON CONFLICT DO NOTHING into teams
+  // before writing its own rows; drift was the only writer missing
+  // the pattern.
+  //
+  // Note: makeStore() pre-inserts 'team-a' but this test uses a
+  // DIFFERENT teamId that has no parent row, so we exercise the
+  // ensureTeam path directly.
+  const { db, store } = makeStore();
+  // FK pragma defaults to off in DatabaseSync — turn it on to
+  // actually exercise the constraint that bit the user.
+  db.exec('PRAGMA foreign_keys = ON');
+  assert.doesNotThrow(() => {
+    store.recordRun({
+      runId: 'r-orphan',
+      teamId: 'never-existed',
+      asOf: '2026-05-15T10:00:00Z',
+      teamScore: 0,
+      status: 'healthy',
+      categoryScores: {},
+      perTaskScores: {},
+      trigger: 'manual',
+      findings: [makeFinding({ id: 'f1', taskId: null })],
+    });
+  });
+  // Parent row was auto-created.
+  const parent = db.prepare('SELECT team_id FROM teams WHERE team_id = ?').get('never-existed');
+  assert.ok(parent, 'parent teams row should have been auto-inserted');
+  // Finding landed too.
+  const found = db.prepare('SELECT finding_id FROM drift_findings WHERE team_id = ?').all('never-existed');
+  assert.equal(found.length, 1);
+});

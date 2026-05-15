@@ -194,3 +194,70 @@ test('runDrift calls reapResolvedCorrections with deps.taskBoard each run', asyn
   const linkagesAfter = store.getCorrectionLinkages({ teamId: 'team-a' });
   assert.equal(linkagesAfter.size, 0, 'reap should have cleared the done-task linkage');
 });
+
+test('DriftEngine.runDrift bails early with reason="no_team_config" when team has no config', async () => {
+  // 2026-05-15 regression: UI cached a stale teamId across a project
+  // switch (different SQLite DB). drift_run fired against a teamId
+  // the new DB had never heard of. The pre-fix engine ran checks
+  // anyway against an empty snapshot, produced 0 findings, then hit
+  // an FK constraint when persisting "healthy" results to a team_id
+  // with no parent row in the teams table. The new behavior: bail
+  // before any check runs, return an explicit "no_team_config"
+  // result so callers know to clear their stale state instead of
+  // treating the empty result as a healthy team.
+  const db = bootstrapDb();
+  const store = new SqliteDriftStore({ db });
+  // teamConfigRegistry that returns null for the requested team —
+  // simulates the post-project-switch state where the team_id
+  // exists in UI memory but not in the new project's DB.
+  const teamConfigRegistry = {
+    getTeam: (teamId) => null,
+  };
+  const deps = { ...makeDeps(), teamConfigRegistry };
+  const engine = new DriftEngine({ deps, store, checks: [] });
+
+  const result = await engine.runDrift({ teamId: 'ghost-team', trigger: 'manual' });
+
+  assert.equal(result.status, 'unknown');
+  assert.equal(result.reason, 'no_team_config');
+  assert.equal(result.teamId, 'ghost-team');
+  assert.equal(result.teamScore, 0);
+  assert.deepEqual(result.findings, []);
+  assert.match(result.message, /stale UI state|no config/);
+  // Nothing was persisted (no FK violation, no spurious history row).
+  const rows = db.prepare('SELECT COUNT(*) AS n FROM drift_score_history WHERE team_id = ?').get('ghost-team');
+  assert.equal(rows.n, 0, 'no score history should be recorded for an unknown team');
+});
+
+test('DriftEngine.runDrift runs normally when teamConfigRegistry resolves the team (back-compat)', async () => {
+  // The early-bail check only fires when teamConfigRegistry is wired
+  // AND returns null. When the registry resolves the team, drift
+  // proceeds as it always did. Belt-and-suspenders against the
+  // bail accidentally short-circuiting healthy paths.
+  const db = bootstrapDb();
+  const store = new SqliteDriftStore({ db });
+  const teamConfigRegistry = {
+    getTeam: (teamId) => (teamId === 'team-a' ? { teamId, lead: { agentId: 'lead' } } : null),
+  };
+  const deps = { ...makeDeps(), teamConfigRegistry };
+  const engine = new DriftEngine({ deps, store, checks: [] });
+
+  const result = await engine.runDrift({ teamId: 'team-a', trigger: 'manual' });
+
+  assert.equal(result.status, 'healthy', 'real teams should run to completion');
+  assert.notEqual(result.reason, 'no_team_config');
+});
+
+test('DriftEngine.runDrift runs normally when teamConfigRegistry is not wired into deps (legacy callers)', async () => {
+  // Older deployments / test harnesses that don't pass
+  // teamConfigRegistry should still work — the early-bail check
+  // only fires when the registry is present.
+  const db = bootstrapDb();
+  const store = new SqliteDriftStore({ db });
+  // deps WITHOUT teamConfigRegistry — original test pattern.
+  const engine = new DriftEngine({ deps: makeDeps(), store, checks: [] });
+
+  const result = await engine.runDrift({ teamId: 'team-a', trigger: 'manual' });
+  assert.equal(result.status, 'healthy');
+  assert.notEqual(result.reason, 'no_team_config');
+});

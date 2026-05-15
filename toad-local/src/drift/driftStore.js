@@ -23,6 +23,21 @@ export class SqliteDriftStore {
     if (!runId || !teamId) throw new TypeError('runId and teamId are required');
     const findingsArr = Array.isArray(findings) ? findings : [];
 
+    // Defensive ensure-team row before insert. drift_findings and
+    // drift_score_history both FK reference teams(team_id); without
+    // this, a drift_run against a team that hasn't otherwise touched
+    // the DB yet (e.g. a team_id surfaced by a stale UI cache after
+    // a project switch — 2026-05-15 bug report) fails with
+    // "FOREIGN KEY constraint failed" and the engine surfaces an
+    // opaque ERR_SQLITE_ERROR to the caller. Other stores already do
+    // this (sqliteBroker, sqliteTaskBoard, sqliteRuntimeRegistry,
+    // sqliteApprovalBroker, sqliteRuntimeEventLog) — drift was the
+    // only writer missing the pattern.
+    const ensureTeam = this.db.prepare(`
+      INSERT INTO teams (team_id, display_name, created_at)
+      VALUES (?, NULL, ?)
+      ON CONFLICT(team_id) DO NOTHING
+    `);
     const deleteFindings = this.db.prepare('DELETE FROM drift_findings WHERE team_id = ?');
     const insertFinding = this.db.prepare(`INSERT INTO drift_findings
       (finding_id, run_id, team_id, task_id, category, severity, check_name,
@@ -39,6 +54,7 @@ export class SqliteDriftStore {
     const rollback = this.db.prepare('ROLLBACK');
     tx.run();
     try {
+      ensureTeam.run(teamId, asOf || new Date().toISOString());
       deleteFindings.run(teamId);
       for (const f of findingsArr) {
         insertFinding.run(

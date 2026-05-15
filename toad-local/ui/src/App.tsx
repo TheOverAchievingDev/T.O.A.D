@@ -120,6 +120,26 @@ function AppInner() {
   const perTaskDrift = drift.data?.perTaskScores ?? {};
 
   const refreshAfterProjectSwitch = useCallback(() => {
+    // CRITICAL: clear every piece of team-scoped UI state before
+    // refreshing. The sidecar has just respawned against a different
+    // SQLite DB (different project) — teams, tasks, reopen-context,
+    // drift findings from the OLD project's DB are stale and the new
+    // DB doesn't know about them. Without this, the user hit:
+    //   - "Resume team" sending the prior project's teamId → backend
+    //     "no config for teamId X" error
+    //   - useDrift / drift_run continuing to poll the prior teamId →
+    //     FK constraint violations in drift_findings (the team_id
+    //     doesn't exist in the new DB's `teams` table)
+    // (2026-05-15 regression — user switched from First_Run to
+    // symph_test and Resume + drift both fired against `first-run`.)
+    //
+    // We DON'T clear tweaks.screen / panel layout / persona — those
+    // are operator preferences and should survive a project switch.
+    setActiveTeamId(null);
+    setSelectedTaskId(null);
+    setReopenContext(null);
+    setLaunchingTeamId(null);
+    setFoundryPlan(null);
     refresh();
     window.setTimeout(refresh, 800);
   }, [refresh]);

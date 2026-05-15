@@ -75,6 +75,33 @@ export class DriftEngine {
   async #runDriftInner({ teamId, trigger }) {
     const runId = `run_${randomUUID()}`;
 
+    // Early bail: if no team config exists for this teamId, drift has
+    // nothing to evaluate. The 2026-05-15 regression had the UI cache
+    // a stale teamId across a project switch — drift_run kept firing
+    // against the prior project's team, which doesn't exist in the
+    // new project's DB. Running checks anyway produces meaningless
+    // "0 findings, healthy" results that mask the real issue.
+    //
+    // We check teamConfigRegistry directly rather than letting
+    // buildSnapshot return an empty object so the failure mode is
+    // explicit. Older deployments that don't wire teamConfigRegistry
+    // into deps fall through to the existing behavior.
+    if (this.deps?.teamConfigRegistry
+        && typeof this.deps.teamConfigRegistry.getTeam === 'function'
+        && this.deps.teamConfigRegistry.getTeam(teamId) === null) {
+      return {
+        runId,
+        teamId,
+        teamScore: 0,
+        status: 'unknown',
+        findings: [],
+        reason: 'no_team_config',
+        message: `Drift skipped: team "${teamId}" has no config (deleted, never created, or stale UI state after project switch).`,
+        tier1Status: 'skipped:no_team_config',
+        tier2Status: 'skipped:no_team_config',
+      };
+    }
+
     // Step A: Read correction linkages BEFORE building snapshot / running checks.
     const linkages = (typeof this.store.getCorrectionLinkages === 'function')
       ? this.store.getCorrectionLinkages({ teamId })
