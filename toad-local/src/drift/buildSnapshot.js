@@ -1,6 +1,8 @@
 import { existsSync as defaultExistsSync, readFileSync as defaultReadFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runGit as defaultRunGit } from '../git/runGit.js';
+import { loadProjectSpec } from './spec/loadProjectSpec.js';
+import { parseManifestDeps } from './spec/parseManifestDeps.js';
 
 const COMMITS_DEFAULT = 30;
 const DOC_CAP = 8 * 1024;
@@ -165,6 +167,33 @@ export async function buildSnapshot({ teamId, deps = {}, compareAgainst = 'found
     }
   }
 
+  // Layer-1 drift inputs. Pre-loaded HERE (not in the checks) so the
+  // checks stay pure functions over the snapshot — same pattern as
+  // every other check. loadProjectSpec + parseManifestDeps never
+  // throw; they degrade to nulls + error strings the check turns
+  // into honest meta-findings. See
+  // docs/superpowers/specs/2026-05-15-spec-yaml-schema.md.
+  const specProjectCwd = typeof deps.projectCwd === 'string' && deps.projectCwd.length > 0
+    ? deps.projectCwd
+    : null;
+  const { spec, error: specError } = loadProjectSpec({
+    projectCwd: specProjectCwd,
+    existsSyncImpl: deps.existsSyncImpl,
+    readFileSyncImpl: deps.readFileSyncImpl,
+  });
+  let manifestDeps = null;
+  let manifestError = null;
+  if (spec && spec.stack && typeof spec.stack.manifest === 'string' && specProjectCwd) {
+    const manifestPath = join(specProjectCwd, spec.stack.manifest);
+    const r = parseManifestDeps({
+      manifestPath,
+      language: spec.stack.language,
+      readFileSyncImpl: deps.readFileSyncImpl,
+    });
+    manifestDeps = r.deps ? [...r.deps] : null;
+    manifestError = r.error;
+  }
+
   return {
     teamId,
     asOf: new Date().toISOString(),
@@ -176,6 +205,13 @@ export async function buildSnapshot({ teamId, deps = {}, compareAgainst = 'found
     worktrees,
     diffsByTask,
     teamConfig,
+    // Drift L1 inputs (consumed by checkDependencyDrift; future L1
+    // checks read other spec sections off `spec`).
+    projectCwd: specProjectCwd,
+    spec,
+    specError,
+    manifestDeps,
+    manifestError,
   };
 }
 

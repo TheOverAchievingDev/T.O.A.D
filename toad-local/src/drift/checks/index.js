@@ -5,6 +5,7 @@ import { checkRolePermissionViolations } from './checkRolePermissionViolations.j
 import { checkReviewWithoutFindings } from './checkReviewWithoutFindings.js';
 import { checkProviderLogicLeakage } from './checkProviderLogicLeakage.js';
 import { checkDoneWithoutMergeEvidence } from './checkDoneWithoutMergeEvidence.js';
+import { checkDependencyDrift } from './checkDependencyDrift.js';
 import { checkLlmSemantic } from './checkLlmSemantic.js';
 
 /**
@@ -21,6 +22,14 @@ export const ALL_CHECKS = Object.freeze([
   { name: 'check_review_without_findings', tier: 1, fn: checkReviewWithoutFindings },
   { name: 'check_provider_logic_leakage', tier: 1, fn: checkProviderLogicLeakage },
   { name: 'check_done_without_merge_evidence', tier: 1, fn: checkDoneWithoutMergeEvidence },
+  // ── Layer-1 code-vs-spec drift (NOT process conformance) ──────────
+  // Reads docs/foundry/spec.json (pre-loaded onto the snapshot by
+  // buildSnapshot). Deterministic, tier 1, runs even with the LLM
+  // judge paused. mode:'observe' — flags, never blocks delivery
+  // (the gate path is constitution-rules-only and needs the broker
+  // observer seam, a separate slice). First real code-vs-spec drift
+  // Symphony ships. See PROJECT.md §8a + the schema design doc.
+  { name: 'check_dependency_drift', tier: 1, mode: 'observe', fn: checkDependencyDrift },
   // LLM tier 1 — Haiku/Mini/Flash, always runs
   { name: 'check_llm_semantic_t1', tier: 1, fn: (args) => checkLlmSemantic({ ...args, tier: 1 }) },
   // LLM tier 2 — Opus/GPT-5/Gemini-Pro, escalation only
