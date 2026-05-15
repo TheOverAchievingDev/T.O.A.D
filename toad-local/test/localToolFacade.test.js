@@ -6,7 +6,7 @@ import { promises as fs } from 'node:fs';
 import { InMemoryBroker } from '../src/broker/inMemoryBroker.js';
 import { COMMANDS } from '../src/commands/command-contract.js';
 import { InMemoryTaskBoard, TASK_EVENT_TYPES, TASK_STATUS } from '../src/task/inMemoryTaskBoard.js';
-import { LocalToolFacade } from '../src/tools/localToolFacade.js';
+import { LocalToolFacade, stripCodeFence } from '../src/tools/localToolFacade.js';
 import { SettingsStore } from '../src/settings/settingsStore.js';
 import { RiskPolicyStore } from '../src/policy/riskPolicyStore.js';
 import { SqliteFoundryStore } from '../src/foundry/sqliteFoundryStore.js';
@@ -522,6 +522,45 @@ test('LocalToolFacade materializes a Foundry session into repo docs, a team, and
   assert.match(tasks[0].description, /product brief and acceptance criteria/);
   assert.equal(tasks[1].assignedRole, 'developer');
   foundryStore.close();
+});
+
+test('stripCodeFence unwraps a fenced JSON spec block so docs/foundry/spec.json is pure JSON', () => {
+  // The Foundry planner is told to emit raw JSON in the ===DOC: spec===
+  // block, but models habitually wrap structured payloads in ```json
+  // fences. Leaving the fence in would make spec.json fail JSON.parse
+  // and dump the operator straight into the "spec.json unparseable"
+  // meta-finding on the first drift run. stripCodeFence is the guard.
+  const fenced = '```json\n{"version":1,"stack":{}}\n```';
+  assert.equal(stripCodeFence(fenced), '{"version":1,"stack":{}}');
+
+  // jsonc fence + surrounding whitespace also handled.
+  const jsonc = '\n\n```jsonc\n{"a":1}\n```\n';
+  assert.equal(stripCodeFence(jsonc), '{"a":1}');
+
+  // Bare JSON (no fence) passes through trimmed.
+  assert.equal(stripCodeFence('  {"b":2}  '), '{"b":2}');
+
+  // Non-string is safe.
+  assert.equal(stripCodeFence(null), '');
+  assert.equal(stripCodeFence(undefined), '');
+
+  // A fence that isn't a json fence is left intact except for trimming
+  // (we only special-case json/jsonc — a prose ```text block is not
+  // ours to unwrap).
+  const proseFence = '```text\nhello\n```';
+  assert.equal(stripCodeFence(proseFence), '```text\nhello\n```');
+
+  // The result of stripping a real fenced spec must JSON.parse.
+  const realish = '```json\n' + JSON.stringify({
+    version: 1,
+    stack: { language: 'rust', manifest: 'Cargo.toml' },
+    dependencies: { authorized: ['serde'], forbidden: [] },
+    provenance: { reviewed: false },
+  }, null, 2) + '\n```';
+  const parsed = JSON.parse(stripCodeFence(realish));
+  assert.equal(parsed.version, 1);
+  assert.equal(parsed.stack.manifest, 'Cargo.toml');
+  assert.equal(parsed.provenance.reviewed, false);
 });
 
 test('LocalToolFacade runs a Foundry chat turn via foundryRuntime and stores the assistant reply', async () => {

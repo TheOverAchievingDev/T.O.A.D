@@ -3803,7 +3803,44 @@ function buildFoundryArtifacts(snapshot) {
     });
   }
 
+  // Machine-checkable spec — the Layer-1 drift contract. Emitted as
+  // docs/foundry/spec.json (NOT .yaml — see the schema design doc §0:
+  // the project has exactly one runtime dep and no built-in YAML
+  // parser; the drift system must not bloat the dep tree it polices).
+  //
+  // The Foundry planner is instructed to emit a `===DOC: spec===`
+  // block whose body is the JSON document. We strip a leading/trailing
+  // markdown code fence if the model wrapped it (```json … ```), so
+  // the written file is pure parseable JSON. We deliberately do NOT
+  // validate the JSON here — loadProjectSpec at drift time is the
+  // single validation point, and an unparseable spec degrades to an
+  // honest info-level meta-finding rather than blocking materialize.
+  const specContent = parsed.get('spec') ?? parsed.get('spec_json') ?? parsed.get('spec_yaml');
+  if (specContent) {
+    out.push({
+      kind: 'spec_json',
+      title: 'Machine-checkable spec',
+      content: stripCodeFence(specContent),
+      targetPath: 'docs/foundry/spec.json',
+    });
+  }
+
   return out;
+}
+
+/**
+ * Strip a single leading/trailing markdown code fence if present.
+ * Foundry chat output for the spec block is JSON; models frequently
+ * wrap structured payloads in ```json … ``` even when asked not to.
+ * Leaving the fence in would make docs/foundry/spec.json fail
+ * JSON.parse and dump the operator straight into the "spec.json
+ * present but unparseable" meta-finding on the very first drift run.
+ */
+export function stripCodeFence(text) {
+  if (typeof text !== 'string') return '';
+  const trimmed = text.trim();
+  const m = trimmed.match(/^```(?:json|jsonc)?\s*\n([\s\S]*?)\n```$/);
+  return (m ? m[1] : trimmed).trim();
 }
 
 function buildFoundryLeadPrompt(snapshot) {
