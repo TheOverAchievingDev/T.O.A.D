@@ -2049,6 +2049,61 @@ test('LocalToolFacade runtime_list returns the runtimeRegistry rows for the requ
   }
 });
 
+test('LocalToolFacade runtime_list extracts the latest model from stream-json frames', () => {
+  // The Inspector's "Provider / model" row reads `runtime.model`. The
+  // model identity comes off `payload.raw.model` (result frame) or
+  // `payload.raw.message.model` (assistant frame). Latest non-empty
+  // wins so a provider swap to a different model shows the new
+  // identity on the next turn.
+  const fakeRegistry = {
+    listRuntimes({ teamId }) {
+      return [
+        { runtimeId: `runtime-${teamId}-lead`, teamId, agentId: 'lead', status: 'running', pid: 1001, startedAt: '2026-05-02T10:00:00Z' },
+        { runtimeId: `runtime-${teamId}-dev`,  teamId, agentId: 'dev',  status: 'running', pid: 1002, startedAt: '2026-05-02T10:00:01Z' },
+        { runtimeId: `runtime-${teamId}-qa`,   teamId, agentId: 'qa',   status: 'running', pid: 1003, startedAt: '2026-05-02T10:00:02Z' },
+      ];
+    },
+  };
+  const fakeEventLog = {
+    appendEvent() {},
+    listEvents() {
+      return [
+        // Lead: assistant frame with message.model, then result frame
+        // with model. Result is later so it should win.
+        { eventType: 'assistant_text', runtimeId: 'runtime-team-m-lead', createdAt: '2026-05-02T10:00:10Z',
+          payload: { raw: { type: 'assistant', message: { model: 'claude-sonnet-4-20250514' } } } },
+        { eventType: 'turn_completed', runtimeId: 'runtime-team-m-lead', createdAt: '2026-05-02T10:00:20Z',
+          payload: { raw: { type: 'result', model: 'claude-sonnet-4-5-20251001', usage: { input_tokens: 10, output_tokens: 5 } } } },
+        // Dev: only an assistant frame — that model becomes its current identity.
+        { eventType: 'assistant_text', runtimeId: 'runtime-team-m-dev', createdAt: '2026-05-02T10:00:15Z',
+          payload: { raw: { type: 'assistant', message: { model: 'gpt-5-codex' } } } },
+        // QA: no events at all → model stays empty.
+      ];
+    },
+  };
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    runtimeRegistry: fakeRegistry,
+    eventLog: fakeEventLog,
+  });
+
+  const result = facade.execute({
+    commandName: COMMANDS.RUNTIME_LIST,
+    idempotencyKey: 'runtime-list-model',
+    actor: { teamId: 'team-m', agentId: 'operator', role: 'human' },
+    args: { teamId: 'team-m' },
+  });
+
+  const byAgent = Object.fromEntries(result.runtimes.map((r) => [r.agentId, r]));
+  // Lead: result frame (newer) wins over the earlier assistant frame.
+  assert.equal(byAgent.lead.model, 'claude-sonnet-4-5-20251001');
+  // Dev: only the assistant frame's message.model is available.
+  assert.equal(byAgent.dev.model, 'gpt-5-codex');
+  // QA: no model captured yet — empty string (not undefined, not 'unknown').
+  assert.equal(byAgent.qa.model, '');
+});
+
 test('LocalToolFacade runtime_list enriches each runtime with tokensIn/tokensOut/costUsd from turn_completed events', () => {
   // The Cockpit inspector's "Used X / 200,000" meter and the Costs
   // screen both rely on per-runtime token totals. Without this

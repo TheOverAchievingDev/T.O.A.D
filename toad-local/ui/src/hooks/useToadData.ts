@@ -364,7 +364,11 @@ function normalizeRuntime(raw: BackendRuntime): Runtime {
   return {
     id,
     provider: raw.provider ?? raw.providerId ?? 'unknown',
-    model: raw.model ?? 'unknown',
+    // Latest model captured by the runtime_list aggregator (folds the
+    // model field off any frame that carries it). Empty string when the
+    // agent hasn't completed a turn yet — surfaces propagate the empty
+    // and hide the "/ model" segment in the Inspector.
+    model: typeof raw.model === 'string' ? raw.model : '',
     agent: raw.agentId ?? '',
     pid: raw.pid ?? 0,
     status: normalizeRuntimeStatus(raw.status),
@@ -500,7 +504,11 @@ function normalizeTeam(
       tokens: (runtime?.tokensIn ?? 0) + (runtime?.tokensOut ?? 0),
       tokenLimit: 200_000,
       provider: runtime?.provider ?? raw.providerId ?? 'unknown',
-      model: runtime?.model ?? 'Default',
+      // Empty string from the backend means "no turn completed yet, no
+      // model identity captured." Logical-OR (not ??) so empty falls
+      // through. The Inspector hides the "/ model" segment in that case
+      // rather than showing "/ unknown" which reads as a real model.
+      model: (runtime?.model && runtime.model.length > 0) ? runtime.model : '',
       tasksDone: tasks.filter((task) => (
         task.status === 'done' && (task.assignee === agentId || task.assignee === role)
       )).length,

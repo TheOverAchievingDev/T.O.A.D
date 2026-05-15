@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { Agent, UiTask, ValidationKind, UiValidationRun } from '@/types';
 import type { DriftFinding, DriftRunResult } from '@/hooks/useDrift';
 import { Icon } from '../Icon';
-import { providerLabel, type ProviderId } from '@/data/providerLabels';
+import { providerBrand, providerLabel, type ProviderId } from '@/data/providerLabels';
 
 /**
  * Providers the operator can swap a live agent to. Order matches the
@@ -270,7 +270,7 @@ function AgentPane({
           <span className="k">Role</span><span className="v">{agent.role}</span>
           <span className="k">Provider</span>
           {onSwapProvider ? (
-            <span className="v" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span className="v" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
               <select
                 className="insp-provider-select"
                 value={agent.provider}
@@ -293,11 +293,26 @@ function AgentPane({
                   <option value={agent.provider}>{providerLabel(agent.provider as ProviderId)}</option>
                 )}
               </select>
-              <span className="mono" style={{ opacity: 0.6 }}>/ {agent.model}</span>
+              {agent.model && (
+                <span
+                  className="mono"
+                  style={{ opacity: 0.65, fontSize: 11 }}
+                  title={agent.model}
+                >
+                  / {agent.model}
+                </span>
+              )}
               {swapPending && <span style={{ opacity: 0.6, fontSize: 11 }}>swapping…</span>}
             </span>
           ) : (
-            <span className="v mono">{agent.provider} / {agent.model}</span>
+            <span className="v">
+              <span className="mono">{providerBrand(agent.provider as ProviderId)}</span>
+              {agent.model && (
+                <span className="mono" style={{ opacity: 0.65, fontSize: 11 }} title={agent.model}>
+                  {' / '}{agent.model}
+                </span>
+              )}
+            </span>
           )}
           <span className="k">Status</span><span className="v">{agent.status}</span>
         </div>

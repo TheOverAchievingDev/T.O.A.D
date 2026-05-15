@@ -1959,6 +1959,23 @@ export class LocalToolFacade {
     // Without this aggregation the meter is always 0 even when an agent
     // has been talking — that's the bug the user hit on the live screen.
     const tokensByRuntime = new Map();
+    // Per-runtime model identity. Claude's stream-json frames carry the
+    // model that handled the turn on both the `assistant` frame
+    // (`message.model`) and the terminal `result` frame (`model`).
+    // We capture the latest non-empty model per runtime so the
+    // Inspector's "Provider / model" row reads e.g.
+    // "Claude / claude-sonnet-4-20250514" instead of "claude / unknown".
+    // "Latest wins" so a provider swap to codex shows the new model on
+    // the very next turn without staleness.
+    const modelByRuntime = new Map();
+    const recordModel = (runtimeId, candidate, createdAt) => {
+      if (typeof runtimeId !== 'string' || runtimeId.length === 0) return;
+      if (typeof candidate !== 'string' || candidate.length === 0) return;
+      const prev = modelByRuntime.get(runtimeId);
+      if (!prev || (createdAt && prev.at && createdAt >= prev.at) || !prev.at) {
+        modelByRuntime.set(runtimeId, { model: candidate, at: createdAt || null });
+      }
+    };
     for (const e of events) {
       if (e.eventType === 'tool_use') {
         reqsByRuntime.set(e.runtimeId, (reqsByRuntime.get(e.runtimeId) || 0) + 1);
@@ -1967,11 +1984,20 @@ export class LocalToolFacade {
         const prev = lastEventByRuntime.get(e.runtimeId);
         if (!prev || prev < e.createdAt) lastEventByRuntime.set(e.runtimeId, e.createdAt);
       }
+      const raw = e.payload?.raw;
+      // Model — pluck from any frame that carries it. Assistant frames
+      // expose `message.model`, result frames expose top-level `model`.
+      // Both providers (Claude / Codex / Gemini) follow the same
+      // convention in their stream-json output.
+      if (raw && typeof raw === 'object') {
+        if (typeof raw.model === 'string') recordModel(e.runtimeId, raw.model, e.createdAt);
+        const inner = raw.message && typeof raw.message === 'object' ? raw.message : null;
+        if (inner && typeof inner.model === 'string') recordModel(e.runtimeId, inner.model, e.createdAt);
+      }
       // Token + cost: same filter as project_state_describe — only
       // turn_completed events with payload.raw.type === 'result' carry
       // the usage block from the stream-json result frame.
       if (e.eventType === 'turn_completed') {
-        const raw = e.payload?.raw;
         if (raw && raw.type === 'result' && typeof e.runtimeId === 'string' && e.runtimeId.length > 0) {
           let bucket = tokensByRuntime.get(e.runtimeId);
           if (!bucket) {
@@ -1997,6 +2023,7 @@ export class LocalToolFacade {
       const mm = String(Math.floor((uptimeSec % 3600) / 60)).padStart(2, '0');
       const ss = String(uptimeSec % 60).padStart(2, '0');
       const tokens = tokensByRuntime.get(r.runtimeId) || { tokensIn: 0, tokensOut: 0, costUsd: 0 };
+      const modelEntry = modelByRuntime.get(r.runtimeId);
       return {
         ...r,
         uptime: `${hh}:${mm}:${ss}`,
@@ -2005,6 +2032,10 @@ export class LocalToolFacade {
         tokensIn: tokens.tokensIn,
         tokensOut: tokens.tokensOut,
         costUsd: tokens.costUsd,
+        // Latest model the runtime has used. Empty string when the agent
+        // hasn't completed a turn yet; the UI falls back to the friendly
+        // provider name in that case.
+        model: modelEntry?.model || '',
       };
     });
     return { runtimes: enriched };
