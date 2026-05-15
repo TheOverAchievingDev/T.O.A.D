@@ -119,30 +119,63 @@ function AppInner() {
   const drift = useDrift({ teamId: team.name || activeTeamId });
   const perTaskDrift = drift.data?.perTaskScores ?? {};
 
+  // Single source of truth for "load the active team + reopen context
+  // from the current project's DB." Called once on app mount (via the
+  // firstRunRedirect effect) and again on every project switch — the
+  // 2026-05-15 regression was that the mount-time call only ran once
+  // and the project-switch path cleared state without repopulating,
+  // killing the resume banner + Resume button.
+  const loadCurrentProjectState = useCallback(async () => {
+    try {
+      const state = await callToadApi({
+        actor: { teamId: 'system', agentId: 'ui-client', role: 'human' },
+        method: 'project_state_describe',
+      }) as { state: 'has_team' | 'half_foundried' | 'fresh'; reopenContext?: ReopenContext };
+      setReopenContext(state.reopenContext ?? null);
+      if (state.state === 'has_team' && state.reopenContext) {
+        setActiveTeamId(state.reopenContext.teamId);
+      } else {
+        setActiveTeamId(null);
+      }
+    } catch (err) {
+      // Sidecar offline / call failed — keep state cleared so the
+      // UI doesn't show stale resume controls for a team it can't
+      // verify.
+      // eslint-disable-next-line no-console
+      console.warn('[app] project_state_describe failed during state load:', err);
+      setReopenContext(null);
+      setActiveTeamId(null);
+    }
+  }, []);
+
   const refreshAfterProjectSwitch = useCallback(() => {
-    // CRITICAL: clear every piece of team-scoped UI state before
-    // refreshing. The sidecar has just respawned against a different
-    // SQLite DB (different project) — teams, tasks, reopen-context,
-    // drift findings from the OLD project's DB are stale and the new
-    // DB doesn't know about them. Without this, the user hit:
-    //   - "Resume team" sending the prior project's teamId → backend
-    //     "no config for teamId X" error
-    //   - useDrift / drift_run continuing to poll the prior teamId →
-    //     FK constraint violations in drift_findings (the team_id
-    //     doesn't exist in the new DB's `teams` table)
-    // (2026-05-15 regression — user switched from First_Run to
-    // symph_test and Resume + drift both fired against `first-run`.)
+    // The sidecar has just respawned against a different SQLite DB
+    // (different project). Clear team-scoped UI state, then re-fetch
+    // from the new project's DB so the resume banner + Resume button
+    // reflect THIS project's team rather than the prior one.
     //
-    // We DON'T clear tweaks.screen / panel layout / persona — those
-    // are operator preferences and should survive a project switch.
+    // The 2026-05-15 bug had two failure modes: stale teamId from the
+    // OLD project leaking into Resume (correctly refused as "no config
+    // for teamId X") and into drift_run (which exploded with FK
+    // constraint on the team_id with no parent row). The fix is to
+    // clear THEN repopulate, not just clear.
+    //
+    // Tweaks (screen, panel layout, persona) survive — those are
+    // operator preferences and shouldn't reset on every project switch.
     setActiveTeamId(null);
     setSelectedTaskId(null);
     setReopenContext(null);
     setLaunchingTeamId(null);
     setFoundryPlan(null);
+    // Two refresh ticks: immediate (catches synchronous DB reads) and
+    // delayed (catches anything still bootstrapping on the new sidecar).
     refresh();
     window.setTimeout(refresh, 800);
-  }, [refresh]);
+    // Re-populate the resume banner / active team from the NEW
+    // project's DB. Fires in parallel with refresh — race is fine,
+    // both eventually converge to the same state.
+    void loadCurrentProjectState();
+  }, [refresh, loadCurrentProjectState]);
 
   const openRegisteredProject = useCallback(async (projectId: string, nextScreen: ProjectOpenScreen = 'cockpit') => {
     const project = projectRegistry.projects.find((p) => p.id === projectId);
@@ -306,6 +339,12 @@ function AppInner() {
     firstRunRedirectDone.current = true;
     void (async () => {
       try {
+        // Same call loadCurrentProjectState makes — duplicated here
+        // because mount-time also picks the initial SCREEN based on
+        // the state shape (has_team → cockpit, half_foundried →
+        // foundry, fresh+first-run → foundry-with-welcome). Project
+        // switches don't redirect the screen (operator-driven nav),
+        // so the path branches differ.
         const state = await callToadApi({
           actor: { teamId: 'system', agentId: 'ui-client', role: 'human' },
           method: 'project_state_describe',
