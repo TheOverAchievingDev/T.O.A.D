@@ -99,12 +99,54 @@ function trimFoundryDoc(content) {
  * Write the brief to a fresh tempdir and return the dir + brief path.
  * The judge's CLI process gets this dir as its cwd so any unintended
  * filesystem access is bounded to the brief itself.
+ *
+ * Also creates `<dir>/.claude/` and copies the operator's
+ * .credentials.json into it. The judge is spawned with HOME pointed
+ * at <dir>, so claude looks for ~/.claude/agents/, ~/.claude/
+ * CLAUDE.md, ~/.claude/plugins/, ~/.claude/CONSTITUTION.md, etc., and
+ * finds NOTHING — except the credentials we explicitly provided.
+ *
+ * Why HOME redirection: the 2026-05-15 "Prompt is too long" cascade
+ * traced to ~/.claude/agents/*.md being auto-discovered (45 files,
+ * 128 KB of agent prompts) by every claude invocation. The
+ * --setting-sources flag only gates settings.json files; agents are
+ * filesystem-discovered regardless. Operators with rich Claude Code
+ * setups (custom agents, plugins, CONSTITUTION.md) blew the model
+ * prompt cap before Symphony's brief was even read. HOME redirection
+ * is the only reliable way to give the judge a clean slate while
+ * keeping OAuth auth intact (credentials.json is the only file
+ * claude needs from the home dir to authenticate).
+ *
+ * Returns { dir, briefPath, hasCredentials }. The caller passes
+ * hasCredentials onward so the spawn can decide whether to override
+ * HOME (only when we successfully provisioned creds — otherwise
+ * stripping HOME would break auth and the judge fails noisily).
  */
 function writeBriefToTempDir(payload) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'symphony-drift-'));
   const briefPath = path.join(dir, 'brief.md');
   fs.writeFileSync(briefPath, payload, 'utf-8');
-  return { dir, briefPath };
+
+  // Provision the temp HOME with just the OAuth credentials so claude
+  // can authenticate but finds nothing else (no agents, no plugins,
+  // no skills, no CONSTITUTION.md). Best-effort — if the operator
+  // hasn't logged in yet or the file moved, we leave hasCredentials
+  // false and the caller falls back to inheriting the real HOME (which
+  // is what breaks under heavy operator setups, but at least the
+  // judge stays authenticated).
+  const realCredsPath = path.join(os.homedir(), '.claude', '.credentials.json');
+  let hasCredentials = false;
+  try {
+    if (fs.existsSync(realCredsPath)) {
+      const claudeDir = path.join(dir, '.claude');
+      fs.mkdirSync(claudeDir, { recursive: true });
+      fs.copyFileSync(realCredsPath, path.join(claudeDir, '.credentials.json'));
+      hasCredentials = true;
+    }
+  } catch {
+    // copy failure → fall back to inherited HOME
+  }
+  return { dir, briefPath, hasCredentials };
 }
 
 /**
@@ -158,10 +200,12 @@ export async function checkLlmSemantic({
   // --dangerously-skip-permissions enables the Read tool.
   let briefDir = null;
   let briefPath = null;
+  let isolateHome = false;
   try {
     const written = writeBriefToTempDir(userPayload);
     briefDir = written.dir;
     briefPath = written.briefPath;
+    isolateHome = written.hasCredentials === true;
   } catch (err) {
     // Couldn't write the brief — fall back to inline stdin. The
     // judge may still hit "Prompt is too long" but at least we try.
@@ -178,6 +222,12 @@ export async function checkLlmSemantic({
       userPayload,
       briefPath,
       cwd: briefDir,
+      // Tells llmJudge to spawn claude with HOME pointed at briefDir,
+      // which has only .claude/.credentials.json populated. The
+      // operator's actual ~/.claude/agents/, ~/.claude/CONSTITUTION.md,
+      // and plugin caches become invisible — fixes the "Prompt is too
+      // long" failure on operators with rich Claude Code setups.
+      isolateHome,
       timeoutMs: 30_000,
     });
   } catch (err) {

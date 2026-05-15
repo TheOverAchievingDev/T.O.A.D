@@ -512,3 +512,112 @@ test('llmJudge omits cwd from spawn options when not supplied (inherits parent c
   });
   assert.equal(calls[0].opts.cwd, undefined);
 });
+
+test('llmJudge isolateHome overrides HOME + USERPROFILE in spawn env (2026-05-15 ~/.claude/agents/ isolation)', async () => {
+  // The 2026-05-15 cascade: operators with rich Claude Code setups
+  // have 100+ KB of agent prompts auto-discovered from
+  // ~/.claude/agents/. --setting-sources doesn't gate that. Only way
+  // to keep the judge from seeing them is to point claude at a fake
+  // home with just credentials. Caller pre-populates the cwd dir with
+  // .claude/.credentials.json; we set HOME/USERPROFILE to that dir.
+  const stdout = JSON.stringify({ findings: [] });
+  const { fn, calls } = recordingSpawn(stdout);
+  await llmJudge({
+    cli: 'claude', model: 'haiku',
+    systemPrompt: 's', userPayload: 'u',
+    briefPath: '/tmp/drift-x/brief.md',
+    cwd: '/tmp/drift-x',
+    isolateHome: true,
+    timeoutMs: 5000,
+    spawnImpl: fn,
+    resolveCliImpl: () => 'claude',
+    needsShellImpl: () => false,
+  });
+  const env = calls[0].opts.env;
+  assert.ok(env, 'spawn env must be provided when isolating home');
+  assert.equal(env.HOME, '/tmp/drift-x');
+  assert.equal(env.USERPROFILE, '/tmp/drift-x');
+});
+
+test('llmJudge isolateHome strips CLAUDE_* env vars except provider selection (BEDROCK/VERTEX preserved)', async () => {
+  // CLAUDE_EFFORT=xhigh and similar env vars BYPASS settings.json
+  // and re-introduce the operator's effort/thinking config even after
+  // we redirect HOME. Strip every CLAUDE_* var except the two that
+  // select third-party Anthropic providers (Bedrock/Vertex) — those
+  // are auth-routing, not preference, and stripping them would break
+  // operators on AWS/GCP-routed Claude.
+  const stdout = JSON.stringify({ findings: [] });
+  const { fn, calls } = recordingSpawn(stdout);
+  // Inject operator-style env vars before the spawn.
+  const originalEnv = { ...process.env };
+  process.env.CLAUDE_EFFORT = 'xhigh';
+  process.env.CLAUDE_CODE_DISABLE_CRON = '';
+  process.env.CLAUDE_CODE_USE_BEDROCK = '1';
+  process.env.CLAUDE_CODE_USE_VERTEX = '1';
+  process.env.ANTHROPIC_API_KEY = 'sk-ant-fake';
+  try {
+    await llmJudge({
+      cli: 'claude', model: 'haiku',
+      systemPrompt: 's', userPayload: 'u',
+      briefPath: '/tmp/drift-x/brief.md',
+      cwd: '/tmp/drift-x',
+      isolateHome: true,
+      timeoutMs: 5000,
+      spawnImpl: fn,
+      resolveCliImpl: () => 'claude',
+      needsShellImpl: () => false,
+    });
+  } finally {
+    // Restore the test env.
+    for (const key of Object.keys(process.env)) {
+      if (!(key in originalEnv)) delete process.env[key];
+    }
+    Object.assign(process.env, originalEnv);
+  }
+  const env = calls[0].opts.env;
+  assert.equal(env.CLAUDE_EFFORT, undefined, 'CLAUDE_EFFORT must be stripped (bypass for effortLevel)');
+  assert.equal(env.CLAUDE_CODE_DISABLE_CRON, undefined, 'generic CLAUDE_CODE_* vars stripped');
+  assert.equal(env.CLAUDE_CODE_USE_BEDROCK, '1', 'BEDROCK selector preserved');
+  assert.equal(env.CLAUDE_CODE_USE_VERTEX, '1', 'VERTEX selector preserved');
+  // Non-CLAUDE auth vars survive too.
+  assert.equal(env.ANTHROPIC_API_KEY, 'sk-ant-fake');
+});
+
+test('llmJudge isolateHome is a no-op when cwd is not provided (safety check)', async () => {
+  // Without cwd, overriding HOME would point claude at the SIDECAR's
+  // cwd which doesn't have the pre-populated credentials — claude
+  // would fail to auth. Refuse the override silently and let the
+  // spawn inherit the real environment.
+  const stdout = JSON.stringify({ findings: [] });
+  const { fn, calls } = recordingSpawn(stdout);
+  await llmJudge({
+    cli: 'claude', model: 'haiku',
+    systemPrompt: 's', userPayload: 'u',
+    // no cwd
+    isolateHome: true,
+    timeoutMs: 5000,
+    spawnImpl: fn,
+    resolveCliImpl: () => 'claude',
+    needsShellImpl: () => false,
+  });
+  // env override only fires when cwd is set; without it, the spawn
+  // inherits process.env as before (no opts.env override).
+  assert.equal(calls[0].opts.env, undefined);
+});
+
+test('llmJudge does NOT override env when isolateHome is false (default behavior preserved)', async () => {
+  const stdout = JSON.stringify({ findings: [] });
+  const { fn, calls } = recordingSpawn(stdout);
+  await llmJudge({
+    cli: 'claude', model: 'haiku',
+    systemPrompt: 's', userPayload: 'u',
+    briefPath: '/tmp/drift-x/brief.md',
+    cwd: '/tmp/drift-x',
+    // isolateHome NOT set — defaults to false
+    timeoutMs: 5000,
+    spawnImpl: fn,
+    resolveCliImpl: () => 'claude',
+    needsShellImpl: () => false,
+  });
+  assert.equal(calls[0].opts.env, undefined, 'env should be inherited when not isolating');
+});

@@ -249,6 +249,18 @@ export async function llmJudge({
    * agent's blast radius if --dangerously-skip-permissions is set.
    */
   cwd = null,
+  /**
+   * When true AND cwd is set, the spawn's env is overridden so HOME
+   * (and USERPROFILE on Windows) points at cwd. The caller is
+   * responsible for having pre-populated cwd/.claude/.credentials.json
+   * so claude can still authenticate. This isolates the judge from
+   * the operator's `~/.claude/agents/` (auto-discovered agent prompts,
+   * which on rich setups total 100+ KB and blow the prompt cap before
+   * the brief is even read) and `~/.claude/CONSTITUTION.md`. Without
+   * this flag the spawn inherits the real HOME and claude finds every
+   * operator-installed agent/skill/plugin.
+   */
+  isolateHome = false,
   timeoutMs = 30_000,
   spawnImpl,
   resolveCliImpl,
@@ -286,6 +298,32 @@ export async function llmJudge({
       // --dangerously-skip-permissions in file-input mode. Without
       // cwd, the spawn inherits the sidecar's working directory.
       spawnOpts.cwd = cwd;
+    }
+    if (isolateHome && typeof cwd === 'string' && cwd.length > 0) {
+      // Override HOME (and USERPROFILE on Windows — claude reads
+      // both depending on the code path) so the judge sees only the
+      // .claude/.credentials.json we pre-populated. No agents, no
+      // CONSTITUTION.md, no plugin caches. Drop CLAUDE_CODE_* env
+      // vars too — those bypass settings.json and can re-introduce
+      // the same overhead (e.g. CLAUDE_EFFORT=xhigh inflating the
+      // thinking budget on every turn).
+      const env = { ...process.env };
+      env.HOME = cwd;
+      env.USERPROFILE = cwd;
+      // Strip CLAUDE_* env that could re-import operator preferences.
+      // Keep ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN — those are
+      // auth fallbacks, fine to forward. Same for the BEDROCK /
+      // VERTEX flags which select 3P providers.
+      for (const key of Object.keys(env)) {
+        if (
+          key.startsWith('CLAUDE_') &&
+          key !== 'CLAUDE_CODE_USE_BEDROCK' &&
+          key !== 'CLAUDE_CODE_USE_VERTEX'
+        ) {
+          delete env[key];
+        }
+      }
+      spawnOpts.env = env;
     }
     let proc;
     try {

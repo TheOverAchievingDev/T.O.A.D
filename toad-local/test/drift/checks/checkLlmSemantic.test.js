@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { checkLlmSemantic, buildUserPayload } from '../../../src/drift/checks/checkLlmSemantic.js';
 import { buildTier1SystemPrompt } from '../../../src/drift/llm/prompts/tier1.js';
 import { buildTier2SystemPrompt } from '../../../src/drift/llm/prompts/tier2.js';
@@ -502,4 +504,69 @@ test('checkLlmSemantic enforces 24 KB total brief budget even with foundry-doc-h
   // brief's usefulness — judge still sees tasks + recent activity +
   // foundry doc highlights).
   assert.match(observedBriefContent, /## Tasks/);
+});
+
+test('checkLlmSemantic passes isolateHome=true to llmJudge when credentials.json exists in real home', async (t) => {
+  // 2026-05-15 HOME isolation: when the operator has logged into
+  // claude (real ~/.claude/.credentials.json exists), Symphony copies
+  // it into the brief's tempdir and tells llmJudge to redirect HOME
+  // there. That hides the operator's ~/.claude/agents/ (45 files,
+  // 128 KB on the bug-reporting user's setup) and CONSTITUTION.md
+  // from the judge — fixing the "Prompt is too long" cap-buster.
+  //
+  // We test this by checking whether the real credentials file
+  // exists. If it does (real dev environment), we expect isolateHome
+  // to fire. If it doesn't (CI / fresh machine), isolateHome stays
+  // false and the judge runs with inherited env.
+  const realCreds = path.join(os.homedir(), '.claude', '.credentials.json');
+  const credsExist = fs.existsSync(realCreds);
+  // Capture state DURING the fake-judge call (before checkLlmSemantic's
+  // finally{} cleanup runs and removes the tempdir).
+  const captured = { isolateHome: null, cwd: null, copiedCredsExists: false };
+  const fakeJudge = async (args) => {
+    captured.isolateHome = args.isolateHome;
+    captured.cwd = args.cwd;
+    if (args.cwd) {
+      captured.copiedCredsExists = fs.existsSync(
+        path.join(args.cwd, '.claude', '.credentials.json'),
+      );
+    }
+    return { findings: [] };
+  };
+  await checkLlmSemantic({
+    snapshot: BASE_SNAPSHOT, settings: NO_OVERRIDES,
+    tier: 1, llmJudgeImpl: fakeJudge,
+  });
+  if (credsExist) {
+    assert.equal(captured.isolateHome, true,
+      'when real credentials.json exists, isolateHome should be true');
+    assert.ok(captured.cwd && captured.cwd.includes('symphony-drift-'),
+      `cwd should be a symphony-drift tempdir, got ${captured.cwd}`);
+    assert.equal(captured.copiedCredsExists, true,
+      'credentials.json should have been copied into the tempdir');
+  } else {
+    assert.equal(captured.isolateHome, false,
+      'when real credentials.json missing, isolateHome must be false (judge falls back to inherited HOME)');
+  }
+  void t;
+});
+
+test('checkLlmSemantic cleans up the tempdir (including copied credentials) after the run', async () => {
+  // Sanity: every tempdir created by writeBriefToTempDir gets
+  // rm -rf'd in the finally{} of checkLlmSemantic. We confirm by
+  // capturing the dir path during the fake judge call, then asserting
+  // it's gone after the function returns.
+  let capturedDir = null;
+  const fakeJudge = async (args) => {
+    capturedDir = args.cwd;
+    return { findings: [] };
+  };
+  await checkLlmSemantic({
+    snapshot: BASE_SNAPSHOT, settings: NO_OVERRIDES,
+    tier: 1, llmJudgeImpl: fakeJudge,
+  });
+  if (capturedDir) {
+    assert.ok(!fs.existsSync(capturedDir),
+      `tempdir ${capturedDir} should be cleaned up after run`);
+  }
 });
