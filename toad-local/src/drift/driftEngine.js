@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { buildSnapshot } from './buildSnapshot.js';
 import { scoreFindings } from './scoreFindings.js';
 import { DETERMINISTIC_CHECKS } from './checks/index.js';
+import { kindForCheck } from './checks/checkKinds.js';
 import { escalationGate } from './llm/escalationGate.js';
 
 const DEFAULT_SETTINGS = Object.freeze({
@@ -162,7 +163,7 @@ export class DriftEngine {
       try {
         const out = (await check.fn({ snapshot, settings: this.settings })) || [];
         for (const f of out) {
-          const stamped = { ...f, runId, teamId };
+          const stamped = { ...f, runId, teamId, kind: kindForCheck(f.checkName) };
           if (linkages.has(stamped.id)) stamped.correctionTaskId = linkages.get(stamped.id);
           tier1Findings.push(stamped);
         }
@@ -201,7 +202,7 @@ export class DriftEngine {
               tier1Findings,
             })) || [];
             for (const f of out) {
-              const stamped = { ...f, runId, teamId };
+              const stamped = { ...f, runId, teamId, kind: kindForCheck(f.checkName) };
               if (linkages.has(stamped.id)) stamped.correctionTaskId = linkages.get(stamped.id);
               tier2Findings.push(stamped);
             }
@@ -324,6 +325,7 @@ export class DriftEngine {
       runId, teamId, taskId: null,
       category: 'risk', severity: 'medium',
       checkName,
+      kind: kindForCheck(checkName),
       title: `Check ${checkName} threw during evaluation`,
       evidence: [String(err && err.message ? err.message : err)],
       expected: 'check returns DriftFinding[]',

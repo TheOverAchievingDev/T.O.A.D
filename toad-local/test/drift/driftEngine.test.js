@@ -93,6 +93,31 @@ test('DriftEngine.runDrift includes last 30 history rows in the result', async (
   assert.equal(result.history.length, 30);
 });
 
+test('findings carry the conformance/drift kind (fresh result AND persisted read)', async () => {
+  const db = bootstrapDb();
+  const store = new SqliteDriftStore({ db });
+  const engine = new DriftEngine({
+    deps: makeDeps({
+      tasks: [{ teamId: 'team-a', taskId: 'task-1', status: 'done', integration: null }],
+      taskEvents: [
+        { taskId: 'task-1', eventType: 'task.status_changed',
+          createdAt: '2026-05-04T09:00:00Z',
+          payload: { from: 'merge_ready', to: 'done' } },
+      ],
+    }),
+    store,
+  });
+  const result = await engine.runDrift({ teamId: 'team-a', trigger: 'manual' });
+  assert.equal(result.findings[0].checkName, 'check_done_without_merge_evidence');
+  assert.equal(result.findings[0].kind, 'conformance',
+    'a process-invariant finding is conformance, not drift');
+
+  // Persisted read derives the same kind from check_name — no schema
+  // column, no divergence between fresh and stored findings.
+  const persisted = store.listLatestFindings({ teamId: 'team-a' });
+  assert.equal(persisted[0].kind, 'conformance');
+});
+
 // ── Periodic-trigger cooldown (the 2026-05-15 double-trigger fix) ──
 // The backend monitor (5min) AND the UI poll (60s) both issue
 // trigger:'periodic' runDrift calls. Without a guard every periodic

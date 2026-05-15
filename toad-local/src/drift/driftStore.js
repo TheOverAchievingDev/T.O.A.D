@@ -9,6 +9,8 @@
  * commit and prune leaves data correct, just over-sized — the next
  * recordRun trims again).
  */
+import { kindForCheck } from './checks/checkKinds.js';
+
 export class SqliteDriftStore {
   constructor({ db, historyKeep = 500 } = {}) {
     if (!db || typeof db.prepare !== 'function') {
@@ -216,6 +218,11 @@ function rowToFinding(r) {
     category: r.category,
     severity: r.severity,
     checkName: r.check_name,
+    // Conformance-vs-drift taxonomy (PROJECT.md §8), derived from the
+    // stable checkName — NOT a persisted column, so zero schema change
+    // / migration / orphaned findings. null only for an unclassified
+    // check (the registry guard prevents that for live checks).
+    kind: kindForCheck(r.check_name),
     title: r.title,
     evidence: safeParse(r.evidence_json, []),
     expected: r.expected,

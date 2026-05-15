@@ -11,12 +11,30 @@ import { checkStructuralUndeclaredPresent } from './checkStructuralUndeclaredPre
 import { checkConstitution } from './checkConstitution.js';
 import { checkContractDrift } from './checkContractDrift.js';
 import { checkLlmSemantic } from './checkLlmSemantic.js';
+import { kindForCheck } from './checkKinds.js';
 
 /**
  * Check registry. The engine runs all `tier: 1` checks first, scores
  * the result, and decides whether to run any `tier: 2` checks via
  * escalationGate.
+ *
+ * Every entry carries `kind: 'conformance' | 'drift'` (PROJECT.md §8),
+ * attached from checkKinds.js — the single source of truth for the
+ * split. `withKind` asserts at module load that no registered check is
+ * left unclassified, so a future check fails loudly here rather than
+ * being silently misfiled (the project's honest-never-silent doctrine).
  */
+function withKind(entry) {
+  const kind = kindForCheck(entry.name);
+  if (kind === null) {
+    throw new Error(
+      `drift check registry: "${entry.name}" has no conformance/drift `
+      + 'classification — add it to src/drift/checks/checkKinds.js',
+    );
+  }
+  return Object.freeze({ ...entry, kind });
+}
+
 export const ALL_CHECKS = Object.freeze([
   // Deterministic — all tier 1 (always run)
   { name: 'check_invalid_transitions', tier: 1, fn: checkInvalidTransitions },
@@ -68,9 +86,24 @@ export const ALL_CHECKS = Object.freeze([
   { name: 'check_llm_semantic_t1', tier: 1, fn: (args) => checkLlmSemantic({ ...args, tier: 1 }) },
   // LLM tier 2 — Opus/GPT-5/Gemini-Pro, escalation only
   { name: 'check_llm_semantic_t2', tier: 2, fn: (args) => checkLlmSemantic({ ...args, tier: 2 }) },
-]);
+].map(withKind));
 
 /** Back-compat: existing engine code reads DETERMINISTIC_CHECKS. */
 export const DETERMINISTIC_CHECKS = Object.freeze(
   ALL_CHECKS.filter((c) => c.tier === 1 && !c.name.startsWith('check_llm_'))
+);
+
+// Conformance-vs-drift taxonomy (PROJECT.md §8). Re-exported from the
+// registry so consumers have one import site; the source of truth is
+// checkKinds.js.
+export {
+  kindForCheck, CHECK_KIND, CONFORMANCE_CHECK_NAMES, DRIFT_CHECK_NAMES,
+} from './checkKinds.js';
+
+/** Registry entries split by kind (frozen views over ALL_CHECKS). */
+export const CONFORMANCE_CHECKS = Object.freeze(
+  ALL_CHECKS.filter((c) => c.kind === 'conformance'),
+);
+export const DRIFT_CHECKS = Object.freeze(
+  ALL_CHECKS.filter((c) => c.kind === 'drift'),
 );
