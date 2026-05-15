@@ -314,3 +314,98 @@ test('checkLlmSemantic trims an oversized payload before writing the brief (size
   assert.match(observedBriefContent, /## Tasks/);
   assert.match(observedBriefContent, /## Recent runtime events/);
 });
+
+test('buildUserPayload includes diffsByTask in a "Task diffs" section (2026-05-15 alignment fix)', () => {
+  // The whole point of a drift judge is to compare CODE against SPEC.
+  // Before this fix, the brief carried tasks + events + foundry docs
+  // but never the actual code diffs — so the judge had no way to spot
+  // an implementation that diverged from the spec's mandated approach.
+  // diffsByTask is already computed by buildSnapshot; the fix is just
+  // putting it in front of the judge.
+  const snapshot = {
+    ...BASE_SNAPSHOT,
+    tasks: [
+      { teamId: 'team-a', taskId: 'task-1', status: 'in_progress',
+        allowedFiles: ['src/billing/**'], forbiddenFiles: [], testCommands: [],
+        acceptanceCriteria: ['user can set quantity'], subject: 'Bulk subscription quantity' },
+    ],
+    diffsByTask: {
+      'task-1': {
+        changedFiles: ['src/billing/quantity.ts', 'test/billing/quantity.test.ts'],
+        diff: '--- a/src/billing/quantity.ts\n+++ b/src/billing/quantity.ts\n@@ -1,3 +1,8 @@\n export function setQuantity(n: number) {\n+  if (n < 1) throw new Error("min 1");\n+  return n;\n }\n',
+        error: null,
+      },
+    },
+  };
+  const payload = buildUserPayload(snapshot, null);
+  // The new section is present.
+  assert.match(payload, /## Task diffs \(current work vs base ref/);
+  // The task subject is in the diff section header.
+  assert.match(payload, /Bulk subscription quantity/);
+  // Changed files are listed.
+  assert.match(payload, /src\/billing\/quantity\.ts/);
+  // The actual diff content is present (the judge needs this to spot
+  // CODE ALIGNMENT issues).
+  assert.match(payload, /\+\+\+ b\/src\/billing\/quantity\.ts/);
+  assert.match(payload, /\+\s*if \(n < 1\) throw new Error\("min 1"\);/);
+  // Wrapped in a diff fence so the model parses it as code.
+  assert.match(payload, /```diff/);
+});
+
+test('buildUserPayload truncates oversized diffs to keep the brief bounded (per-task cap)', () => {
+  // A single noisy task shouldn't blow the budget alone. Per-task diff
+  // cap is 4000 chars; oversized diffs get a truncation marker so the
+  // judge knows context was elided rather than seeing a mysterious cut.
+  const giantDiff = '--- a/file.ts\n+++ b/file.ts\n' + Array.from({ length: 200 }, (_, i) => `+ line ${i}: ${'X'.repeat(40)}`).join('\n');
+  const snapshot = {
+    ...BASE_SNAPSHOT,
+    tasks: [
+      { teamId: 'team-a', taskId: 'task-noisy', status: 'in_progress',
+        allowedFiles: [], forbiddenFiles: [], testCommands: [],
+        acceptanceCriteria: [], subject: 'Noisy refactor' },
+    ],
+    diffsByTask: {
+      'task-noisy': {
+        changedFiles: ['file.ts'],
+        diff: giantDiff,
+        error: null,
+      },
+    },
+  };
+  const payload = buildUserPayload(snapshot, null);
+  // Truncation marker present.
+  assert.match(payload, /truncated, \d+ chars elided/);
+  // First line of the diff still appears (we didn't drop the start).
+  assert.match(payload, /--- a\/file\.ts/);
+});
+
+test('buildUserPayload skips the Task diffs section when no task has a diff', () => {
+  // Don't render an empty section header — distracts the judge and
+  // wastes tokens. The section only appears when at least one task
+  // has actual diff content.
+  const snapshot = {
+    ...BASE_SNAPSHOT,
+    diffsByTask: {}, // empty
+  };
+  const payload = buildUserPayload(snapshot, null);
+  assert.doesNotMatch(payload, /## Task diffs/);
+});
+
+test('buildUserPayload surfaces diff errors instead of fabricating content', () => {
+  // When buildSnapshot couldn't compute a diff (worktree missing, git
+  // error, etc.) the entry has { error: 'reason' }. The judge gets a
+  // clear "Diff error: ..." line instead of pretending we have data.
+  const snapshot = {
+    ...BASE_SNAPSHOT,
+    diffsByTask: {
+      'task-1': {
+        changedFiles: [],
+        diff: null,
+        error: 'fatal: no such worktree',
+      },
+    },
+  };
+  const payload = buildUserPayload(snapshot, null);
+  assert.match(payload, /## Task diffs/);
+  assert.match(payload, /Diff error: fatal: no such worktree/);
+});

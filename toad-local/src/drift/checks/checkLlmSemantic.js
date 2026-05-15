@@ -228,6 +228,63 @@ export function buildUserPayload(snapshot, tier1Findings) {
   }
   lines.push('');
 
+  // Task diffs (current work vs baseRef per worktree).
+  //
+  // THIS is the section that makes the drift judge a real drift judge.
+  // Without it, the judge only sees descriptions of what agents claim
+  // to be doing — it can't compare CODE against the spec, only narrative
+  // against the spec. The 2026-05-15 alignment fix: snapshot.diffsByTask
+  // is already computed by buildSnapshot from each task's worktree;
+  // we just need to feed it to the judge.
+  //
+  // Per-file content is truncated to keep the brief bounded (the soft
+  // 80 KB trim later still drops oldest events if we overshoot). The
+  // judge can ask for more detail in evidence cites that name files.
+  const diffsByTask = snapshot.diffsByTask && typeof snapshot.diffsByTask === 'object'
+    ? snapshot.diffsByTask
+    : {};
+  const tasksWithDiffs = recent.filter((t) => diffsByTask[t.taskId]);
+  if (tasksWithDiffs.length > 0) {
+    lines.push(`## Task diffs (current work vs base ref — ${tasksWithDiffs.length} task${tasksWithDiffs.length === 1 ? '' : 's'} with changes)`);
+    lines.push('Compare each diff against the relevant Foundry doc (steering / tech_spec / design_decisions) and the task\'s declared allowedFiles + acceptanceCriteria. Flag drift where the code diverges from the spec.');
+    for (const task of tasksWithDiffs) {
+      const d = diffsByTask[task.taskId];
+      lines.push('');
+      lines.push(`### ${task.taskId} [${task.status}] "${task.subject ?? ''}"`);
+      const changedFiles = Array.isArray(d.changedFiles) ? d.changedFiles : [];
+      if (changedFiles.length > 0) {
+        const fileList = changedFiles.length > 30
+          ? `${changedFiles.slice(0, 30).join(', ')}, … (+${changedFiles.length - 30} more)`
+          : changedFiles.join(', ');
+        lines.push(`Changed files (${changedFiles.length}): ${fileList}`);
+      }
+      if (d.error) {
+        lines.push(`Diff error: ${d.error}`);
+        continue;
+      }
+      const diffBody = typeof d.diff === 'string' ? d.diff : '';
+      if (diffBody.length === 0) {
+        lines.push('(no diff content)');
+        continue;
+      }
+      // Per-task diff cap: 4000 chars ≈ 1K tokens. Big enough to see
+      // multiple changed regions; small enough that 5 noisy tasks
+      // don't blow the budget alone.
+      const cap = 4000;
+      if (diffBody.length <= cap) {
+        lines.push('```diff');
+        lines.push(diffBody);
+        lines.push('```');
+      } else {
+        lines.push('```diff');
+        lines.push(diffBody.slice(0, cap));
+        lines.push(`… (truncated, ${diffBody.length - cap} chars elided — ask for a specific file by name to see more)`);
+        lines.push('```');
+      }
+    }
+    lines.push('');
+  }
+
   // Recent task events (last 50)
   const taskEvents = Array.isArray(snapshot.taskEvents) ? snapshot.taskEvents : [];
   const recentTaskEvents = taskEvents.slice(-50);

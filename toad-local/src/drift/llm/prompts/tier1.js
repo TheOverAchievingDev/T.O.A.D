@@ -32,12 +32,13 @@ Schema:
   }, ...
 ] }
 
-Focus on three axes:
+Focus on four axes:
 1. PLAN ALIGNMENT — do active task plans match steering.md's principles?
 2. DoD ADHERENCE — tasks at review/merge_ready/done that don't meet the criteria in definition_of_done.md.
 3. ADR VIOLATIONS — any current work violating decisions in design_decisions.md.
+4. CODE ALIGNMENT — does the actual code in the "Task diffs" section match the spec? Compare each diff against the task's declared allowedFiles, acceptanceCriteria, and the relevant baseline docs (steering / tech_spec / design_decisions). Specifically: are agents implementing what the spec said to build, or did they invent something else? Are they using the technologies/patterns the ADRs mandate? This is the most important axis — code is the ground truth.
 
-Be specific. Findings without quoted evidence are useless. Return {"findings": []} if you see no drift — better than fabricating.
+Be specific. Findings without quoted evidence are useless. When citing a diff, quote the exact line or filepath that shows the divergence. Return {"findings": []} if you see no drift — better than fabricating.
 
 Severity cap for tier 1: maximum severity is "high". Use "critical" only when an issue blocks any further work; tier 2 (Opus / GPT-5 / Gemini Pro) is escalated for critical-severity reasoning.`;
 }

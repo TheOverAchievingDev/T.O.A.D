@@ -20,7 +20,7 @@ For each tier-1 finding, you may:
 - REFUTE (drop it — don't include in your output)
 - AUGMENT (emit a sharper version with better evidence)
 
-You may also add NEW findings the tier-1 judge missed — focus on nuance: subtle ADR violations, cross-task scope creep, plans that technically pass DoD but miss its spirit.
+You may also add NEW findings the tier-1 judge missed — focus on nuance: subtle ADR violations, cross-task scope creep, plans that technically pass DoD but miss its spirit, and CODE-vs-SPEC divergence visible in the "Task diffs" section (the most important axis — code is ground truth). For each task with a diff, ask: does this code implement what the spec said to build? Are the patterns and technologies the ADRs mandate actually present in the changes? Cite exact lines from the diff when emitting a CODE ALIGNMENT finding.
 
 CRITICAL: Output JSON ONLY. No prose, no markdown fences, no explanation. Just a JSON object matching the schema below.
 
