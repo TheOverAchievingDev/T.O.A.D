@@ -43,7 +43,7 @@ test('checkLlmSemantic@tier1 calls llmJudge and stamps check_name', async () => 
   assert.equal(findings[0].teamId, 'team-a');
   assert.equal(findings[0].runId, '');
   assert.equal(called.cli, 'claude');
-  assert.equal(called.model, 'haiku-4.5');
+  assert.equal(called.model, 'haiku');
 });
 
 test('checkLlmSemantic@tier2 uses tier-2 model + includes tier-1 findings in payload', async () => {
@@ -62,7 +62,7 @@ test('checkLlmSemantic@tier2 uses tier-2 model + includes tier-1 findings in pay
     snapshot: BASE_SNAPSHOT, settings: NO_OVERRIDES,
     tier: 2, llmJudgeImpl: fakeJudge, tier1Findings,
   });
-  assert.equal(called.model, 'opus-4.7');
+  assert.equal(called.model, 'opus');
   // The user payload must include the tier-1 findings.
   assert.match(called.userPayload, /Tier-1 findings/i);
   assert.match(called.userPayload, /check_invalid_transitions/);

@@ -59,6 +59,36 @@ function buildInvocation(cli, model, combined) {
 }
 
 /**
+ * Pick the most useful error string from captured stderr + stdout.
+ *
+ * Most well-behaved CLIs write errors to stderr — that's where we
+ * look first. But Claude CLI writes user-facing errors like "model
+ * X does not exist" to stdout (along with the exit-1 signal). When
+ * stderr is empty AND stdout has content AND the process exited
+ * non-zero, that stdout content IS the error and the operator needs
+ * to see it. Without this fallback, the drift judge's meta-finding
+ * read "judge threw: llmJudge: spawn_failed: exit code 1" — totally
+ * undiagnosable for "I picked an invalid model name."
+ *
+ * Truncated to 500 chars so the error string stays readable when a
+ * provider dumps a giant traceback. The full output is still on the
+ * sidecar log; this is the breadcrumb that gets surfaced into the
+ * drift finding row.
+ */
+function pickErrorDetail(stderrBuf, stdoutBuf) {
+  const stderr = (stderrBuf || '').trim();
+  if (stderr.length > 0) return truncateForError(stderr);
+  const stdout = (stdoutBuf || '').trim();
+  if (stdout.length > 0) return truncateForError(stdout);
+  return '';
+}
+
+function truncateForError(text) {
+  const max = 500;
+  return text.length > max ? `${text.slice(0, max)}… (truncated)` : text;
+}
+
+/**
  * Strip leading/trailing markdown code fences. Handles:
  *   ```json\n{...}\n```
  *   ```\n{...}\n```
@@ -186,7 +216,7 @@ export async function llmJudge({
       if (timedOut) return;
       clearTimeout(timer);
       if (code !== 0) {
-        const detail = stderrBuf.trim();
+        const detail = pickErrorDetail(stderrBuf, stdoutBuf);
         reject(new Error(
           detail
             ? `llmJudge: spawn_failed: exit code ${code}: ${detail}`
@@ -199,7 +229,7 @@ export async function llmJudge({
     proc.on('error', (err) => {
       if (timedOut) return;
       clearTimeout(timer);
-      const detail = stderrBuf.trim();
+      const detail = pickErrorDetail(stderrBuf, stdoutBuf);
       reject(new Error(
         detail
           ? `llmJudge: spawn_failed: ${err.message}: ${detail}`

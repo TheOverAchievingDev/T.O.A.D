@@ -255,7 +255,7 @@ test('llmJudge does NOT set shell:true for a plain .exe resolution', async () =>
 test('llmJudge includes stderr in the spawn_failed error on non-zero exit', async () => {
   await assert.rejects(
     () => llmJudge({
-      cli: 'claude', model: 'haiku-4.5',
+      cli: 'claude', model: 'haiku',
       systemPrompt: 's', userPayload: 'u', timeoutMs: 5000,
       spawnImpl: fakeSpawn('', { exitCode: 2, stderr: 'auth required: log in via `claude login`' }),
     }),
@@ -263,6 +263,80 @@ test('llmJudge includes stderr in the spawn_failed error on non-zero exit', asyn
       assert.match(err.message, /spawn_failed/);
       assert.match(err.message, /auth required/);
       assert.match(err.message, /claude login/);
+      return true;
+    },
+  );
+});
+
+test('llmJudge falls back to stdout in the spawn_failed error when stderr is empty (Claude writes errors to stdout)', async () => {
+  // Regression for the 2026-05-14 drift LLM judge silent-failure bug:
+  // Claude CLI writes "There's an issue with the selected model (X).
+  // It may not exist…" to STDOUT (not stderr) before exiting 1. The
+  // prior implementation only included stderr in the error, so the
+  // drift meta-finding read "exit code 1" with no diagnosable detail.
+  // Now stdout content surfaces as the error detail when stderr is
+  // empty.
+  const claudeStdoutOnError = "There's an issue with the selected model (haiku-4.5). It may not exist or you may not have access to it. Run --model to pick a different model.";
+  await assert.rejects(
+    () => llmJudge({
+      cli: 'claude', model: 'haiku-4.5',
+      systemPrompt: 's', userPayload: 'u', timeoutMs: 5000,
+      spawnImpl: fakeSpawn(claudeStdoutOnError, { exitCode: 1, stderr: '' }),
+    }),
+    (err) => {
+      assert.match(err.message, /spawn_failed: exit code 1/);
+      assert.match(err.message, /issue with the selected model/);
+      assert.match(err.message, /haiku-4\.5/);
+      return true;
+    },
+  );
+});
+
+test('llmJudge prefers stderr over stdout when both are populated on non-zero exit', async () => {
+  // Belt-and-suspenders: if a future CLI version writes to BOTH
+  // streams on error, stderr is the canonical channel and should win.
+  // The stdout-fallback path only activates when stderr is empty.
+  await assert.rejects(
+    () => llmJudge({
+      cli: 'claude', model: 'haiku',
+      systemPrompt: 's', userPayload: 'u', timeoutMs: 5000,
+      spawnImpl: () => {
+        const proc = new EventEmitter();
+        proc.stdout = new EventEmitter();
+        proc.stderr = new EventEmitter();
+        proc.stdin = { write() {}, end() {} };
+        proc.kill = () => proc.emit('exit', null, 'SIGKILL');
+        setTimeout(() => {
+          proc.stdout.emit('data', Buffer.from('stdout banner that should NOT win'));
+          proc.stderr.emit('data', Buffer.from('the real stderr error'));
+          proc.emit('exit', 3, null);
+        }, 1);
+        return proc;
+      },
+    }),
+    (err) => {
+      assert.match(err.message, /the real stderr error/);
+      assert.doesNotMatch(err.message, /stdout banner/);
+      return true;
+    },
+  );
+});
+
+test('llmJudge truncates very long stdout-fallback error detail to keep finding rows readable', async () => {
+  // A pathological CLI dump (e.g. a full python traceback on stdout)
+  // shouldn't bloat the drift finding's `actual` column to 50KB. The
+  // truncation cap keeps the surface readable while preserving enough
+  // to diagnose.
+  const giantStdoutDump = 'X'.repeat(2000);
+  await assert.rejects(
+    () => llmJudge({
+      cli: 'claude', model: 'haiku',
+      systemPrompt: 's', userPayload: 'u', timeoutMs: 5000,
+      spawnImpl: fakeSpawn(giantStdoutDump, { exitCode: 1, stderr: '' }),
+    }),
+    (err) => {
+      assert.match(err.message, /\(truncated\)/);
+      assert.ok(err.message.length < 700, `error should be truncated but was ${err.message.length} chars`);
       return true;
     },
   );
