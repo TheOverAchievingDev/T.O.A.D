@@ -57,6 +57,52 @@ function defaultNeedsShell(resolved) {
  * argv re-splitting hazard on .cmd wrappers (cmd.exe re-parses the args
  * string by whitespace, mangling multi-word prompts).
  */
+/**
+ * Flags that isolate a claude --print invocation from the operator's
+ * local Claude Code environment. Reasoning (2026-05-15 prompt-cap
+ * investigation):
+ *
+ * The operator's ~/.claude/settings.json typically enables many
+ * plugins (we measured 21 on the bug-reporting user: feature-dev,
+ * superpowers, vercel, figma, chrome-devtools-mcp, etc.). Each
+ * plugin loads tool descriptions, skill definitions, and agent
+ * prompts into every claude session's context. With effort=high
+ * + alwaysThinking on top, the request can hit 50K+ overhead
+ * tokens BEFORE Symphony's brief is added. Result: "Prompt is too
+ * long" failures regardless of how tightly we cap our brief.
+ *
+ * `--setting-sources project,local` tells claude to skip the user
+ * settings file (where the plugins live). Project/local sources
+ * are empty because the judge runs in a tempdir cwd. Auth flows
+ * through ~/.claude/.credentials.json which is unaffected by
+ * setting-sources, so OAuth users keep working.
+ *
+ * `--tools "Read"` strips every tool except Read from the request.
+ * The judge only needs Read to load the brief; Edit/Write/Bash/
+ * Grep/Glob/NotebookEdit are dead weight that inflate the prompt.
+ *
+ * `--dangerously-skip-permissions` lets Read fire without an
+ * interactive prompt in --print mode. The tempdir cwd bounds the
+ * blast radius to the brief file itself.
+ */
+const CLAUDE_ISOLATION_FLAGS = Object.freeze([
+  '--setting-sources', 'project,local',
+  '--tools', 'Read',
+  '--dangerously-skip-permissions',
+]);
+
+/**
+ * For the inline transport path (brief-file write failed; fall back
+ * to stdin). No Read tool is needed — the brief is already in stdin —
+ * so we strip ALL tools. Skipping permissions becomes moot when no
+ * tools are available, but we keep --setting-sources to stay
+ * isolated from plugin overhead.
+ */
+const CLAUDE_INLINE_ISOLATION_FLAGS = Object.freeze([
+  '--setting-sources', 'project,local',
+  '--tools', '',
+]);
+
 function buildInvocation(cli, model, systemPrompt, userPayload, briefPath) {
   // When briefPath is set, we instruct the CLI to read the file via
   // its Read tool instead of inlining the payload. The stdin stays
@@ -71,10 +117,10 @@ function buildInvocation(cli, model, systemPrompt, userPayload, briefPath) {
       'No prose. No markdown fences. The brief contains tasks, recent events, and the baseline docs you need to compare against.',
     ].join('\n');
     if (cli === 'claude') {
-      // skip-permissions so the Read tool fires without an interactive
-      // prompt (which would hang in --print mode). The judge runs in a
-      // dedicated tempdir as cwd, so the blast radius is constrained.
-      return { args: ['--model', model, '--print', '--dangerously-skip-permissions'], stdin: shortInstruction };
+      return {
+        args: ['--model', model, '--print', ...CLAUDE_ISOLATION_FLAGS],
+        stdin: shortInstruction,
+      };
     }
     if (cli === 'codex') {
       return { args: ['exec', '--model', model, '-'], stdin: shortInstruction };
@@ -88,7 +134,10 @@ function buildInvocation(cli, model, systemPrompt, userPayload, briefPath) {
   // and as a backstop when the brief-file path can't be written.
   const combined = `${systemPrompt}\n\n${userPayload}`;
   if (cli === 'claude') {
-    return { args: ['--model', model, '--print'], stdin: combined };
+    return {
+      args: ['--model', model, '--print', ...CLAUDE_INLINE_ISOLATION_FLAGS],
+      stdin: combined,
+    };
   }
   if (cli === 'codex') {
     return { args: ['exec', '--model', model, '-'], stdin: combined };

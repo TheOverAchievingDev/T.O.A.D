@@ -408,6 +408,81 @@ test('llmJudge inline mode does NOT add --dangerously-skip-permissions (no Read 
   );
 });
 
+test('llmJudge file-input mode passes --setting-sources project,local to skip operator plugins (2026-05-15 prompt-cap fix)', async () => {
+  // Real-world cause of the user-reported "Prompt is too long" loop:
+  // the operator's ~/.claude/settings.json had 21 plugins enabled,
+  // each contributing tool descriptions / skill prompts to every
+  // claude --print request. The total pre-brief overhead was 50K+
+  // tokens, blowing the prompt cap regardless of how tight we trimmed
+  // Symphony's own brief. Solution: tell claude to skip the user
+  // setting source. Project/local sources are empty (judge runs in
+  // a tempdir), so this effectively isolates the judge from operator
+  // plugins. Auth (~/.claude/.credentials.json) is unaffected.
+  const stdout = JSON.stringify({ findings: [] });
+  const { fn, calls } = recordingSpawn(stdout);
+  await llmJudge({
+    cli: 'claude', model: 'haiku',
+    systemPrompt: 's', userPayload: 'u',
+    briefPath: '/tmp/x/brief.md', cwd: '/tmp/x',
+    timeoutMs: 5000,
+    spawnImpl: fn,
+    resolveCliImpl: () => 'claude',
+    needsShellImpl: () => false,
+  });
+  const args = calls[0].args;
+  const sourceIdx = args.indexOf('--setting-sources');
+  assert.ok(sourceIdx >= 0, 'claude judge spawn must include --setting-sources');
+  assert.equal(args[sourceIdx + 1], 'project,local', 'judge must skip the user setting source (plugins live there)');
+});
+
+test('llmJudge file-input mode passes --tools "Read" to keep only the tool needed for the brief', async () => {
+  // The judge writes findings to stdout; it never needs Edit/Write/
+  // Bash/Grep/Glob/NotebookEdit. Each unused tool description still
+  // costs tokens in the prompt — explicitly limiting to Read trims
+  // ~10K+ tokens of dead weight per invocation.
+  const stdout = JSON.stringify({ findings: [] });
+  const { fn, calls } = recordingSpawn(stdout);
+  await llmJudge({
+    cli: 'claude', model: 'haiku',
+    systemPrompt: 's', userPayload: 'u',
+    briefPath: '/tmp/x/brief.md', cwd: '/tmp/x',
+    timeoutMs: 5000,
+    spawnImpl: fn,
+    resolveCliImpl: () => 'claude',
+    needsShellImpl: () => false,
+  });
+  const args = calls[0].args;
+  const toolsIdx = args.indexOf('--tools');
+  assert.ok(toolsIdx >= 0, 'claude judge spawn must include --tools');
+  assert.equal(args[toolsIdx + 1], 'Read', 'file-input judge keeps only Read tool');
+});
+
+test('llmJudge inline mode passes --tools "" to disable ALL tools (payload is already in stdin)', async () => {
+  // Inline mode = the brief is in stdin, so the judge never needs to
+  // read anything from disk. Disabling all tools strips even more
+  // overhead than file mode's Read-only path.
+  const stdout = JSON.stringify({ findings: [] });
+  const { fn, calls } = recordingSpawn(stdout);
+  await llmJudge({
+    cli: 'claude', model: 'haiku',
+    systemPrompt: 's', userPayload: 'u',
+    timeoutMs: 5000,
+    spawnImpl: fn,
+    resolveCliImpl: () => 'claude',
+    needsShellImpl: () => false,
+  });
+  const args = calls[0].args;
+  const toolsIdx = args.indexOf('--tools');
+  assert.ok(toolsIdx >= 0, 'inline judge spawn must include --tools');
+  assert.equal(args[toolsIdx + 1], '', 'inline judge disables all tools (brief is in stdin)');
+  // setting-sources isolation applies in inline mode too — plugin
+  // overhead from the operator's user settings is unrelated to
+  // transport mode.
+  const sourceIdx = args.indexOf('--setting-sources');
+  assert.ok(sourceIdx >= 0);
+  assert.equal(args[sourceIdx + 1], 'project,local');
+});
+
 test('llmJudge passes cwd to spawn when supplied (bounds the file-input agent\'s filesystem reach)', async () => {
   const stdout = JSON.stringify({ findings: [] });
   const { fn, calls } = recordingSpawn(stdout);
