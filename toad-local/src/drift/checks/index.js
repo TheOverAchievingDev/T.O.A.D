@@ -7,6 +7,7 @@ import { checkProviderLogicLeakage } from './checkProviderLogicLeakage.js';
 import { checkDoneWithoutMergeEvidence } from './checkDoneWithoutMergeEvidence.js';
 import { checkDependencyDrift } from './checkDependencyDrift.js';
 import { checkStructuralDeclaredAbsent } from './checkStructuralDeclaredAbsent.js';
+import { checkStructuralUndeclaredPresent } from './checkStructuralUndeclaredPresent.js';
 import { checkLlmSemantic } from './checkLlmSemantic.js';
 
 /**
@@ -37,6 +38,14 @@ export const ALL_CHECKS = Object.freeze([
   // adopted, so it never wolf-cries on early-stage projects. L1.2b
   // (undeclared-present, scope-only) is a separate follow-up entry.
   { name: 'check_structural_declared_absent', tier: 1, mode: 'observe', fn: checkStructuralDeclaredAbsent },
+  // L1.2b — undeclared-but-present structural drift, SCOPE question,
+  // no roadmap awareness. The higher-severity drift class (scope
+  // creep / undocumented surface / a stray telemetry module). Reads
+  // spec.structure + snapshot.sourceModules. Honest info-meta when
+  // structure isn't enumerated (empty declared set ≠ "nothing
+  // sanctioned") so it never flags every file on an under-specced
+  // project.
+  { name: 'check_structural_undeclared_present', tier: 1, mode: 'observe', fn: checkStructuralUndeclaredPresent },
   // LLM tier 1 — Haiku/Mini/Flash, always runs
   { name: 'check_llm_semantic_t1', tier: 1, fn: (args) => checkLlmSemantic({ ...args, tier: 1 }) },
   // LLM tier 2 — Opus/GPT-5/Gemini-Pro, escalation only

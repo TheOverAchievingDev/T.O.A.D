@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { runGit as defaultRunGit } from '../git/runGit.js';
 import { loadProjectSpec } from './spec/loadProjectSpec.js';
 import { parseManifestDeps } from './spec/parseManifestDeps.js';
+import { enumerateSourceModules } from './spec/enumerateSourceModules.js';
 
 const COMMITS_DEFAULT = 30;
 const DOC_CAP = 8 * 1024;
@@ -219,6 +220,25 @@ export async function buildSnapshot({ teamId, deps = {}, compareAgainst = 'found
     }
   }
 
+  // L1.2b source enumeration: candidate product modules under src/,
+  // entrypoint/infra/test files already excluded by the enumerator.
+  // Resolved HERE so checkStructuralUndeclaredPresent stays pure.
+  // Only walked when the spec declares a structure to judge against
+  // (no spec → nothing to compare, skip the walk entirely).
+  let sourceModules = null;
+  let sourceModulesError = null;
+  if (spec && spec.structure && Array.isArray(spec.structure.required) && specProjectCwd) {
+    const e = enumerateSourceModules({
+      projectCwd: specProjectCwd,
+      language: spec.stack?.language,
+      moduleRoot: spec.stack?.module_root,
+      readdirSyncImpl: deps.readdirSyncImpl,
+      statSyncImpl: deps.statSyncImpl,
+    });
+    sourceModules = e.modules;
+    sourceModulesError = e.error;
+  }
+
   return {
     teamId,
     asOf: new Date().toISOString(),
@@ -239,6 +259,10 @@ export async function buildSnapshot({ teamId, deps = {}, compareAgainst = 'found
     manifestError,
     // L1.2a: declared module → does its evidence path exist on disk?
     structurePresence,
+    // L1.2b: candidate product modules found in src/ (null = stack
+    // unsupported; [] = no source yet).
+    sourceModules,
+    sourceModulesError,
   };
 }
 
