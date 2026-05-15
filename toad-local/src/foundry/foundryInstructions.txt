@@ -81,6 +81,7 @@ When you draft (or revise) docs, output ALL FOUR in this EXACT machine-readable 
 ## Task 1 — <subject>
 - ID: T-001
 - Deliverable: <what gets shipped — files/endpoints/UI>
+- Delivers: <ONLY when this task implements an entry in the spec block's structure.required — copy the matching tokens VERBATIM, comma-separated: "module:<name>" / "endpoint:<METHOD> <path>". OMIT this whole line entirely if the task builds nothing declared there (do NOT write "none"). This is the explicit task→spec link the drift monitor uses to tell "not built yet" from real structural drift.>
 - Covers requirements: <EARS requirement numbers from brief.md>
 - Acceptance: <how a reviewer verifies it — concrete check, not "looks right">
 - Suggested role: developer | architect | reviewer | tester

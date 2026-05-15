@@ -524,6 +524,66 @@ test('LocalToolFacade materializes a Foundry session into repo docs, a team, and
   foundryStore.close();
 });
 
+test('L1.2a producer: Foundry task-breakdown `Delivers:` lines seed task.delivers', async (t) => {
+  // System-seeded tasks pre-date any lead action, so without this the
+  // task-breakdown path can never populate the explicit task→spec link
+  // and L1.2a stays dormant on a fresh Foundry project. A `Delivers:`
+  // line mirrors the existing `Deliverable:`/`Acceptance:` markers.
+  const projectCwd = await fs.mkdtemp(path.join(os.tmpdir(), 'toad-foundry-delivers-'));
+  t.after(() => fs.rm(projectCwd, { recursive: true, force: true }));
+  const foundryStore = new SqliteFoundryStore();
+  const taskBoard = new InMemoryTaskBoard();
+  const teamConfigRegistry = new TeamConfigRegistry();
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard,
+    foundryStore,
+    teamConfigRegistry,
+    projectCwd,
+  });
+  const session = foundryStore.createSession({ sessionId: 'fd-1', title: 'Reaper' });
+  foundryStore.upsertArtifact({
+    sessionId: session.sessionId,
+    artifactId: 'brief',
+    kind: 'product_brief',
+    title: 'Product Brief',
+    content: '# Product Brief',
+    targetPath: 'docs/foundry/product-brief.md',
+  });
+  foundryStore.upsertArtifact({
+    sessionId: session.sessionId,
+    artifactId: 'tasks',
+    kind: 'task_breakdown',
+    title: 'Task Breakdown',
+    content: [
+      '# Reaper TOAD Task Breakdown',
+      '',
+      '## Task 1 - Build the sampler',
+      '- Deliverable: sampler thread + snapshot frames.',
+      '- Delivers: module:sampler, module:heuristics',
+      '- Acceptance: frames flow on the mpsc channel.',
+      '',
+      '## Task 2 - Wire the UI',
+      '- Deliverable: egui panels.',
+    ].join('\n'),
+    targetPath: 'docs/foundry/task-breakdown.md',
+  });
+
+  const result = await facade.execute({
+    commandName: 'foundry_project_materialize',
+    idempotencyKey: 'fd-mat-1',
+    actor: { teamId: 'foundry', agentId: 'operator', role: 'human' },
+    args: { sessionId: session.sessionId },
+  });
+
+  const tasks = taskBoard.listTasks({ teamId: result.teamId });
+  assert.equal(tasks.length, 2);
+  assert.deepEqual(tasks[0].delivers, ['module:sampler', 'module:heuristics']);
+  // No Delivers: line → empty (honest-dormant, never a guessed token).
+  assert.deepEqual(tasks[1].delivers, []);
+  foundryStore.close();
+});
+
 test('stripCodeFence unwraps a fenced JSON spec block so docs/foundry/spec.json is pure JSON', () => {
   // The Foundry planner is told to emit raw JSON in the ===DOC: spec===
   // block, but models habitually wrap structured payloads in ```json

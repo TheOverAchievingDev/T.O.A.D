@@ -3182,6 +3182,7 @@ export class LocalToolFacade {
         priority: index === 0 ? 'high' : 'medium',
         expectedDeliverables: spec.expectedDeliverables,
         acceptanceCriteria: spec.acceptanceCriteria,
+        delivers: spec.delivers,
       },
     ));
 
@@ -3223,6 +3224,7 @@ export class LocalToolFacade {
         priority: index === 0 ? 'high' : 'medium',
         expectedDeliverables: spec.expectedDeliverables,
         acceptanceCriteria: spec.acceptanceCriteria,
+        delivers: spec.delivers,
       },
     ));
     return { sessionId, teamId, tasks };
@@ -3890,6 +3892,7 @@ function buildFoundryTaskSpecs(snapshot) {
     assignedRole: inferAssignedRole(spec.subject, spec.description),
     expectedDeliverables: spec.expectedDeliverables,
     acceptanceCriteria: spec.acceptanceCriteria,
+    delivers: spec.delivers,
   }));
 }
 
@@ -3919,12 +3922,25 @@ function taskFromLines(subject, lines, targetPath) {
   const bodyLines = lines.map((line) => line.trim()).filter(Boolean);
   const expectedDeliverables = [];
   const acceptanceCriteria = [];
+  // L1.2a: explicit task→spec-module link. `Delivers:` carries
+  // comma-separated structure tokens ("module:<name>" /
+  // "endpoint:<METHOD> <path>") copied from spec.json — distinct from
+  // the free-text `Deliverable:` marker. Drives roadmap-aware
+  // structural drift; never inferred from the subject.
+  const delivers = [];
   for (const line of bodyLines) {
     const cleaned = line.replace(/^[-*]\s*/, '');
     const deliverable = /^Deliverable:\s*(.+)$/i.exec(cleaned);
     const acceptance = /^Acceptance:\s*(.+)$/i.exec(cleaned);
+    const deliversLine = /^Delivers:\s*(.+)$/i.exec(cleaned);
     if (deliverable) expectedDeliverables.push(deliverable[1].trim());
     if (acceptance) acceptanceCriteria.push(acceptance[1].trim());
+    if (deliversLine) {
+      for (const tok of deliversLine[1].split(',')) {
+        const t = tok.trim();
+        if (t.length > 0) delivers.push(t);
+      }
+    }
   }
   const sourceLine = targetPath ? `Source: ${targetPath}` : null;
   return {
@@ -3932,6 +3948,7 @@ function taskFromLines(subject, lines, targetPath) {
     description: [sourceLine, ...bodyLines].filter(Boolean).join('\n'),
     expectedDeliverables,
     acceptanceCriteria,
+    delivers,
   };
 }
 
@@ -3950,6 +3967,7 @@ function buildFallbackTaskSpecs(artifacts) {
       ].filter(Boolean).join('\n'),
       expectedDeliverables: ['Approved implementation plan'],
       acceptanceCriteria: ['Team can map each planned task to a Foundry artifact'],
+      delivers: [],
     },
   ];
 }
