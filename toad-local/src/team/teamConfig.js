@@ -1,13 +1,60 @@
+import { PROVIDER_COMMANDS, commandForProvider } from './providerCommands.js';
+
+const KNOWN_COMMANDS = new Set(Object.values(PROVIDER_COMMANDS));
+
 function normalizeMember(member, fallbackAgentId) {
   const m = member && typeof member === 'object' ? member : {};
   const agentId = (typeof m.agentId === 'string' && m.agentId.trim() ? m.agentId.trim() : fallbackAgentId);
+  const providerId = typeof m.providerId === 'string' && m.providerId.trim()
+    ? m.providerId.trim()
+    : 'anthropic';
+  // Command derivation precedence:
+  //   1. m.command explicit AND consistent with providerId (or m.command
+  //      is a custom binary outside the known set — e.g. claude-beta).
+  //      Trusted as-is.
+  //   2. m.command explicit BUT mismatched with providerId (operator
+  //      picked Codex but command says 'claude'): auto-repair to the
+  //      provider's canonical binary. This is the 2026-05-15 bug fix —
+  //      existing broken team configs in SQLite get healed on the next
+  //      read instead of staying silently wrong forever.
+  //   3. m.command not set: derive from providerId via the canonical
+  //      mapping. This is the new-team path the UI hits — CreateTeamModal
+  //      sends only providerId.
+  //   4. Unknown providerId: 'claude' fallback so legacy configs still
+  //      spawn something rather than ENOENT-ing on an empty command.
+  //
+  // The 2026-05-15 "Codex selected but Claude spawned" bug: prior to
+  // this fix, step 3 didn't exist — command silently defaulted to
+  // 'claude' regardless of providerId. Mixed-provider teams (operator
+  // picked Codex for dev, Gemini for tester) all spawned claude,
+  // wasting Anthropic plan quota on agents that should have used the
+  // operator's other subscriptions.
+  let command;
+  if (typeof m.command === 'string' && m.command.trim().length > 0) {
+    const explicit = m.command.trim();
+    const canonical = commandForProvider(providerId);
+    if (canonical && KNOWN_COMMANDS.has(explicit) && canonical !== explicit) {
+      // Both names belong to providers, but they pair up wrong. The
+      // providerId is the operator's explicit choice (from the UI's
+      // provider chip); the mismatched command field is almost
+      // certainly a leftover from the pre-fix default-to-'claude'
+      // bug. Auto-repair to the canonical pairing.
+      command = canonical;
+    } else {
+      // Either consistent OR explicit override to a custom binary
+      // outside the canonical set (e.g. a beta build path).
+      command = explicit;
+    }
+  } else {
+    command = commandForProvider(providerId) || 'claude';
+  }
   return {
     agentId,
-    command: typeof m.command === 'string' && m.command.trim() ? m.command.trim() : 'claude',
+    command,
     args: Array.isArray(m.args) ? m.args.map((entry) => String(entry)) : [],
     cwd: typeof m.cwd === 'string' && m.cwd.trim() ? m.cwd.trim() : null,
     env: m.env && typeof m.env === 'object' && !Array.isArray(m.env) ? { ...m.env } : {},
-    providerId: typeof m.providerId === 'string' && m.providerId.trim() ? m.providerId.trim() : 'claude',
+    providerId,
     role: typeof m.role === 'string' && m.role.trim() ? m.role.trim() : null,
     skipPermissions: typeof m.skipPermissions === 'boolean' ? m.skipPermissions : true,
     prompt: typeof m.prompt === 'string' ? m.prompt : '',

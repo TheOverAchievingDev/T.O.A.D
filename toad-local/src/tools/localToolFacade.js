@@ -12,6 +12,7 @@ import {
 import { applyPermissionSuggestions, writeWorkspaceIsolationSettings, assertWorkspaceIsolated } from '../runtime/claudeSettingsWriter.js';
 import { formatCrossTeamText, CROSS_TEAM_SOURCE, CROSS_TEAM_SENT_SOURCE } from '../protocol/crossTeam.js';
 import { TeamConfig } from '../team/teamConfig.js';
+import { PROVIDER_COMMANDS, commandForProvider } from '../team/providerCommands.js';
 import { buildAgentSystemPrompt } from '../team/teamSystemPrompts.js';
 import { probeClaudeUsage } from '../providers/claudeUsageProbe.js';
 import { validateTaskStatusTransition } from '../task/taskLifecycle.js';
@@ -1313,18 +1314,12 @@ export class LocalToolFacade {
     const agentId = requireString(args.agentId, 'args.agentId');
     const providerId = requireString(args.providerId, 'args.providerId');
 
-    // Provider → CLI command mapping. Centralized here so swap, create,
-    // and any future "switch provider" flow all use the same canonical
-    // names. Throwing on unknown providers (rather than silently falling
-    // through to 'claude') prevents the operator from being stuck with
-    // a wrong-binary agent that spawns and immediately ENOENTs.
-    const PROVIDER_COMMANDS = {
-      anthropic: 'claude',
-      openai: 'codex',
-      gemini: 'gemini',
-      opencode: 'opencode',
-    };
-    const command = PROVIDER_COMMANDS[providerId];
+    // Provider → CLI command mapping lives in src/team/providerCommands.js
+    // so team_create's normalizeMember and this swap path share a single
+    // source of truth. Throwing on unknown providers (rather than silently
+    // falling through to 'claude') prevents the operator from being stuck
+    // with a wrong-binary agent that spawns and immediately ENOENTs.
+    const command = commandForProvider(providerId);
     if (!command) {
       const known = Object.keys(PROVIDER_COMMANDS).join(', ');
       throw new Error(
