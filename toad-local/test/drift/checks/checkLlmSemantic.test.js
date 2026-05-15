@@ -306,8 +306,8 @@ test('checkLlmSemantic trims an oversized payload before writing the brief (size
   });
   // Brief should be capped well under the raw 500-event size.
   const briefBytes = Buffer.byteLength(observedBriefContent, 'utf-8');
-  assert.ok(briefBytes < 100 * 1024,
-    `brief should be trimmed under 100KB, got ${briefBytes} bytes`);
+  assert.ok(briefBytes <= 24 * 1024,
+    `brief should be trimmed under 24KB (budget tightened 2026-05-15), got ${briefBytes} bytes`);
   // And the trim left enough room for the structural sections to
   // survive — tasks header and a runtime-events header are both still
   // present even though most event lines are gone.
@@ -408,4 +408,98 @@ test('buildUserPayload surfaces diff errors instead of fabricating content', () 
   const payload = buildUserPayload(snapshot, null);
   assert.match(payload, /## Task diffs/);
   assert.match(payload, /Diff error: fatal: no such worktree/);
+});
+
+test('buildUserPayload caps each foundry doc to ~3KB with an elision marker (2026-05-15 prompt-cap fix)', () => {
+  // Real-project measurement: tech-spec.md ran 12 KB, product-brief 6 KB,
+  // total foundry-docs section was 36 KB on its own. Stuffing all of
+  // that into the brief blew Claude --print's effective prompt budget
+  // even with file-based transport (the Read tool result + tool
+  // descriptions + system prompt collectively exceeded the cap). The
+  // per-doc trim keeps the structural content + an explicit marker.
+  const giantDoc = 'X'.repeat(10_000);
+  const snapshot = {
+    ...BASE_SNAPSHOT,
+    foundryDocs: {
+      'tech-spec': giantDoc,
+      'product-brief': giantDoc,
+    },
+  };
+  const payload = buildUserPayload(snapshot, null);
+  // Header + first chunk + elision marker present per doc.
+  assert.match(payload, /### tech-spec\.md/);
+  assert.match(payload, /### product-brief\.md/);
+  assert.match(payload, /\[doc continues — \d+ bytes elided/);
+  // No single rendered foundry doc is full-size in the output.
+  const techSpecSegment = payload.match(/### tech-spec\.md[\s\S]*?(?=### |## |$)/)?.[0] ?? '';
+  assert.ok(
+    Buffer.byteLength(techSpecSegment, 'utf-8') < 4096,
+    `each foundry doc should be capped near 3KB, got ${techSpecSegment.length} bytes`,
+  );
+});
+
+test('buildUserPayload caps event payload lines at 240 chars each (no single fat event eats the budget)', () => {
+  // Even with 20 events per section, a single huge stream-json frame
+  // could blow the section budget on its own. Per-line trimming
+  // ensures no event line exceeds ~240 chars of payload JSON.
+  const fatPayload = { huge: 'Y'.repeat(5000) };
+  const snapshot = {
+    ...BASE_SNAPSHOT,
+    runtimeEvents: [
+      { createdAt: '2026-05-15T10:00:00Z', eventType: 'turn_completed', payload: fatPayload },
+    ],
+  };
+  const payload = buildUserPayload(snapshot, null);
+  // The truncation marker is present.
+  assert.match(payload, /…\(\+\d+\)/);
+  // No event line is full-size.
+  const eventLines = payload.split('\n').filter((l) => l.startsWith('- ') && l.includes('turn_completed'));
+  assert.ok(eventLines.length > 0);
+  for (const line of eventLines) {
+    assert.ok(line.length < 400, `event line should be capped near 240 chars, got ${line.length}`);
+  }
+});
+
+test('checkLlmSemantic enforces 24 KB total brief budget even with foundry-doc-heavy snapshot (2026-05-15 prompt-cap fix)', async () => {
+  // The user-reported failure: drift run kept hitting "Prompt is too
+  // long" even after file-based transport landed. Root cause was the
+  // 80 KB budget being too generous once Claude's tool descriptions +
+  // Read tool result framing were added to the request. New target:
+  // brief stays under 24 KB so the combined prompt fits with headroom.
+  const bigDoc = 'D'.repeat(20_000);
+  const heavySnapshot = {
+    ...BASE_SNAPSHOT,
+    foundryDocs: {
+      'product-brief': bigDoc,
+      'tech-spec': bigDoc,
+      'roadmap': bigDoc,
+      'steering': bigDoc,
+      'task-breakdown': bigDoc,
+      'design-decisions': bigDoc,
+      'definition-of-done': bigDoc,
+    },
+    runtimeEvents: Array.from({ length: 100 }, (_, i) => ({
+      createdAt: `2026-05-15T10:${String(i % 60).padStart(2, '0')}:00Z`,
+      eventType: 'turn_completed',
+      payload: { raw: { type: 'result', junk: 'Z'.repeat(2000) } },
+    })),
+  };
+  let observedBriefContent = null;
+  const fakeJudge = async (args) => {
+    observedBriefContent = fs.readFileSync(args.briefPath, 'utf-8');
+    return { findings: [] };
+  };
+  await checkLlmSemantic({
+    snapshot: heavySnapshot, settings: NO_OVERRIDES,
+    tier: 1, llmJudgeImpl: fakeJudge,
+  });
+  const briefBytes = Buffer.byteLength(observedBriefContent, 'utf-8');
+  assert.ok(
+    briefBytes <= 24 * 1024,
+    `brief should be capped at 24KB to survive Claude --print's prompt cap; got ${briefBytes} bytes`,
+  );
+  // Structural sections still survive (the cap doesn't destroy the
+  // brief's usefulness — judge still sees tasks + recent activity +
+  // foundry doc highlights).
+  assert.match(observedBriefContent, /## Tasks/);
 });

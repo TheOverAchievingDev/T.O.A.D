@@ -8,21 +8,39 @@ import { buildTier1SystemPrompt } from '../llm/prompts/tier1.js';
 import { buildTier2SystemPrompt } from '../llm/prompts/tier2.js';
 
 /**
- * Trim the user payload to a soft size cap so the brief.md never grows
- * unbounded on long-lived projects (50 runtime_events × 5KB each =
- * 250KB which is fine for transport via file but burns tokens on every
- * drift run for marginal signal). Strategy: if the rendered payload is
- * over the budget, scan back through the latest event lines and snip
- * the oldest until we fit.
+ * Hard budget for the brief.md the judge reads. The 2026-05-15 bug:
+ * Claude --print kept rejecting drift runs with "Prompt is too long"
+ * even after we moved to file-based transport. Forensic accounting on
+ * a real project:
  *
- * 80 KB ≈ 20K tokens — generous compared to what the judge actually
- * needs (current tasks + a handful of recent events + baseline docs),
- * still well under any model context window. The trim happens AFTER
- * buildUserPayload renders the markdown, so we don't have to know the
- * structure — we just walk lines from the end of the recent-events
- * section, dropping eldest-first.
+ *   foundry docs (full content):   36 KB   ← dominant
+ *   task diffs (recent slice):     12 KB
+ *   recent events (50 each):       18 KB
+ *   tasks + headers:                2 KB
+ *   = ~68 KB → ~17K tokens
+ *
+ * Plus claude's tool descriptions (~10K tokens for the default
+ * native-tool set) + system prompt + Read tool result framing,
+ * the total request was hitting the model's prompt cap. Anthropic
+ * counts the Read tool result against context, so even though our
+ * BRIEF was "small" by file standards, the assembled prompt
+ * exceeded haiku's effective limit.
+ *
+ * 24 KB ≈ 6K tokens — plenty for the judge's actual reasoning needs
+ * (current tasks + recent activity + baseline doc highlights),
+ * leaves substantial headroom for tool descriptions + Read overhead.
+ * Per-section caps in buildUserPayload prevent any one section from
+ * eating the budget alone.
  */
-const PAYLOAD_BUDGET_BYTES = 80 * 1024;
+const PAYLOAD_BUDGET_BYTES = 24 * 1024;
+
+/** Per-foundry-doc cap. Most foundry docs are 1-6 KB; tech-spec.md
+ *  trends toward 10-15 KB on real projects. The judge needs the
+ *  decisions and principles, not exhaustive prose — 3 KB captures
+ *  the structural content (headings + ADR statements + DoD checks)
+ *  on every doc we've measured. Each doc that exceeds the cap gets
+ *  a "[doc continues — N chars elided]" marker so the judge knows. */
+const PER_FOUNDRY_DOC_BUDGET = 3 * 1024;
 
 function trimPayloadIfOversize(payload) {
   if (typeof payload !== 'string') return '';
@@ -57,6 +75,24 @@ function trimPayloadIfOversize(payload) {
     trimmed = `${buf.toString('utf-8')}\n\n[... truncated to fit ${PAYLOAD_BUDGET_BYTES} byte budget ...]`;
   }
   return trimmed;
+}
+
+/**
+ * Cap a single foundry doc to PER_FOUNDRY_DOC_BUDGET. The judge needs
+ * the structural content (heading hierarchy + ADR statements) more
+ * than the prose around them, so we keep the start (which usually
+ * carries the most-important framing) and append an explicit marker.
+ *
+ * If the doc is small enough, returns it unchanged. We don't try to
+ * be smart about WHERE to cut — Claude's reasoning tolerates a hard
+ * truncation marker better than mid-sentence chops.
+ */
+function trimFoundryDoc(content) {
+  if (typeof content !== 'string' || content.length === 0) return '';
+  const bytes = Buffer.byteLength(content, 'utf-8');
+  if (bytes <= PER_FOUNDRY_DOC_BUDGET) return content;
+  const buf = Buffer.from(content, 'utf-8').slice(0, PER_FOUNDRY_DOC_BUDGET - 64);
+  return `${buf.toString('utf-8')}\n\n[doc continues — ${bytes - PER_FOUNDRY_DOC_BUDGET} bytes elided to fit brief budget]`;
 }
 
 /**
@@ -267,10 +303,14 @@ export function buildUserPayload(snapshot, tier1Findings) {
         lines.push('(no diff content)');
         continue;
       }
-      // Per-task diff cap: 4000 chars ≈ 1K tokens. Big enough to see
-      // multiple changed regions; small enough that 5 noisy tasks
-      // don't blow the budget alone.
-      const cap = 4000;
+      // Per-task diff cap: 1500 chars ≈ 375 tokens. Tighter than
+      // initially shipped (was 4000) because the 24 KB total brief
+      // budget needs room for foundry docs + events + multiple tasks.
+      // 1500 chars still captures several changed-line contexts;
+      // for tasks with huge diffs the judge gets a truncation marker
+      // and can cite filepaths in evidence to request a deeper look
+      // (future agentic-judge path).
+      const cap = 1500;
       if (diffBody.length <= cap) {
         lines.push('```diff');
         lines.push(diffBody);
@@ -285,23 +325,40 @@ export function buildUserPayload(snapshot, tier1Findings) {
     lines.push('');
   }
 
-  // Recent task events (last 50)
+  // Recent task events (last 20). Was 50; reduced 2026-05-15 to fit
+  // the tighter 24KB brief budget. Most drift signal comes from the
+  // very latest transitions anyway — by event 20 we're well past the
+  // current state. Each event line is also capped at 240 chars so a
+  // single fat payload (e.g. a long plan body) can't blow the section
+  // budget on its own.
   const taskEvents = Array.isArray(snapshot.taskEvents) ? snapshot.taskEvents : [];
-  const recentTaskEvents = taskEvents.slice(-50);
+  const recentTaskEvents = taskEvents.slice(-20);
   lines.push(`## Recent task events (last ${recentTaskEvents.length})`);
   for (const e of recentTaskEvents) {
     const t = e.createdAt?.slice(11, 16) ?? '';
-    lines.push(`- ${t} ${e.taskId ?? ''} ${e.eventType} ${JSON.stringify(e.payload ?? {})}`);
+    const payloadJson = JSON.stringify(e.payload ?? {});
+    const payloadTrimmed = payloadJson.length > 240
+      ? `${payloadJson.slice(0, 240)}…(+${payloadJson.length - 240})`
+      : payloadJson;
+    lines.push(`- ${t} ${e.taskId ?? ''} ${e.eventType} ${payloadTrimmed}`);
   }
   lines.push('');
 
-  // Recent runtime events (last 50)
+  // Recent runtime events (last 20). Same reduction as task events.
+  // Each turn_completed frame can be 5-10KB raw; even 20 of them
+  // would exceed the budget without per-line trimming. 240 chars
+  // captures the event type + summary without the full stream-json
+  // body, which the judge rarely needs for drift detection.
   const runtimeEvents = Array.isArray(snapshot.runtimeEvents) ? snapshot.runtimeEvents : [];
-  const recentRuntimeEvents = runtimeEvents.slice(-50);
+  const recentRuntimeEvents = runtimeEvents.slice(-20);
   lines.push(`## Recent runtime events (last ${recentRuntimeEvents.length})`);
   for (const e of recentRuntimeEvents) {
     const t = e.createdAt?.slice(11, 16) ?? '';
-    lines.push(`- ${t} ${e.eventType} ${JSON.stringify(e.payload ?? {})}`);
+    const payloadJson = JSON.stringify(e.payload ?? {});
+    const payloadTrimmed = payloadJson.length > 240
+      ? `${payloadJson.slice(0, 240)}…(+${payloadJson.length - 240})`
+      : payloadJson;
+    lines.push(`- ${t} ${e.eventType} ${payloadTrimmed}`);
   }
   lines.push('');
 
@@ -330,12 +387,19 @@ export function buildUserPayload(snapshot, tier1Findings) {
       }
     }
   } else {
-    // Foundry docs (full content) — original behavior
+    // Foundry docs — each capped at PER_FOUNDRY_DOC_BUDGET (3 KB).
+    // Real foundry docs trend large: tech-spec.md ran 12 KB on a
+    // measured project, product-brief was 6 KB. Stuffing all 7 docs
+    // full-fat (~36 KB total) blew the brief budget and caused the
+    // 2026-05-15 "Prompt is too long" failures even with file-based
+    // transport. The per-doc trim keeps the structural content (the
+    // first ~3 KB of each, which carries the headings + ADR statements
+    // + DoD items) and appends an explicit elision marker.
     lines.push('## Foundry docs');
     for (const [key, content] of Object.entries(snapshot.foundryDocs ?? {})) {
       if (typeof content !== 'string' || content.length === 0) continue;
       lines.push(`### ${key}.md`);
-      lines.push(content);
+      lines.push(trimFoundryDoc(content));
       lines.push('');
     }
   }
