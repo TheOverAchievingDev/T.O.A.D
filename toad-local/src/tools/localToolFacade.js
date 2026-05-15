@@ -2148,9 +2148,62 @@ export class LocalToolFacade {
     // ALL events the event log has (not filtered by team) so the chip
     // shows the operator their cumulative spend across every team they've
     // ever launched in this project.
+    //
+    // Bucket by provider too, so the Plan Usage panel can show
+    // "Symphony has used X tokens / $Y of <provider>" — the only
+    // honest usage signal we have for Codex/Gemini, which lack a
+    // `--usage` equivalent (Claude's `/usage` probe handles plan
+    // quotas separately above). For Claude this Symphony-side number
+    // complements the plan probe ("project spend" vs "plan budget").
+    //
+    // Provider attribution: each runtime_event carries the runtimeId
+    // it was emitted on. We map runtimeId → team_id → team config →
+    // member.providerId (the lead OR a teammate, depending on which
+    // agent ran the turn). This is cached in a Map for O(1) lookups
+    // across the event loop, which can be O(thousands) on long teams.
     let tokensIn = 0;
     let tokensOut = 0;
     let costUsd = 0;
+    const providerUsage = new Map();
+    const ensureBucket = (providerId) => {
+      let b = providerUsage.get(providerId);
+      if (!b) {
+        b = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
+        providerUsage.set(providerId, b);
+      }
+      return b;
+    };
+    // Pre-build runtimeId → providerId. Reads every team config once.
+    // Quietly skips runtimes whose team config has been deleted (rare
+    // but possible after team_delete); their tokens roll into the
+    // aggregate-only `totals` and don't get a per-provider home.
+    const runtimeProvider = new Map();
+    if (
+      this.runtimeRegistry && typeof this.runtimeRegistry.listRuntimes === 'function'
+      && this.teamConfigRegistry && typeof this.teamConfigRegistry.getTeam === 'function'
+    ) {
+      try {
+        const allRuntimes = this.runtimeRegistry.listRuntimes();
+        const teamCache = new Map();
+        for (const rt of allRuntimes) {
+          if (!rt?.runtimeId || !rt?.teamId || !rt?.agentId) continue;
+          let team = teamCache.get(rt.teamId);
+          if (team === undefined) {
+            team = this.teamConfigRegistry.getTeam(rt.teamId) || null;
+            teamCache.set(rt.teamId, team);
+          }
+          if (!team) continue;
+          const members = [team.lead, ...(Array.isArray(team.teammates) ? team.teammates : [])];
+          const member = members.find((m) => m && m.agentId === rt.agentId);
+          if (member && typeof member.providerId === 'string' && member.providerId.length > 0) {
+            runtimeProvider.set(rt.runtimeId, member.providerId);
+          }
+        }
+      } catch {
+        // Best-effort — leave runtimeProvider empty so the loop below
+        // just skips per-provider attribution.
+      }
+    }
     if (this.eventLog && typeof this.eventLog.listEvents === 'function') {
       try {
         const events = this.eventLog.listEvents({});
@@ -2158,11 +2211,24 @@ export class LocalToolFacade {
           if (e.eventType !== 'turn_completed') continue;
           const raw = e.payload?.raw;
           if (!raw || raw.type !== 'result') continue;
-          if (typeof raw.total_cost_usd === 'number') costUsd += raw.total_cost_usd;
+          let evCost = 0;
+          let evIn = 0;
+          let evOut = 0;
+          if (typeof raw.total_cost_usd === 'number') evCost = raw.total_cost_usd;
           const u = raw.usage;
           if (u && typeof u === 'object') {
-            if (typeof u.input_tokens === 'number') tokensIn += u.input_tokens;
-            if (typeof u.output_tokens === 'number') tokensOut += u.output_tokens;
+            if (typeof u.input_tokens === 'number') evIn = u.input_tokens;
+            if (typeof u.output_tokens === 'number') evOut = u.output_tokens;
+          }
+          tokensIn += evIn;
+          tokensOut += evOut;
+          costUsd += evCost;
+          const providerId = runtimeProvider.get(e.runtimeId);
+          if (providerId) {
+            const bucket = ensureBucket(providerId);
+            bucket.tokensIn += evIn;
+            bucket.tokensOut += evOut;
+            bucket.costUsd += evCost;
           }
         }
       } catch {
@@ -2211,9 +2277,13 @@ export class LocalToolFacade {
         // Leave authStatus null — the entry below will show "unknown".
       }
       const signedIn = authStatus && authStatus.signedIn === true;
-      // Only anthropic has a quota probe today. Wire it via the same
-      // 90s-cached value we already computed for the top-level `plan`.
+      // Only anthropic has a real plan-quota probe (claude `/usage`).
+      // Codex + Gemini CLIs don't expose plan limits — but Symphony
+      // knows what IT has spent via the per-provider event aggregation
+      // computed above, and that's the honest signal we can show for
+      // those providers (and a useful complement for Claude too).
       const providerQuota = entry.providerId === 'anthropic' ? quota : null;
+      const symphonyUsage = providerUsage.get(entry.providerId) || { tokensIn: 0, tokensOut: 0, costUsd: 0 };
       return {
         providerId: entry.providerId,
         label: entry.label,
@@ -2222,6 +2292,7 @@ export class LocalToolFacade {
         user: authStatus?.user ?? null,
         reason: !signedIn ? (authStatus?.reason ?? null) : null,
         quota: providerQuota,
+        symphonyUsage,
       };
     });
 

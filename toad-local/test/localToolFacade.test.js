@@ -2007,6 +2007,106 @@ test('LocalToolFacade usage_summary surfaces per-provider plan info for anthropi
   const gemini = result.providers.find((p) => p.providerId === 'gemini');
   assert.equal(gemini.signedIn, true);
   assert.equal(gemini.quota, null);
+
+  // Every provider entry includes a symphonyUsage object — empty when
+  // the project has done no work yet (this test's facade has no
+  // runtimes or events), but ALWAYS present so the UI never has to
+  // check for undefined.
+  for (const p of result.providers) {
+    assert.ok(p.symphonyUsage, `${p.providerId} symphonyUsage present`);
+    assert.equal(p.symphonyUsage.tokensIn, 0);
+    assert.equal(p.symphonyUsage.tokensOut, 0);
+    assert.equal(p.symphonyUsage.costUsd, 0);
+  }
+});
+
+test('LocalToolFacade usage_summary attributes Symphony spend to the correct provider via runtime → team config lookup', async () => {
+  // The honest fallback for Codex/Gemini (which lack CLI usage probes)
+  // is to surface what Symphony itself has spent. The aggregation
+  // chain: runtime_events.runtimeId → runtime_instances.team_id →
+  // team_configs.member.providerId. This test exercises it end-to-end
+  // with a mixed team (Claude lead + Codex teammate + Gemini teammate)
+  // and verifies each provider's bucket gets the right turns' tokens.
+  const fakeRuntimeRegistry = {
+    listRuntimes({ teamId } = {}) {
+      const all = [
+        { runtimeId: 'runtime-team-mix-lead',  teamId: 'team-mix', agentId: 'lead',  status: 'running' },
+        { runtimeId: 'runtime-team-mix-dev',   teamId: 'team-mix', agentId: 'dev',   status: 'running' },
+        { runtimeId: 'runtime-team-mix-tester', teamId: 'team-mix', agentId: 'tester', status: 'running' },
+      ];
+      return teamId ? all.filter((r) => r.teamId === teamId) : all;
+    },
+  };
+  const fakeTeamConfigRegistry = {
+    getTeam(teamId) {
+      if (teamId !== 'team-mix') return null;
+      return {
+        teamId: 'team-mix',
+        lead:       { agentId: 'lead',   providerId: 'anthropic' },
+        teammates: [
+          { agentId: 'dev',    providerId: 'openai' },
+          { agentId: 'tester', providerId: 'gemini' },
+        ],
+      };
+    },
+  };
+  const fakeEventLog = {
+    appendEvent() {},
+    listEvents() {
+      return [
+        // Lead (Claude): 100 in, 50 out, $0.01
+        { eventType: 'turn_completed', runtimeId: 'runtime-team-mix-lead',
+          payload: { raw: { type: 'result', usage: { input_tokens: 100, output_tokens: 50 }, total_cost_usd: 0.01 } } },
+        // Dev (Codex): 500 in, 200 out, $0.05
+        { eventType: 'turn_completed', runtimeId: 'runtime-team-mix-dev',
+          payload: { raw: { type: 'result', usage: { input_tokens: 500, output_tokens: 200 }, total_cost_usd: 0.05 } } },
+        // Dev (Codex): another turn, 300 in, 150 out, $0.03
+        { eventType: 'turn_completed', runtimeId: 'runtime-team-mix-dev',
+          payload: { raw: { type: 'result', usage: { input_tokens: 300, output_tokens: 150 }, total_cost_usd: 0.03 } } },
+        // Tester (Gemini): 80 in, 40 out, $0.00 (gemini doesn't report cost)
+        { eventType: 'turn_completed', runtimeId: 'runtime-team-mix-tester',
+          payload: { raw: { type: 'result', usage: { input_tokens: 80, output_tokens: 40 } } } },
+        // Noise: an event with no matching runtime (orphan after team_delete) —
+        // should roll into project totals but NOT into any provider bucket.
+        { eventType: 'turn_completed', runtimeId: 'runtime-orphan-xyz',
+          payload: { raw: { type: 'result', usage: { input_tokens: 999, output_tokens: 999 } } } },
+      ];
+    },
+  };
+
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    runtimeRegistry: fakeRuntimeRegistry,
+    teamConfigRegistry: fakeTeamConfigRegistry,
+    eventLog: fakeEventLog,
+    providerAuthSpawnSync: () => ({ status: 1 }), // not signed in
+    claudeUsageProbe: async () => null,
+  });
+
+  const result = await facade.execute({
+    commandName: COMMANDS.USAGE_SUMMARY,
+    actor: { teamId: 'team-mix', agentId: 'ui-client', role: 'human' },
+    args: {},
+  });
+
+  const byId = Object.fromEntries(result.providers.map((p) => [p.providerId, p]));
+  // Claude lead: one turn, 100 / 50 / $0.01.
+  assert.equal(byId.anthropic.symphonyUsage.tokensIn, 100);
+  assert.equal(byId.anthropic.symphonyUsage.tokensOut, 50);
+  assert.ok(Math.abs(byId.anthropic.symphonyUsage.costUsd - 0.01) < 1e-9);
+  // Codex dev: two turns summed → 800 / 350 / $0.08.
+  assert.equal(byId.openai.symphonyUsage.tokensIn, 800);
+  assert.equal(byId.openai.symphonyUsage.tokensOut, 350);
+  assert.ok(Math.abs(byId.openai.symphonyUsage.costUsd - 0.08) < 1e-9);
+  // Gemini tester: one turn, no cost reported → 80 / 40 / 0.
+  assert.equal(byId.gemini.symphonyUsage.tokensIn, 80);
+  assert.equal(byId.gemini.symphonyUsage.tokensOut, 40);
+  assert.equal(byId.gemini.symphonyUsage.costUsd, 0);
+  // Project-wide totals still include the orphan turn (it was a real
+  // turn that cost real money, just nowhere to attribute it).
+  assert.equal(result.totals.tokensIn, 100 + 800 + 80 + 999);
+  assert.equal(result.totals.tokensOut, 50 + 350 + 40 + 999);
 });
 
 test('LocalToolFacade runtime_list returns the runtimeRegistry rows for the requested team', () => {
