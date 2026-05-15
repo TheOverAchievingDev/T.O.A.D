@@ -1,8 +1,24 @@
-# spec.yaml — Machine-Checkable Project Contract (Schema Design)
+# spec.json — Machine-Checkable Project Contract (Schema Design)
 
-> **Status:** DRAFT for review. No code depends on this yet. Reviewer
-> should push back on shape before any Foundry / L1-check code is
-> written. This is the Day Zero artifact gating all L1 drift work.
+> **Status:** APPROVED 2026-05-15. All 5 open questions ruled (§7).
+> Two additions baked in (§4a contracts boundary, §4b findings
+> reviewed-state tag). Canonical artifact renamed `spec.yaml` →
+> `spec.json` (§0). L1.1 implementation may proceed against this shape.
+
+> **§0 — Canonical artifact is `spec.json`, not `spec.yaml`.**
+> The project has exactly ONE runtime dependency (`@lydell/node-pty`);
+> Node has no built-in YAML parser. Adding `js-yaml` would make the
+> drift system the thing that bloats Symphony's own dependency tree —
+> directly at odds with what L1.1 (dependency drift) exists to catch.
+> The schema's `provenance` block + per-rule `source` fields already
+> carry, *as queryable data*, the audit metadata that YAML comments
+> would have carried as prose — arguably better (a UI can render
+> `source` as a link; it can't render a comment). Shape is byte-for-
+> byte identical between the two formats; this is purely the parse
+> mechanism. One-line revert to YAML if a YAML lib is ever added for
+> other reasons. Everything below that says "spec.yaml" means the
+> file `docs/foundry/spec.json` — the conceptual name "the spec"
+> is unchanged.
 
 **Date:** 2026-05-15
 **Author:** Symphony drift-architecture workstream
@@ -114,30 +130,36 @@ dependencies:
 # web app). Extracted from tech-spec.md "Component Design".
 # A required module that does not exist in source → drift.
 structure:
-  # `kind` tells the check how to verify presence:
-  #   module  → a source module/path must exist
-  #   endpoint→ an HTTP route must be registered (web apps)
-  kind: module
+  # RULING #1: `kind` is PER-ENTRY, not section-level. A project with
+  # both a module surface and HTTP endpoints declares mixed entries in
+  # one list. Per-entry kind tells the check how to verify presence:
+  #   module   → a source module/path must exist
+  #   endpoint → an HTTP route must be registered (web apps)
   required:
-    - name: "win::procs"
+    - kind: module
+      name: "win::procs"
       evidence: "src/win/procs.rs or src/win/mod.rs exposing procs"
-    - name: "sampler"
+    - kind: module
+      name: "sampler"
       evidence: "src/sampler.rs"
-    - name: "heuristics"
+    - kind: module
+      name: "heuristics"
       evidence: "src/heuristics.rs"
-    - name: "safety"
+    - kind: module
+      name: "safety"
       evidence: "src/safety.rs"
-    - name: "killer"
+    - kind: module
+      name: "killer"
       evidence: "src/killer.rs"
-    - name: "settings"
+    - kind: module
+      name: "settings"
       evidence: "src/settings.rs"
-    - name: "ui"
+    - kind: module
+      name: "ui"
       evidence: "src/ui.rs or src/ui/mod.rs"
-  # For web projects this section instead looks like:
-  #   kind: endpoint
-  #   required:
-  #     - { method: POST, path: /api/auth/login }
-  #     - { method: GET,  path: /api/health }
+  # Web entries live in the SAME list, just kind: endpoint:
+  #   - { kind: endpoint, method: POST, path: /api/auth/login }
+  #   - { kind: endpoint, method: GET,  path: /api/health }
 
 # ── contracts ───────────────────────────────────────────────────────
 # Consumed by L1.4 check_contract_drift (last L1 stage).
@@ -268,6 +290,57 @@ Design consequence: each check is a small focused file that does
 `const spec = loadSpec(projectCwd); for (const x of spec.<section>) …`.
 No check needs the whole spec; no check needs an LLM.
 
+### 4a. Contracts boundary — SHAPE, not types (scope-creep fence)
+
+Ruled addition. The `contracts[]` section and its consumer
+`check_contract_drift` (L1.4) verify **structural presence and
+arity**, never type correctness:
+
+- ✅ In scope: "a function/route named `kill` exists", "it takes N
+  arguments / a request body with these required keys", "the declared
+  endpoint POST `/api/x` is registered somewhere".
+- ❌ Out of scope: "the second argument is actually a `&[u32]` and not
+  a `Vec<u32>`", "the response field `token` is a string". That is the
+  **compiler's / type-checker's job**, and `validation_run`
+  (typecheck) already covers it. Drift must not re-implement a type
+  system — it would be slower, wrong more often, and language-specific
+  in a way the rest of the schema deliberately isn't.
+
+The `signature` string in a contract entry is therefore an *opaque
+presence-and-arity anchor*, parsed only enough to extract the
+identifier and argument count. Storing the full signature is for the
+**L3 judge's** human-readable context, not for L1 typechecking. This
+fence is restated in the L1.4 implementation plan so a future
+contributor doesn't "improve" the check into a type validator.
+
+### 4b. Findings carry the spec's reviewed-state
+
+Ruled addition. Every drift finding produced by *any* spec-reading
+check (L1.1–L1.4) includes the spec's review status so downstream
+consumers (UI badges, the L3 escalation gate, operator triage) can
+weight it:
+
+```
+DriftFinding {
+  …existing fields…
+  specReviewed: boolean        // spec.provenance.reviewed
+  specProvenance: {            // compact, for the finding's evidence trail
+    extractedBy: string        // e.g. "foundry_extract_spec@v1"
+    sourceDoc: string          // which foundry doc this assertion came from
+  }
+}
+```
+
+Combined with ruling #4 (unreviewed spec → findings emitted at `info`
+severity), this means: a finding from an unreviewed spec shows up
+immediately (operator gets signal) but is visually + scoring-weighted
+as provisional until the operator flips `provenance.reviewed: true`.
+The `specReviewed` flag is what the UI keys off to render the "spec
+not yet curated" provisional badge, and what `scoreFindings` reads to
+apply the `info`-clamp. Without this tag the clamp would have to
+re-load + re-parse the spec at scoring time — the tag carries the
+decision forward with the finding instead.
+
 ---
 
 ## 5. gate vs observe (per the reviewer's insight)
@@ -344,36 +417,38 @@ deterministically against the YAML forever.
 
 ---
 
-## 7. Open questions for the reviewer
+## 7. Rulings (all 5 confirmed 2026-05-15)
 
-1. **`structure.kind` discriminator** — modeled as `module` (desktop)
-   vs `endpoint` (web). Is a single discriminator enough, or do we
-   need per-entry kinds (a project with both a CLI module surface AND
-   HTTP endpoints)? Leaning: per-entry `kind` on each `required[]`
-   item instead of section-level. Want a ruling before I bake it in.
-2. **`contracts` for non-web** — Rust internal call signatures as
-   opaque strings (`fn kill(pids: &[u32]) -> KillReport`). L1.4 can
-   only string-match these unless we AST-parse the language. Is
-   string-presence ("a fn named `kill` with arity matching exists")
-   sufficient for v1, deferring true signature typechecking? Leaning:
-   yes — presence + arity in v1, full typecheck never (that's the
-   compiler's job, not drift's).
-3. **`forbidden` deps precision** — banning `tokio` by name is brittle
-   (a sanctioned dep might pull it transitively; ADR-002 only bans it
-   as a *direct* architectural choice). Should `forbidden` mean
-   "direct dependency only" and ignore transitive? Leaning: yes,
-   direct-only — transitive bans are unenforceable without a full
-   resolve and produce false positives.
-4. **Provenance review gate** — should L1 checks *refuse to run*
-   against a spec.yaml with `reviewed: false`, or run but down-weight
-   findings to `info` severity until reviewed? Leaning: run at
-   `info` until reviewed, so operators get signal immediately but
-   aren't blocked on the curation step.
-5. **Schema location** — `docs/foundry/spec.yaml` keeps it beside the
-   prose it projects. Alternative: `.toad/spec.yaml` (alongside the
-   DB, out of the agent's normal view). Leaning: `docs/foundry/` —
-   the spec is project documentation, agents *should* be able to read
-   it (it tells them what they're allowed to do).
+1. **`structure.kind` → per-entry, not section-level.** Each item in
+   `structure.required[]` carries its own `kind` (`module` |
+   `endpoint`). A project with both a module surface AND HTTP
+   endpoints declares mixed entries in one list. The section-level
+   `kind` shown in §3's schema block is therefore replaced by a
+   per-entry field:
+   ```
+   structure:
+     required:
+       - { kind: module,   name: "win::procs", evidence: "src/win/procs.rs" }
+       - { kind: endpoint, method: GET, path: /api/health }
+   ```
+2. **`contracts` = presence + arity in v1, full typecheck never.**
+   See §4a — this is now a documented scope fence, not an open
+   question. The compiler/`validation_run` owns type correctness.
+3. **`forbidden` deps = direct dependency only.** Transitive bans are
+   unenforceable without a full dependency resolve and produce false
+   positives (a sanctioned dep legitimately pulling a banned crate
+   transitively is not the team's drift). `check_dependency_drift`
+   parses only the manifest's *direct* dependency table.
+4. **Unreviewed spec → run at `info` severity, don't refuse.**
+   Operators get signal immediately; findings from a spec with
+   `provenance.reviewed: false` are clamped to `info` and badged
+   provisional (see §4b — the `specReviewed` finding tag carries this
+   forward so `scoreFindings` doesn't re-parse the spec).
+5. **Location: `docs/foundry/spec.json`.** Beside the prose it
+   projects. Agents *should* be able to read it — it tells them what
+   they're allowed to do; making the contract visible to the
+   constrained party is correct, not a leak. (File is `.json` per §0;
+   directory is `docs/foundry/`.)
 
 ---
 
