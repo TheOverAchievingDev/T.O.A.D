@@ -26,9 +26,29 @@ function defaultNeedsShell(resolved) {
  * Build the (args, stdinPayload) pair each provider's CLI expects for a
  * one-shot prompt run.
  *
- *   claude  --model <m> --print           [prompt via stdin]
- *   codex   exec --model <m> -            [prompt via stdin; '-' sentinel]
- *   gemini  -m <m> -p "<combined>"        [prompt as positional — see note]
+ * Two transport modes:
+ *
+ * 1. Inline (small prompts): the system prompt + user payload are
+ *    combined and sent via stdin. Works fine for prompts up to ~20KB
+ *    on the local Claude CLI, fails with "Prompt is too long" beyond
+ *    that.
+ *
+ * 2. File (large prompts, briefPath set): we wrote the user payload
+ *    to a markdown file on disk; the spawn stdin only carries a SHORT
+ *    instruction telling the CLI to read that file via its Read tool.
+ *    Total stdin = system prompt + ~200 byte read instruction (~2KB
+ *    typical), well under any CLI limit. The model still consumes the
+ *    file's tokens via Read but transport is unbounded.
+ *
+ * The file mode requires Read tool access:
+ *   - Claude: add --dangerously-skip-permissions so Read auto-fires
+ *     in --print mode (otherwise it'd block waiting for permission).
+ *   - Codex: TUI permissions default permissive in exec mode.
+ *   - Gemini: positional prompt mode + Read tool is enabled by default.
+ *
+ *   claude  --model <m> --print           [inline] / + --dangerously-skip-permissions [file]
+ *   codex   exec --model <m> -            [inline + file both via stdin]
+ *   gemini  -m <m> -p "<combined>"        [inline] / -p "<short>"     [file]
  *
  * Why stdin for claude/codex: a real drift prompt is system + tasks +
  * events + foundry/code-context. That easily hits 10–20KB on a live
@@ -36,16 +56,37 @@ function defaultNeedsShell(resolved) {
  * passed positionally. stdin transport sidesteps that AND the shell:true
  * argv re-splitting hazard on .cmd wrappers (cmd.exe re-parses the args
  * string by whitespace, mangling multi-word prompts).
- *
- * Why gemini stays positional: Gemini CLI's stdin support hasn't been
- * empirically verified in this codebase yet. Drift judge defaults to
- * the team's lead provider (claude/codex/gemini), so leaving gemini's
- * existing behavior intact keeps the change low-risk. Long-prompt
- * Windows users on Gemini will still hit ENAMETOOLONG; that gets
- * addressed when Gemini support gets serious attention (see
- * FUTURE-IDEAS Foundry F.2.5 entry).
  */
-function buildInvocation(cli, model, combined) {
+function buildInvocation(cli, model, systemPrompt, userPayload, briefPath) {
+  // When briefPath is set, we instruct the CLI to read the file via
+  // its Read tool instead of inlining the payload. The stdin stays
+  // tiny so even multi-MB briefs don't trip CLI prompt-length limits.
+  if (briefPath) {
+    const shortInstruction = [
+      systemPrompt,
+      '',
+      `The full team-state brief is in this file: ${briefPath}`,
+      '',
+      'Read it with your Read tool, then output ONLY the JSON per the schema above.',
+      'No prose. No markdown fences. The brief contains tasks, recent events, and the baseline docs you need to compare against.',
+    ].join('\n');
+    if (cli === 'claude') {
+      // skip-permissions so the Read tool fires without an interactive
+      // prompt (which would hang in --print mode). The judge runs in a
+      // dedicated tempdir as cwd, so the blast radius is constrained.
+      return { args: ['--model', model, '--print', '--dangerously-skip-permissions'], stdin: shortInstruction };
+    }
+    if (cli === 'codex') {
+      return { args: ['exec', '--model', model, '-'], stdin: shortInstruction };
+    }
+    if (cli === 'gemini') {
+      return { args: ['-m', model, '-p', shortInstruction], stdin: null };
+    }
+    throw new TypeError(`llmJudge: unsupported cli "${cli}"`);
+  }
+  // Inline transport — original behavior, retained for small payloads
+  // and as a backstop when the brief-file path can't be written.
+  const combined = `${systemPrompt}\n\n${userPayload}`;
   if (cli === 'claude') {
     return { args: ['--model', model, '--print'], stdin: combined };
   }
@@ -144,6 +185,21 @@ export async function llmJudge({
   model,
   systemPrompt,
   userPayload,
+  /**
+   * Optional absolute path to a markdown file containing the team-state
+   * brief. When set, the CLI is instructed to read this file via its
+   * Read tool instead of receiving the payload on stdin. Removes any
+   * prompt-length limit (was tripping at ~20KB with "Prompt is too
+   * long" on real projects). Caller is responsible for writing the
+   * file before the call and cleaning it up after.
+   */
+  briefPath = null,
+  /**
+   * Optional cwd for the CLI process. When briefPath is in use this
+   * should usually be the directory containing the brief — bounds the
+   * agent's blast radius if --dangerously-skip-permissions is set.
+   */
+  cwd = null,
   timeoutMs = 30_000,
   spawnImpl,
   resolveCliImpl,
@@ -160,8 +216,7 @@ export async function llmJudge({
   const resolveCliFn = resolveCliImpl || defaultResolveCli;
   const needsShellFn = needsShellImpl || defaultNeedsShell;
 
-  const combined = `${systemPrompt}\n\n${userPayload}`;
-  const { args, stdin: stdinPayload } = buildInvocation(cli, model, combined);
+  const { args, stdin: stdinPayload } = buildInvocation(cli, model, systemPrompt, userPayload, briefPath);
 
   // resolveCli walks Windows PATHEXT (.cmd/.exe/.bat) since Node's spawn
   // doesn't honor it; passthrough on Unix and as a fallback when nothing
@@ -176,9 +231,16 @@ export async function llmJudge({
       ? ['pipe', 'pipe', 'pipe']
       : ['ignore', 'pipe', 'pipe'];
 
+    const spawnOpts = { stdio, shell };
+    if (typeof cwd === 'string' && cwd.length > 0) {
+      // Bounds the agent's filesystem reach when running with
+      // --dangerously-skip-permissions in file-input mode. Without
+      // cwd, the spawn inherits the sidecar's working directory.
+      spawnOpts.cwd = cwd;
+    }
     let proc;
     try {
-      proc = spawnFn(resolved, args, { stdio, shell });
+      proc = spawnFn(resolved, args, spawnOpts);
     } catch (err) {
       reject(new Error(`llmJudge: spawn_failed: ${err && err.message ? err.message : err}`));
       return;

@@ -1,8 +1,75 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { stableFindingId } from './_findingId.js';
 import { llmJudge as defaultLlmJudge } from '../llm/llmJudge.js';
 import { resolveProvider } from '../llm/providerResolver.js';
 import { buildTier1SystemPrompt } from '../llm/prompts/tier1.js';
 import { buildTier2SystemPrompt } from '../llm/prompts/tier2.js';
+
+/**
+ * Trim the user payload to a soft size cap so the brief.md never grows
+ * unbounded on long-lived projects (50 runtime_events × 5KB each =
+ * 250KB which is fine for transport via file but burns tokens on every
+ * drift run for marginal signal). Strategy: if the rendered payload is
+ * over the budget, scan back through the latest event lines and snip
+ * the oldest until we fit.
+ *
+ * 80 KB ≈ 20K tokens — generous compared to what the judge actually
+ * needs (current tasks + a handful of recent events + baseline docs),
+ * still well under any model context window. The trim happens AFTER
+ * buildUserPayload renders the markdown, so we don't have to know the
+ * structure — we just walk lines from the end of the recent-events
+ * section, dropping eldest-first.
+ */
+const PAYLOAD_BUDGET_BYTES = 80 * 1024;
+
+function trimPayloadIfOversize(payload) {
+  if (typeof payload !== 'string') return '';
+  if (Buffer.byteLength(payload, 'utf-8') <= PAYLOAD_BUDGET_BYTES) return payload;
+  // Drop runtime-event lines first (`## Recent runtime events`) — those
+  // are the bloat on real projects (each turn_completed frame is fat).
+  // Then drop task-event lines. Then drop foundry-doc tails. The
+  // section headers + tasks + at least the latest few events survive.
+  const lines = payload.split('\n');
+  const sectionStarts = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i].startsWith('## Recent runtime events')) sectionStarts.push({ kind: 'runtime', i });
+    else if (lines[i].startsWith('## Recent task events')) sectionStarts.push({ kind: 'task', i });
+  }
+  for (const start of sectionStarts) {
+    // Drop oldest event lines (closest after the header) until we fit
+    // or the section is empty. Event lines begin with `- ` (markdown
+    // bullet); the header line and blank lines stay.
+    let cursor = start.i + 1;
+    while (Buffer.byteLength(lines.join('\n'), 'utf-8') > PAYLOAD_BUDGET_BYTES) {
+      if (cursor >= lines.length || !lines[cursor].startsWith('- ')) break;
+      lines[cursor] = '';
+      cursor += 1;
+    }
+    if (Buffer.byteLength(lines.join('\n'), 'utf-8') <= PAYLOAD_BUDGET_BYTES) break;
+  }
+  let trimmed = lines.filter((l, idx) => l !== '' || idx === 0 || lines[idx - 1] !== '').join('\n');
+  if (Buffer.byteLength(trimmed, 'utf-8') > PAYLOAD_BUDGET_BYTES) {
+    // Hard cap: truncate to the budget with an explicit marker so the
+    // judge knows context was elided (better than mysterious truncation).
+    const buf = Buffer.from(trimmed, 'utf-8').slice(0, PAYLOAD_BUDGET_BYTES - 128);
+    trimmed = `${buf.toString('utf-8')}\n\n[... truncated to fit ${PAYLOAD_BUDGET_BYTES} byte budget ...]`;
+  }
+  return trimmed;
+}
+
+/**
+ * Write the brief to a fresh tempdir and return the dir + brief path.
+ * The judge's CLI process gets this dir as its cwd so any unintended
+ * filesystem access is bounded to the brief itself.
+ */
+function writeBriefToTempDir(payload) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'symphony-drift-'));
+  const briefPath = path.join(dir, 'brief.md');
+  fs.writeFileSync(briefPath, payload, 'utf-8');
+  return { dir, briefPath };
+}
 
 /**
  * LLM semantic check. Async — calls a provider CLI in one-shot mode.
@@ -44,7 +111,27 @@ export async function checkLlmSemantic({
   const systemPrompt = tier === 1
     ? buildTier1SystemPrompt(snapshot)
     : buildTier2SystemPrompt(snapshot);
-  const userPayload = buildUserPayload(snapshot, tier === 2 ? tier1Findings : null);
+  const fullPayload = buildUserPayload(snapshot, tier === 2 ? tier1Findings : null);
+  const userPayload = trimPayloadIfOversize(fullPayload);
+
+  // File-based transport: write the trimmed payload to a tempdir and
+  // tell the CLI to Read it. Sidesteps the "Prompt is too long" error
+  // we used to hit when the user payload exceeded the CLI's stdin
+  // prompt limit (Claude tripped this at ~20KB on real projects).
+  // Tempdir is the judge's cwd so blast radius is bounded if
+  // --dangerously-skip-permissions enables the Read tool.
+  let briefDir = null;
+  let briefPath = null;
+  try {
+    const written = writeBriefToTempDir(userPayload);
+    briefDir = written.dir;
+    briefPath = written.briefPath;
+  } catch (err) {
+    // Couldn't write the brief — fall back to inline stdin. The
+    // judge may still hit "Prompt is too long" but at least we try.
+    // eslint-disable-next-line no-console
+    console.warn('[drift] could not write brief file, falling back to inline transport:', err?.message || err);
+  }
 
   let result;
   try {
@@ -53,11 +140,20 @@ export async function checkLlmSemantic({
       model: provider.model,
       systemPrompt,
       userPayload,
+      briefPath,
+      cwd: briefDir,
       timeoutMs: 30_000,
     });
   } catch (err) {
     return [makeMetaFinding(snapshot.teamId, checkName, 'judge_failed',
       err && err.message ? err.message : String(err))];
+  } finally {
+    // Best-effort cleanup. The tempdir is small (a few KB to ~80KB)
+    // so leaving it on a failure path isn't a problem, but tidying is
+    // polite and avoids cluttering /tmp on long-running operators.
+    if (briefDir) {
+      try { fs.rmSync(briefDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
   }
 
   // Stamp + cap-severity-at-high for tier 1.

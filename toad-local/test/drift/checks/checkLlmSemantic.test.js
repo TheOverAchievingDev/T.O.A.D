@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { checkLlmSemantic, buildUserPayload } from '../../../src/drift/checks/checkLlmSemantic.js';
 import { buildTier1SystemPrompt } from '../../../src/drift/llm/prompts/tier1.js';
 import { buildTier2SystemPrompt } from '../../../src/drift/llm/prompts/tier2.js';
@@ -203,4 +204,113 @@ test('checkLlmSemantic@tier1 caps severity at high (drops critical)', async () =
     tier: 1, llmJudgeImpl: fakeJudge,
   });
   assert.equal(findings[0].severity, 'high', 'tier 1 caps at high');
+});
+
+test('checkLlmSemantic writes a brief markdown file, passes its path to the judge, then cleans up', async () => {
+  // The "Prompt is too long" CLI failure from 2026-05-15 motivated
+  // moving the user payload to a file on disk. The judge gets a short
+  // stdin instruction that names the brief path; the CLI's Read tool
+  // loads the actual content. Tempdir is cleaned up after the call so
+  // /tmp doesn't accumulate cruft on long-running operators.
+  let captured = null;
+  let observedBriefPathExists = false;
+  let observedBriefContent = null;
+  const fakeJudge = async (args) => {
+    captured = args;
+    if (typeof args.briefPath === 'string' && args.briefPath.length > 0) {
+      try {
+        observedBriefPathExists = fs.existsSync(args.briefPath);
+        observedBriefContent = observedBriefPathExists
+          ? fs.readFileSync(args.briefPath, 'utf-8')
+          : null;
+      } catch {
+        observedBriefPathExists = false;
+      }
+    }
+    return { findings: [] };
+  };
+
+  await checkLlmSemantic({
+    snapshot: BASE_SNAPSHOT, settings: NO_OVERRIDES,
+    tier: 1, llmJudgeImpl: fakeJudge,
+  });
+
+  // Judge was called with a brief path + cwd matching its tempdir.
+  assert.ok(captured, 'judge should have been called');
+  assert.ok(typeof captured.briefPath === 'string' && captured.briefPath.length > 0,
+    'briefPath must be a non-empty string');
+  assert.ok(captured.briefPath.endsWith('brief.md'),
+    `briefPath should end with brief.md, got ${captured.briefPath}`);
+  assert.ok(typeof captured.cwd === 'string' && captured.cwd.length > 0,
+    'cwd must be a non-empty string');
+  // The brief file existed at the moment the judge was called, and
+  // its content was the rendered user payload (contains the team id).
+  assert.equal(observedBriefPathExists, true, 'brief file must exist when judge runs');
+  assert.match(observedBriefContent, new RegExp(`Team:\\s*${BASE_SNAPSHOT.teamId}`));
+
+  // After the call returned, the tempdir is gone (post-call cleanup).
+  assert.equal(fs.existsSync(captured.briefPath), false,
+    'brief file should be cleaned up after judge returns');
+  assert.equal(fs.existsSync(captured.cwd), false,
+    'brief tempdir should be cleaned up after judge returns');
+});
+
+test('checkLlmSemantic cleans up the brief tempdir even when the judge throws', async () => {
+  // If the judge fails (model rejected, network error, etc.) the
+  // finally-block must still tidy. Otherwise we'd leak a tempdir per
+  // failed drift run.
+  let observedBriefPath = null;
+  let observedCwd = null;
+  const fakeJudge = async (args) => {
+    observedBriefPath = args.briefPath;
+    observedCwd = args.cwd;
+    throw new Error('simulated judge failure');
+  };
+  const findings = await checkLlmSemantic({
+    snapshot: BASE_SNAPSHOT, settings: NO_OVERRIDES,
+    tier: 1, llmJudgeImpl: fakeJudge,
+  });
+  // Failure path emits a meta-finding (existing behavior).
+  assert.equal(findings.length, 1);
+  assert.match(findings[0].title, /LLM judge failed/);
+  // But the tempdir is still cleaned up.
+  assert.equal(fs.existsSync(observedBriefPath), false,
+    'brief file must be cleaned up even on judge failure');
+  assert.equal(fs.existsSync(observedCwd), false,
+    'brief tempdir must be cleaned up even on judge failure');
+});
+
+test('checkLlmSemantic trims an oversized payload before writing the brief (size budget)', async () => {
+  // A long-running team can accumulate enough runtime events that
+  // even the file-based brief becomes huge (50 fat turn_completed
+  // frames at 5KB each = 250KB). The judge needs context but not
+  // every event ever — we cap the brief at ~80KB so token cost
+  // stays bounded.
+  // Build a snapshot with absurd numbers of runtime events.
+  const bloatedSnapshot = {
+    ...BASE_SNAPSHOT,
+    runtimeEvents: Array.from({ length: 500 }, (_, i) => ({
+      createdAt: `2026-05-15T10:${String(i % 60).padStart(2, '0')}:00Z`,
+      eventType: 'turn_completed',
+      payload: { raw: { type: 'result', usage: { input_tokens: 5000, output_tokens: 5000 }, junk: 'X'.repeat(2000) } },
+    })),
+  };
+  let observedBriefContent = null;
+  const fakeJudge = async (args) => {
+    observedBriefContent = fs.readFileSync(args.briefPath, 'utf-8');
+    return { findings: [] };
+  };
+  await checkLlmSemantic({
+    snapshot: bloatedSnapshot, settings: NO_OVERRIDES,
+    tier: 1, llmJudgeImpl: fakeJudge,
+  });
+  // Brief should be capped well under the raw 500-event size.
+  const briefBytes = Buffer.byteLength(observedBriefContent, 'utf-8');
+  assert.ok(briefBytes < 100 * 1024,
+    `brief should be trimmed under 100KB, got ${briefBytes} bytes`);
+  // And the trim left enough room for the structural sections to
+  // survive — tasks header and a runtime-events header are both still
+  // present even though most event lines are gone.
+  assert.match(observedBriefContent, /## Tasks/);
+  assert.match(observedBriefContent, /## Recent runtime events/);
 });

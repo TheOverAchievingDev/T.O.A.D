@@ -341,3 +341,99 @@ test('llmJudge truncates very long stdout-fallback error detail to keep finding 
     },
   );
 });
+
+test('llmJudge file-input mode composes a short stdin referencing the brief path (not the full inline payload)', async () => {
+  // Regression: real-world drift runs hit "Prompt is too long" when
+  // the user payload (recent runtime events + foundry docs) exceeded
+  // the Claude CLI's stdin prompt limit (~20KB). The file-input mode
+  // sidesteps this — only a short read instruction goes via stdin.
+  const stdout = JSON.stringify({ findings: [] });
+  const { fn, calls } = recordingSpawn(stdout);
+  const longPayload = 'A'.repeat(100_000); // 100KB — would blow the CLI limit inline.
+  await llmJudge({
+    cli: 'claude',
+    model: 'haiku',
+    systemPrompt: 'system schema text',
+    userPayload: longPayload,
+    briefPath: 'C:\\Users\\op\\AppData\\Local\\Temp\\symphony-drift-abc\\brief.md',
+    cwd: 'C:\\Users\\op\\AppData\\Local\\Temp\\symphony-drift-abc',
+    timeoutMs: 5000,
+    spawnImpl: fn,
+    resolveCliImpl: () => 'claude.exe',
+    needsShellImpl: () => false,
+  });
+  const stdinText = calls[0].stdinChunks.join('');
+  // The 100KB user payload must NOT appear inline anywhere.
+  assert.ok(!stdinText.includes(longPayload), 'inline payload must not be sent via stdin in file mode');
+  // The system prompt + the read instruction DO appear.
+  assert.match(stdinText, /system schema text/);
+  assert.match(stdinText, /Read it with your Read tool/);
+  assert.match(stdinText, /brief\.md/);
+  assert.ok(stdinText.length < 5000, `short instruction stdin should be small, got ${stdinText.length} chars`);
+});
+
+test('llmJudge file-input mode adds --dangerously-skip-permissions for claude (Read tool would hang in --print otherwise)', async () => {
+  const stdout = JSON.stringify({ findings: [] });
+  const { fn, calls } = recordingSpawn(stdout);
+  await llmJudge({
+    cli: 'claude', model: 'haiku',
+    systemPrompt: 's', userPayload: 'u',
+    briefPath: '/tmp/x/brief.md', cwd: '/tmp/x',
+    timeoutMs: 5000,
+    spawnImpl: fn,
+    resolveCliImpl: () => 'claude',
+    needsShellImpl: () => false,
+  });
+  assert.ok(
+    calls[0].args.includes('--dangerously-skip-permissions'),
+    'claude file-input mode must enable skip-permissions so Read auto-fires',
+  );
+});
+
+test('llmJudge inline mode does NOT add --dangerously-skip-permissions (no Read tool needed)', async () => {
+  const stdout = JSON.stringify({ findings: [] });
+  const { fn, calls } = recordingSpawn(stdout);
+  await llmJudge({
+    cli: 'claude', model: 'haiku',
+    systemPrompt: 's', userPayload: 'u',
+    // no briefPath → inline transport
+    timeoutMs: 5000,
+    spawnImpl: fn,
+    resolveCliImpl: () => 'claude',
+    needsShellImpl: () => false,
+  });
+  assert.ok(
+    !calls[0].args.includes('--dangerously-skip-permissions'),
+    'inline mode should not need skip-permissions — payload is in stdin, no Read tool used',
+  );
+});
+
+test('llmJudge passes cwd to spawn when supplied (bounds the file-input agent\'s filesystem reach)', async () => {
+  const stdout = JSON.stringify({ findings: [] });
+  const { fn, calls } = recordingSpawn(stdout);
+  await llmJudge({
+    cli: 'claude', model: 'haiku',
+    systemPrompt: 's', userPayload: 'u',
+    briefPath: '/sym/drift-x/brief.md',
+    cwd: '/sym/drift-x',
+    timeoutMs: 5000,
+    spawnImpl: fn,
+    resolveCliImpl: () => 'claude',
+    needsShellImpl: () => false,
+  });
+  assert.equal(calls[0].opts.cwd, '/sym/drift-x');
+});
+
+test('llmJudge omits cwd from spawn options when not supplied (inherits parent cwd as before)', async () => {
+  const stdout = JSON.stringify({ findings: [] });
+  const { fn, calls } = recordingSpawn(stdout);
+  await llmJudge({
+    cli: 'claude', model: 'haiku',
+    systemPrompt: 's', userPayload: 'u',
+    timeoutMs: 5000,
+    spawnImpl: fn,
+    resolveCliImpl: () => 'claude',
+    needsShellImpl: () => false,
+  });
+  assert.equal(calls[0].opts.cwd, undefined);
+});
