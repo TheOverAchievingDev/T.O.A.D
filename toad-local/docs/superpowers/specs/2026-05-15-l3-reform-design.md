@@ -58,6 +58,14 @@ the trigger is "Both", ruled below):
   touches spec-relevant surface, L1 silent) plugged into the gate's
   already-wired `OR` slot. Its own dogfood + commit. The fuzzy
   heuristic gets isolated attention with the mechanism already proven.
+  **Concretely (clarified in spec review):** Slice A ships a literal
+  stub — `silentButSignificant(...) { return false; }` in `l3Gate.js`,
+  *called* by step-4 of the predicate so the gate structure is fully
+  wired. Slice B replaces only that function's **body** (+ its unit
+  tests + dogfood). It is the former (stub present + invoked), NOT the
+  latter (call absent, added in B) — so Slice B's blast radius is
+  exactly that one function body and its tests, nothing else in the
+  gate or engine moves.
 
 This document specifies **Slice A** in full; Slice B is scoped here
 (§3 predicate slot) and gets its own design pass when A ships.
@@ -98,17 +106,23 @@ comment states this explicitly: do NOT reorder hashes-first to
    done}` → never (drops `testing` and every other non-submission
    status — see §9).
 3. `trigger==='manual'` → eligible (operator intent).
-4. **Ambiguity gate** (must hold regardless of which transition
-   fired): any L1 finding *for the boundary task* carries
+4. **Ambiguity gate — holds regardless of which transition fired,
+   INCLUDING manual.** Any L1 finding *for the boundary task* carries
    `needsSemanticReview` **OR** silent-but-significant (Slice B slot —
-   returns `false` in Slice A). Not ambiguous → skip. (A bare `review`
+   returns `false` in Slice A). **Not ambiguous → skip, even on
+   manual.** Manual's "eligible" in step 3 means only "passed the
+   periodic/status gates" — it does NOT bypass ambiguity. The operator
+   clicking Run-Drift is saying "judge it if there's something to
+   judge," not "judge regardless": with no ambiguity there is
+   literally nothing for L3 to adjudicate, and running it would burn
+   capacity producing a clean verdict on no signal. (A bare `review`
    transition with confident L1 either-direction does **not** invoke
    L3.)
 5. **Cache gate**: compute `key = sha1(diffHash + spec.provenanceHash
-   + l1FindingSetHash)`. If `trigger!=='manual'` and the per-team
-   cache holds a verdict for `key` → return the **cached verdict** (no
-   L3 call). Manual bypasses. Else → **invoke L3**, then store the
-   resulting verdict under `key`.
+   + l1FindingSetHash + l3PromptHash)`. If `trigger!=='manual'` and
+   the per-team cache holds a verdict for `key` → return the **cached
+   verdict** (no L3 call). Manual bypasses. Else → **invoke L3**, then
+   store the resulting verdict under `key`.
 
 The verdict cache is per-team in-memory, same lifetime/pattern as the
 engine's existing `#tier2Cooldown`/`#lastRunAt` maps (lost on restart
@@ -136,6 +150,17 @@ correctness is the kind of thing that goes quietly wrong)
   ruleId, needsSemanticReview }` per finding. Finding-id / timestamp /
   runId are **excluded** (they vary across runs that produce the same
   findings → would make the hash spuriously unstable).
+- **`l3PromptHash`** = sha1 of the §4.2 scoped-adjudicator prompt
+  template string (the exported constant, pre-interpolation). A cached
+  verdict answers "would re-running L3 produce the same answer?"; if
+  the prompt itself changes, every prior verdict is stale and may not
+  reflect what the new prompt would produce — exactly the same
+  invalidation rationale as `spec.provenanceHash` (a contract change
+  must invalidate). Including it means a prompt edit auto-invalidates
+  the cache without relying on a process restart (a hot-reload or a
+  deploy-without-restart would otherwise serve stale verdicts). Cheap
+  — one extra hash component; correct — closes a real staleness hole
+  the "lost on restart" property does not fully cover.
 
 ### 3.4 Circuit breaker (belt-and-suspenders)
 
@@ -149,7 +174,12 @@ ambiguity predicate that flags everything.
 - Per-team rolling cap, **config-tunable**:
   `settings.drift.l3RateCapPerHour`, **default 30** (well above the
   ~25–35/day busy-team projection — never fires in normal operation).
-  In-memory, same map pattern as the cooldowns.
+  In-memory, same map pattern as the cooldowns. `settings.drift.*` is
+  an **existing** namespace (driftEngine `DEFAULT_SETTINGS.drift`
+  already holds `escalationThreshold`, `periodicCooldownMs`,
+  `tier{1,2}ModelOverride`, etc.) — `l3RateCapPerHour` is a new key
+  added to that existing tree with a default in `DEFAULT_SETTINGS`,
+  not a new namespace.
 - When exceeded, L3 is skipped and a **observer-severity** finding is
   emitted ("L3 rate cap hit — investigate the drift system"). Observer
   (not info) because the cap firing in normal operation **indicates a
@@ -174,8 +204,16 @@ together, driven by the flagged-finding branch. Two slices total.
 New `src/drift/llm/buildL3Packet.js`. Replaces `buildUserPayload`'s
 24 KB whole-team brief with a scoped per-task packet:
 - The boundary task's diff **only** —
-  `snapshot.diffsByTask[boundaryTaskId]` (changed files + diff body;
-  the existing per-file diff cap reused).
+  `snapshot.diffsByTask[boundaryTaskId]` (changed files + diff body).
+  The existing diff cap is **per-task-diff-body, not per-file**:
+  `checkLlmSemantic.js`'s `buildUserPayload` caps a task's *entire*
+  diff body at `1500` chars (`const cap = 1500`). For a single-task
+  packet that is inherently small (the 50-files-×-1500 per-file
+  reading the spec review worried about does not apply — it is 1500
+  chars *total* for the task's diff). Worst-case packet math:
+  `1500` (diff) + whole `spec.json` (a few KB; Reaper's is ~4 KB) +
+  the L1 signal (sub-KB) ≈ **well under 8 KB** → "kilobyte-scale" is
+  provable, not asserted.
 - The **whole `spec.json`** — deliberately. It is the compact
   canonical machine contract (dependencies / structure / contracts /
   constitution / provenance — typically a few KB). Including it whole
@@ -199,6 +237,25 @@ Result is kilobyte-scale. Still written to the temp brief file and
 read via the **unchanged** HOME-isolated `llmJudge` spawn — the
 prompt-cap problem is now solved *at the source* (tiny payload), with
 HOME isolation retained as defense-in-depth.
+
+**Enforced packet budget (recommended-change adopted — enforced beats
+asserted).** `buildL3Packet` enforces a hard budget
+`L3_PACKET_BUDGET_BYTES` (config-tunable `settings.drift.*`, default
+**32 KB** — generous vs the ~8 KB worst case, so it only trips on a
+genuinely pathological task). If the assembled packet exceeds the
+budget, `buildL3Packet` does **not** truncate-and-send (truncation is
+exactly what recreated the original prompt-cap failure mode).
+Instead it returns an **over-budget signal**; `l3Gate`/engine skips
+the L3 spawn and emits one honest non-blocking `info` meta-finding
+("L3 packet over budget for task `<id>` (`<N>` KB, `<F>` files
+changed) — semantic adjudication skipped; deterministic L1 findings
+still apply"). This forces a conscious future decision (raise the
+budget? relevance-truncate? split the task?) rather than silently
+producing a payload that re-incurs the cascade. A `buildL3Packet`
+unit test asserts: a normal task → under budget; a synthetic
+many-files/huge-diff task → over-budget signal (never a truncated
+payload). The budget is thus enforced in code + test, not merely
+documented.
 
 ### 4.2 Scoped adjudicator prompt
 
@@ -231,9 +288,19 @@ resolve attempt.
   when escalated), never the intermediate.
 - Findings carry which model produced them.
 - Severity cap: Haiku-only findings capped at `high`; `critical` only
-  from the Sonnet escalation (preserves the existing
-  tier-1-can't-emit-critical invariant — a small/cheap model must not
-  unilaterally produce the highest-severity verdict).
+  from the Sonnet escalation — a small/cheap model must not
+  unilaterally produce the highest-severity verdict. **This invariant
+  is INTRODUCED, not preserved.** Verified during spec review: the
+  cap currently lives *only* at `checkLlmSemantic.js:257`
+  (`severity: tier === 1 && f.severity === 'critical' ? 'high' :
+  f.severity`) — exactly the code Approach 1 deletes/rewrites. No
+  independent registry-side or `llmJudge`-side enforcement exists
+  (`llmJudge.validateFinding` only range-checks severity, it does not
+  cap by tier). So Slice A must **re-implement** the cap as an
+  explicit, tested enforcement point inside `l3Judge` (cap any
+  Haiku-tier finding's `critical`→`high` before returning; allow
+  `critical` only on the `tier:'sonnet-escalated'` path). The §7
+  `l3Judge` unit ("Haiku severity capped at `high`") is that test.
 
 ### 4.4 Engine integration
 
@@ -318,6 +385,17 @@ the reviewer reads L3's verdict alongside their own review rather
 than discovering it at merge_ready. Prose-only, no code coupling.
 Lands in the same slice as the trigger work so the value is realized
 atomically (the trigger doesn't fire into a void).
+
+**Interface-contract note (not code coupling, but real):** the lead's
+bundling renders specific L3-finding fields in human-readable form
+(`title`, `expected`, `actual`, `recommendedCorrection`, and the
+`confidence` signal). This is a soft prose↔schema contract: if the L3
+finding schema evolves (Slice B adds fields, or a future iteration
+renames `confidence`), this prompt section must be reviewed so the
+lead keeps rendering the right fields and does not surface garbage.
+The §7 finding-schema snapshot test is the tripwire — a schema change
+breaks that snapshot, which is the signal to re-review this prompt
+section. Stated so a future contributor knows the dependency exists.
 
 ## 7. Testing (TDD, RED→GREEN)
 
