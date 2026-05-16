@@ -18,7 +18,10 @@ import { recordSpawn, removeSpawn } from './spawnLedger.js';
  *   - the command already contains a path separator
  *   - nothing matched (let the OS produce a real ENOENT)
  */
-function resolveWindowsCommand(command) {
+// Exported so callers that need a Windows-safe spawn (e.g. refreshOnce
+// wiring in LocalToadRuntime) can resolve `claude` → `claude.cmd` without
+// duplicating the PATH walk. Pure helper — no side effects, no behavior change.
+export function resolveWindowsCommand(command) {
   if (process.platform !== 'win32') return command;
   if (typeof command !== 'string' || command.length === 0) return command;
   if (command.includes('\\') || command.includes('/')) return command;

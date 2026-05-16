@@ -6,7 +6,7 @@ import { LocalReadModel } from '../read/LocalReadModel.js';
 import { CompactionHandler } from '../runtime/CompactionHandler.js';
 import { RuntimeEventBus } from '../runtime/RuntimeEventBus.js';
 import { RuntimeEventIngestor } from '../runtime/RuntimeEventIngestor.js';
-import { RuntimeSupervisor } from '../runtime/RuntimeSupervisor.js';
+import { RuntimeSupervisor, resolveWindowsCommand } from '../runtime/RuntimeSupervisor.js';
 import { SqliteRuntimeEventLog } from '../runtime/sqliteRuntimeEventLog.js';
 import { SqliteRuntimeRegistry } from '../runtime/sqliteRuntimeRegistry.js';
 import { SqliteTaskBoard } from '../task/sqliteTaskBoard.js';
@@ -27,9 +27,22 @@ import { RiskPolicyStore } from '../policy/riskPolicyStore.js';
 import { SettingsStore } from '../settings/settingsStore.js';
 import { StuckRuntimeMonitor } from '../diagnostics/stuckRuntimeMonitor.js';
 import { SqliteFoundryStore } from '../foundry/sqliteFoundryStore.js';
+import { claudeAuthPreflight, defaultRefreshOnce } from '../runtime/authPreflight/index.js';
+import { readClaudeCredsStatusForPreflight } from '../providers/providerAuth.js';
+import { spawn as nodeSpawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
+/**
+ * Returns true when `command` names the Claude CLI binary (bare name or full
+ * path), tolerating Windows `.cmd`/`.exe`/`.bat` extensions.
+ */
+function isClaudeCommand(command) {
+  if (typeof command !== 'string' || command.length === 0) return false;
+  const base = command.split(/[\\/]/).pop().toLowerCase();
+  return base === 'claude' || base === 'claude.cmd' || base === 'claude.exe' || base === 'claude.bat';
+}
 
 /** Global foundry DB lives in the user's home directory, NOT inside any
  *  project. Foundry chat sessions need to outlive `switch_project` calls
@@ -42,6 +55,12 @@ function defaultFoundryDbPath() {
 }
 
 export class LocalToadRuntime {
+  // Auth-preflight private state (T7). Declared here so the JS engine
+  // recognises them as private fields before the constructor body runs.
+  #authPreflightEnabled = false;
+  #authPreflightMutex = Promise.resolve();
+  #authRelaunchState = new Map();
+
   constructor({
     broker = null,
     taskBoard = null,
@@ -86,6 +105,16 @@ export class LocalToadRuntime {
     githubClientId = null,
     providerAuthSpawn = null,
     providerAuthSpawnSync = null,
+    // Auth-preflight injectable deps (T7). Real defaults wired lazily
+    // (see #resolveRefreshOnce) so hermetic tests never touch real I/O.
+    // The creds reader is readClaudeCredsStatusForPreflight (NOT raw
+    // getAuthStatus): it normalizes getAuthStatus's tokenStatus-less
+    // early-returns (ENOENT / unreadable / unparseable creds) to
+    // UNRECOVERABLE so the pure core fails closed instead of pointlessly
+    // spawning `claude --print` and proceeding+warn on a doomed state.
+    claudeAuthPreflightImpl = claudeAuthPreflight,
+    refreshOnceImpl = null,
+    readClaudeCredsStatus = () => readClaudeCredsStatusForPreflight(),
     stuckMonitor = null,
     stuckMonitorIntervalMs = parseIntervalEnv(process.env.TOAD_STUCK_MONITOR_INTERVAL_MS),
     stuckMonitorThresholdMs = parseIntervalEnv(process.env.TOAD_STUCK_MONITOR_THRESHOLD_MS),
@@ -105,6 +134,35 @@ export class LocalToadRuntime {
     this.adapters = adapters;
     this.projectCwd = projectCwd;
     this.installDir = installDir;
+    // Auth-preflight deps (T7). Stored here so tests can inject fakes;
+    // the real defaults are never constructed in hermetic test suites.
+    this.claudeAuthPreflightImpl = claudeAuthPreflightImpl;
+    this.refreshOnceImpl = refreshOnceImpl;
+    this.readClaudeCredsStatus = readClaudeCredsStatus;
+    // CONTROLLER-RATIFIED (T7 grounding, §8d — hermetic-test +
+    // inert/over-gate epicenter). `#authPreflightEnabled` is true iff
+    // projectCwd is a non-empty string — the VERBATIM enable idiom
+    // every other production-only collaborator in this file already
+    // uses (worktreeManager / mergeChecker / mergeIntegrator /
+    // riskPolicy / remoteMergePolicy / riskPolicyStore). Rationale:
+    //   • Non-inert in production — EVERY real agent-launch path sets
+    //     projectCwd: scripts/dev-api-server.mjs ({projectCwd,
+    //     installDir}) and src/mcp/stdioRuntime.js createMcpRuntimeFromEnv
+    //     ({projectCwd: TOAD_PROJECT_CWD}). Spec §4.3's "run preflight
+    //     for every anthropic/claude launch" is fully preserved (in
+    //     production projectCwd is always set) — spec-faithful.
+    //   • Hermetic for the existing suite — test/localToadRuntime.test.js
+    //     constructs WITHOUT projectCwd and launches command:'claude'
+    //     12/12 times; this gate makes it a true no-op (no real
+    //     getAuthStatus / no real `claude --print` in unit tests).
+    this.#authPreflightEnabled = typeof projectCwd === 'string' && projectCwd.length > 0;
+    // Serialize all Claude preflights in-process: concurrent team
+    // launches must not race `claude --print` on the single
+    // ~/.claude/.credentials.json (partial read / duplicate refresh).
+    // The second waiter re-reads status first, so a burst refreshes
+    // at most once. (Design §4.3.)
+    this.#authPreflightMutex = Promise.resolve();
+    this.#authRelaunchState = new Map();
     this.dbPath = dbPath;
     this.sideEffectRetentionDays = sideEffectRetentionDays;
     this.supervisor =
@@ -447,6 +505,47 @@ export class LocalToadRuntime {
       }),
     };
     const launchInput = this.#withToadMcpConfig(scrubbedInput);
+    if (this.#authPreflightEnabled && isClaudeCommand(input && input.command)) {
+      // CONTROLLER-RATIFIED (T7 grounding, §8d — hermetic-test +
+      // inert/over-gate epicenter). `#authPreflightEnabled` is true iff
+      // projectCwd is a non-empty string — the VERBATIM enable idiom
+      // every other production-only collaborator in this file already
+      // uses (worktreeManager / mergeChecker / mergeIntegrator /
+      // riskPolicy / remoteMergePolicy / riskPolicyStore). Rationale:
+      //   • Non-inert in production — EVERY real agent-launch path sets
+      //     projectCwd: scripts/dev-api-server.mjs ({projectCwd,
+      //     installDir}) and src/mcp/stdioRuntime.js createMcpRuntimeFromEnv
+      //     ({projectCwd: TOAD_PROJECT_CWD}). Spec §4.3's "run preflight
+      //     for every anthropic/claude launch" is fully preserved (in
+      //     production projectCwd is always set) — spec-faithful.
+      //   • Hermetic for the existing suite — test/localToadRuntime.test.js
+      //     constructs WITHOUT projectCwd and launches command:'claude'
+      //     12/12 times; this gate makes it a true no-op (no real
+      //     getAuthStatus / no real `claude --print` in unit tests).
+      // Serialize all Claude preflights in-process: concurrent team
+      // launches must not race `claude --print` on the single
+      // ~/.claude/.credentials.json (partial read / duplicate refresh).
+      // The second waiter re-reads status first, so a burst refreshes
+      // at most once. (Design §4.3.)
+      const credsPath = '~/.claude/.credentials.json';
+      const runPreflight = async () => this.claudeAuthPreflightImpl({
+        readCredsStatus: this.readClaudeCredsStatus,
+        refreshOnce: this.#resolveRefreshOnce(),
+        now: () => Date.now(),
+        relaunchState: this.#authRelaunchState,
+        credsPath,
+      });
+      const gate = this.#authPreflightMutex.then(runPreflight, runPreflight);
+      // Keep the chain alive regardless of this gate's outcome.
+      this.#authPreflightMutex = gate.then(() => {}, () => {});
+      const verdict = await gate;
+      if (verdict.decision === 'block') {
+        throw new Error(verdict.reason);
+      }
+      // proceed (with or without warn): the still-stale creds mean the
+      // next provider_auth_status poll already reports stale via Layer
+      // A — no extra marker plumbing (design §4.3/§5).
+    }
     const runtime = await this.supervisor.launchAgent(launchInput);
     const adapter = this.supervisor.getAdapter(runtime.runtimeId);
     if (adapter) {
@@ -532,6 +631,23 @@ export class LocalToadRuntime {
       }
     }
     return runtime;
+  }
+
+  /**
+   * Returns the refreshOnce function to pass to claudeAuthPreflight.
+   * When a fake was injected via the constructor (refreshOnceImpl), uses it
+   * directly — keeps hermetic tests fast and spawn-free.
+   * Otherwise builds the real defaultRefreshOnce lazily with a Windows-safe
+   * command resolution so `claude` → `claude.cmd` on win32. Lazy
+   * construction means real spawn setup never runs during test construction.
+   */
+  #resolveRefreshOnce() {
+    if (this.refreshOnceImpl != null) {
+      return this.refreshOnceImpl;
+    }
+    // Build the real default lazily here, never in the constructor.
+    const safeCommand = resolveWindowsCommand('claude');
+    return () => defaultRefreshOnce({ spawnImpl: nodeSpawn, command: safeCommand });
   }
 
   #withToadMcpConfig(input) {

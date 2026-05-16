@@ -497,4 +497,21 @@ function expandHome(p) {
   return p;
 }
 
+/**
+ * Claude-preflight creds reader. The preflight requires a sealed
+ * tokenStatus; readFileStatus's ENOENT / unreadable / unparseable
+ * early-returns bypass parseAnthropicFileStatus and omit tokenStatus —
+ * those states mean "no usable token", strictly worse than
+ * expired-no-refresh → UNRECOVERABLE (fail-closed; honest-degradation:
+ * never proceed on a state we cannot substantiate). statImpl/readFileImpl
+ * pass through the DI seam getAuthStatus already threads (hermetic tests).
+ */
+export function readClaudeCredsStatusForPreflight(opts = {}) {
+  const s = getAuthStatus({ providerId: 'anthropic', ...opts });
+  if (!s || !s.tokenStatus) {
+    return { ...s, tokenStatus: TOKEN_STATUS.UNRECOVERABLE };
+  }
+  return s;
+}
+
 export const PROVIDER_AUTH_DEFINITIONS = PROVIDER_COMMANDS;
