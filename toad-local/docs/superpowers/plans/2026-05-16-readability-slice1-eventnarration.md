@@ -97,7 +97,18 @@ Create `src/runtime/eventNarration/narrate.js`:
 // The exact unified wording is reconciled via the golden agreement test
 // (spec §5); this module is the single source of truth (spec §8c/§8d).
 
-export const NARRATION_KINDS = Object.freeze(new Set(['tool', 'text', 'system']));
+// Controller ratification (T1): Object.freeze(new Set(...)) does NOT make
+// .add() throw on Node v22 (freeze guards own props, not Set internal slot).
+// Seal via own throwing mutators so `NARRATION_KINDS.add('x')` throws while
+// .has()/iteration/spread keep working. Version-robust.
+export const NARRATION_KINDS = (() => {
+  const s = new Set(['tool', 'text', 'system']);
+  const seal = () => { throw new TypeError('NARRATION_KINDS is sealed'); };
+  s.add = seal;
+  s.delete = seal;
+  s.clear = seal;
+  return Object.freeze(s);
+})();
 
 function num(v) {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
