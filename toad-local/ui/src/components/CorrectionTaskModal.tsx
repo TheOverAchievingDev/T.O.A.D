@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { callTool as callToadApi } from '@/api/client';
+import type { DriftFinding } from '@/hooks/useDrift';
 
 export interface DriftFindingForModal {
   id: string;
   taskId: string | null;
   category: string;
-  severity: 'low' | 'medium' | 'high' | 'critical' | 'info';
+  // Single source of truth: the severity union is derived from
+  // DriftFinding so it can never silently drift out of lockstep
+  // again (the L3-Slice-A 'observer' miss that broke `tsc -b`).
+  severity: DriftFinding['severity'];
   title: string;
   expected: string;
   actual: string;
@@ -26,6 +30,12 @@ const SEVERITY_TO_RISK: Record<string, 'low' | 'medium' | 'high'> = {
   medium: 'medium',
   low: 'low',
   info: 'low',
+  // observer = surfaced-but-never-scored/blocking (weight 0 in
+  // scoreFindings; design 2026-05-15-l3-reform §3.4 /
+  // 2026-05-16-l3-slice-b §10). It must never inflate the correction
+  // task's inferred risk — explicit 'low' (the `?? 'low'` fallback
+  // already yielded this; the entry makes the intent total/explicit).
+  observer: 'low',
 };
 
 function inferRiskLevel(findings: DriftFindingForModal[]): 'low' | 'medium' | 'high' {
