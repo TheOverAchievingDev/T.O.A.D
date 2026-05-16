@@ -54,14 +54,14 @@ test('resolveProvider: anthropic team, tier 1 → claude + haiku', () => {
   assert.equal(result.model, 'haiku');
 });
 
-test('resolveProvider: anthropic team, tier 2 → claude + opus', () => {
+test('resolveProvider: anthropic team, tier 2 → claude + sonnet (§8a doctrine: escalate to Sonnet, not Opus)', () => {
   const result = resolveProvider({
     teamConfig: { lead: { providerId: 'anthropic' } },
     settings: NO_OVERRIDES,
     tier: 2,
   });
   assert.equal(result.cli, 'claude');
-  assert.equal(result.model, 'opus');
+  assert.equal(result.model, 'sonnet');
 });
 
 test('resolveProvider: openai team → codex CLI', () => {
@@ -136,5 +136,11 @@ test('resolveProvider: tier1Override does NOT affect tier 2 resolution', () => {
     settings: { drift: { tier1ModelOverride: 'sonnet-4.6', tier2ModelOverride: null } },
     tier: 2,
   });
-  assert.equal(result.model, 'opus');
+  assert.equal(result.model, 'sonnet');
+});
+
+test('anthropic tier2 resolves to sonnet (L3 doctrine: escalate to Sonnet, not Opus)', () => {
+  const r = resolveProvider({ teamConfig: { lead: { providerId: 'anthropic' } }, settings: {}, tier: 2 });
+  assert.equal(r.cli, 'claude');
+  assert.equal(r.model, 'sonnet');
 });

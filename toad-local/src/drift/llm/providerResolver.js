@@ -23,6 +23,9 @@
  *   not exist or you may not have access to it." (2026-05-14 bug —
  *   the prior PROVIDER_MAP shipped those rejected names and every
  *   drift LLM check failed silently on stdout.)
+ *   §8a doctrine (L3 drift-judge reform): Haiku for the common case
+ *   (tier1); escalate to Sonnet only when Haiku flags ambiguity
+ *   (tier2). Opus is NOT the escalation target — `sonnet` alias.
  *
  * Codex CLI: accepts the model strings the user can pick in their
  *   ChatGPT plan dashboard. `gpt-5` (Plus tier) is the safest tier-2
@@ -43,7 +46,7 @@ export const PROVIDER_MAP = Object.freeze({
   anthropic: Object.freeze({
     cli: 'claude',
     tier1: 'haiku',
-    tier2: 'opus',
+    tier2: 'sonnet',
   }),
   openai: Object.freeze({
     cli: 'codex',
