@@ -80,3 +80,20 @@ test('l3CacheKey composes all four components deterministically', () => {
   assert.equal(k1, k2);
   assert.notEqual(k1, l3CacheKey({ ...args, promptTemplate: 'PROMPT2' }), 'prompt edit invalidates');
 });
+
+test('merge_ready and done are also submission statuses (invoke when ambiguous)', () => {
+  assert.deepEqual(l3Gate({ ...BASE, boundaryTo: 'merge_ready' }), { action: 'invoke', reason: 'ambiguous' });
+  assert.deepEqual(l3Gate({ ...BASE, boundaryTo: 'done' }), { action: 'invoke', reason: 'ambiguous' });
+});
+
+test('diffHash: CRLF and LF content produce identical hashes', () => {
+  const lf   = diffHash([{ file: 'x.rs', content: 'fn a() {\n  return 1;\n}' }]);
+  const crlf = diffHash([{ file: 'x.rs', content: 'fn a() {\r\n  return 1;\r\n}' }]);
+  assert.equal(lf, crlf, 'CRLF must not bust the cache vs LF');
+});
+
+test('diffHash: leading-whitespace-only changes collapse to same hash (documented tradeoff — whitespace-significant languages)', () => {
+  const indented = diffHash([{ file: 'x.py', content: '    return x\n' }]);
+  const flat     = diffHash([{ file: 'x.py', content: 'return x\n' }]);
+  assert.equal(indented, flat, 'indentation-only change is cache-stable by design — see norm() comment + design §3.3');
+});

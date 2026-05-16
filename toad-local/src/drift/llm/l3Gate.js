@@ -11,7 +11,20 @@ function norm(s) {
     .replace(/\n+$/, '');
 }
 
-/** sha1 over sorted (file, sha1(normalized content)) pairs. */
+/**
+ * sha1 over sorted `"<file> <sha1(norm(content))>"` rows.
+ *
+ * `content` is the SCOPED DIFF TEXT the judge will read for that
+ * file-scope (the engine passes the task's diff body from
+ * snapshot.diffsByTask) — NOT a separately-read per-file post-image.
+ * This is the ratified staleness key (design §3.3): the verdict cache
+ * answers "would re-running the judge on THIS packet produce the same
+ * verdict?", and the packet contains the diff, so hashing exactly
+ * what the judge sees is the precise signal. `norm()` makes it stable
+ * to whitespace/formatting churn while still changing on real content
+ * or changed-file-set changes. Do NOT change this to a post-image
+ * read — design §3.3's ratified note explains why.
+ */
 export function diffHash(files) {
   const rows = (Array.isArray(files) ? files : [])
     .map((f) => `${f.file} ${sha1(norm(f.content))}`)
