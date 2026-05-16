@@ -139,7 +139,10 @@ test('resolveProvider: tier1Override does NOT affect tier 2 resolution', () => {
   assert.equal(result.model, 'sonnet');
 });
 
-test('anthropic tier2 resolves to sonnet (L3 doctrine: escalate to Sonnet, not Opus)', () => {
+test('resolveProvider: anthropic tier2 with missing drift settings key still resolves to sonnet', () => {
+  // Confirms the `settings?.drift ?? {}` nullish coalescing handles a
+  // settings object that has no `drift` key at all (distinct from the
+  // NO_OVERRIDES path: here `settings` itself lacks `drift`).
   const r = resolveProvider({ teamConfig: { lead: { providerId: 'anthropic' } }, settings: {}, tier: 2 });
   assert.equal(r.cli, 'claude');
   assert.equal(r.model, 'sonnet');
