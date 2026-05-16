@@ -166,8 +166,9 @@ type NarrationKind = 'tool' | 'text' | 'system'
 - `approval_request` → `'system'` (proposed; line e.g. `Awaiting approval: <toolName>`). **Disposition is open-per-reconciliation (Finding #2):** the incumbents likely render nothing for it today (approvals have their own UI surface), so the agreement test will show `oldCockpit`/`oldCard` ≈ none vs `new` = a line — that divergence is *expected* and ruled in the behavior table (does the narrated stream include approval lines at all, or does `narrate()` still return the shape but callers filter `'system'`/approval out of the feed?). Pinned now only so `narrate()` never throws on it and the fixture-coverage requirement (§5 item 1) is satisfiable.
 
 The *exact* final mapping for `turn_completed` / `turn_failed` /
-`compact_boundary` / `api_retry`, and whether any of them deserves a
-distinct kind, is a **reconciliation-table decision** (§5), not invented
+`compact_boundary` / `api_retry` / `approval_request`, and whether any
+of them deserves a distinct kind, is a **reconciliation-table
+decision** (§5), not invented
 here — the agreement test forces the explicit ruling. `'thinking'` /
 `'idle'` from `AgentActivityKind` are **selection states, not narration
 kinds**; they remain in `deriveAgentActivity`'s selection logic and are
@@ -364,7 +365,17 @@ two-(or-three-)commits-in-sequence; §8e invariant.
 
 **Open (resolved during implementation, by the agreement test, not by
 guesswork):** the exact `NarrationKind` mapping for `turn_completed` /
-`turn_failed` / `compact_boundary` / `api_retry`; the specific
-per-divergence rulings in the behavior-changes table. These are
-deliberately left to the reconciliation step — pinning them now would
-be inventing answers the captured fixture must decide.
+`turn_failed` / `compact_boundary` / `api_retry` / `approval_request`;
+the specific per-divergence rulings in the behavior-changes table.
+These are deliberately left to the reconciliation step — pinning them
+now would be inventing answers the captured fixture must decide.
+
+---
+
+**Review-trail legend.** `Finding #N` = the first fresh-eyes spec
+review; `round-2 #N` = the second. The inline tags are an audit trail
+of *why* a pin exists (traceable to the review that forced it). They
+are deliberately retained, not migrated to a separate changelog — a
+reader hitting a non-obvious pin can trace its origin in place. Future
+slices may drop the convention once the spec stabilises; it is not a
+required spec section.
