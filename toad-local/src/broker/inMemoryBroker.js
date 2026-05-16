@@ -8,23 +8,6 @@ export class InMemoryBroker {
   #deliveryAttempts = new Map();
   #subscribers = new Set();
 
-  appendMessage(input) {
-    const envelope = createMessageEnvelope(input);
-    if (envelope.idempotencyKey) {
-      const existingId = this.#idempotency.get(envelope.idempotencyKey);
-      if (existingId) {
-        return {
-          inserted: false,
-          message: this.#messages.get(existingId),
-        };
-      }
-      this.#idempotency.set(envelope.idempotencyKey, envelope.messageId);
-    }
-    this.#messages.set(envelope.messageId, envelope);
-    this.#fireSubscribers(envelope);
-    return { inserted: true, message: envelope };
-  }
-
   /**
    * Register a subscriber that fires AFTER each successfully-inserted
    * message. Mirrors SqliteTaskBoard.subscribe's contract verbatim:
@@ -44,9 +27,28 @@ export class InMemoryBroker {
     return () => { this.#subscribers.delete(fn); };
   }
 
+  appendMessage(input) {
+    const envelope = createMessageEnvelope(input);
+    if (envelope.idempotencyKey) {
+      const existingId = this.#idempotency.get(envelope.idempotencyKey);
+      if (existingId) {
+        return {
+          inserted: false,
+          message: this.#messages.get(existingId),
+        };
+      }
+      this.#idempotency.set(envelope.idempotencyKey, envelope.messageId);
+    }
+    this.#messages.set(envelope.messageId, envelope);
+    this.#fireSubscribers(envelope);
+    return { inserted: true, message: envelope };
+  }
+
   #fireSubscribers(message) {
     for (const fn of this.#subscribers) {
-      try { fn(message); } catch (err) {
+      try {
+        fn(message);
+      } catch (err) {
         // eslint-disable-next-line no-console
         console.warn('[broker] subscriber threw:', err && err.message ? err.message : err);
       }

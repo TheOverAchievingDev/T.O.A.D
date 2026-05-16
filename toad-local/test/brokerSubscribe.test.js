@@ -49,8 +49,10 @@ for (const [name, make] of brokers()) {
 
   test(`${name}: subscriber throw is caught; message still inserted`, () => {
     const b = make();
-    b.subscribe(() => { throw new Error('bad subscriber'); });
+    let invoked = 0;
+    b.subscribe(() => { invoked += 1; throw new Error('bad subscriber'); });
     const r = b.appendMessage(ENV('safe'));
+    assert.equal(invoked, 1, 'subscriber was called before it threw');
     assert.equal(r.inserted, true);
     assert.ok(b.getMessage(r.message.messageId));
   });
