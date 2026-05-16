@@ -1,4 +1,5 @@
 import { stableFindingId } from './_findingId.js';
+import { isFileDeclaredByModule } from '../spec/isFileDeclaredByModule.js';
 
 const CHECK_NAME = 'check_structural_undeclared_present';
 
@@ -93,23 +94,19 @@ export function checkStructuralUndeclaredPresent({ snapshot } = {}) {
   }
   if (snapshot.sourceModules.length === 0) return [];
 
-  // Normalize declared evidence paths + precompute their directory
-  // "promotion prefixes" (src/sampler.rs → src/sampler/).
-  const declared = [];
-  for (const e of moduleEntries) {
-    const ev = e.evidence.replace(/\\/g, '/').replace(/^\.\//, '');
-    const dot = ev.lastIndexOf('.');
-    const slash = ev.lastIndexOf('/');
-    const stem = dot > slash ? ev.slice(0, dot) : ev; // strip extension
-    declared.push({ exact: ev, promotionPrefix: `${stem}/` });
-  }
+  // Declared-evidence list is still needed for the finding's evidence
+  // trail; the MATCH decision is delegated to the shared helper so
+  // L1.2 and L3 Slice B cannot diverge (lockstep).
+  const declaredEvidence = moduleEntries.map(
+    (e) => e.evidence.replace(/\\/g, '/').replace(/^\.\//, ''),
+  );
 
   const findings = [];
   for (const srcRaw of snapshot.sourceModules) {
     if (typeof srcRaw !== 'string' || srcRaw.length === 0) continue;
     const src = srcRaw.replace(/\\/g, '/').replace(/^\.\//, '');
-    const covered = declared.some(
-      (d) => src === d.exact || src.startsWith(d.promotionPrefix),
+    const covered = moduleEntries.some(
+      (m) => isFileDeclaredByModule(src, m).declared,
     );
     if (covered) continue;
     findings.push(makeFinding(teamId, {
@@ -125,7 +122,7 @@ export function checkStructuralUndeclaredPresent({ snapshot } = {}) {
         + `how undocumented APIs and security holes slip in.`,
       evidence: [
         `source module present: ${src}`,
-        `declared evidence paths: ${declared.map((d) => d.exact).join(', ')}`,
+        `declared evidence paths: ${declaredEvidence.join(', ')}`,
       ],
       reviewed, provenance,
     }));
