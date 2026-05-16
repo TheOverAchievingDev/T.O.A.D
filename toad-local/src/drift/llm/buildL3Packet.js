@@ -17,7 +17,7 @@ export function buildL3Packet({ snapshot, boundaryTaskId, l1Signal, budgetBytes 
   lines.push('');
 
   lines.push('## The change (this task only)');
-  const d = snapshot?.diffsByTask?.[boundaryTaskId] || null;
+  const d = snapshot?.diffsByTask?.[boundaryTaskId] ?? null;
   if (!d || (typeof d.diff !== 'string' && !Array.isArray(d.changedFiles))) {
     lines.push('(no diff available for this task)');
   } else {

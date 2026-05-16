@@ -44,3 +44,16 @@ test('configurable budget override is honored', () => {
   const r = buildL3Packet({ snapshot: SNAP, boundaryTaskId: 'T-1', l1Signal: SIGNAL, budgetBytes: 10 });
   assert.equal(r.overBudget, true);
 });
+
+test('d with changedFiles but null diff → renders files list + fence with (no diff content)', () => {
+  const snap = {
+    ...SNAP,
+    diffsByTask: { 'T-1': { changedFiles: ['src/b.rs'], diff: null, error: 'git exit 128' } },
+  };
+  const r = buildL3Packet({ snapshot: snap, boundaryTaskId: 'T-1', l1Signal: SIGNAL });
+  assert.ok(!r.overBudget);
+  assert.match(r.packet, /src\/b\.rs/);
+  assert.match(r.packet, /\(no diff content\)/);
+  assert.match(r.packet, /Diff error: git exit 128/);
+  assert.match(r.packet, /```diff/);
+});
