@@ -195,3 +195,36 @@ test('unsupported detector among gate rules → recorded, does not crash, does n
   assert.equal(r.blocked, false);
   assert.deepEqual(r.unsupported, ['ast-x']);
 });
+
+test('branch adds a SECOND identical violating line that exists once in trunk → the new one is introduced (blocked)', () => {
+  const runGit = fakeRunGit([
+    [['diff', '--name-status', 'main..HEAD'], { exitCode: 0, stdout: 'M\tsrc/p.rs\n', stderr: '' }],
+    [['show', 'main:src/p.rs'], { exitCode: 0, stdout: 'enable(SeDebugPrivilege);\nok();\n', stderr: '' }],
+  ]);
+  const r = constitutionMergeGate({
+    projectCwd: '/proj', worktreePath: '/wt', baseRef: 'main',
+    spec: spec({ rules: [GATE_RULE] }), runGit,
+    readFileSyncImpl: readFileSyncImpl({ 'src/p.rs': 'enable(SeDebugPrivilege);\nok();\nenable(SeDebugPrivilege);\n' }),
+  });
+  assert.equal(r.blocked, true, 'the duplicate the branch added is a new violation');
+  assert.equal(r.introduced.length, 1);
+  assert.equal(r.preexisting.length, 1, 'the original occurrence is still preexisting');
+});
+
+test('copied file (status C) with a violation → blocked, NO trunk show attempted', () => {
+  const calls = [];
+  const runGit = (args) => {
+    calls.push(args.join(' '));
+    if (args[0] === 'diff') return { exitCode: 0, stdout: 'C100\tsrc/orig.rs\tsrc/copy.rs\n', stderr: '' };
+    return { exitCode: 128, stdout: '', stderr: 'fatal: path does not exist' };
+  };
+  const r = constitutionMergeGate({
+    projectCwd: '/proj', worktreePath: '/wt', baseRef: 'main',
+    spec: spec({ rules: [GATE_RULE] }), runGit,
+    readFileSyncImpl: readFileSyncImpl({ 'src/copy.rs': 'enable(SeDebugPrivilege);\n' }),
+  });
+  assert.equal(r.blocked, true);
+  assert.equal(r.introduced.length, 1);
+  assert.equal(r.introduced[0].file, 'src/copy.rs');
+  assert.ok(!calls.some((c) => c.startsWith('show ')), 'a copy destination is new — no trunk show');
+});

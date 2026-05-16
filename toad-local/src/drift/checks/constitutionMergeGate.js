@@ -69,6 +69,12 @@ export function constitutionMergeGate({
   }
 
   for (const { status, file } of changed) {
+    // Stricter than scanConstitution's extension-only isTextFile on
+    // purpose: the gate runs at merge time (infrequent) so a
+    // `git check-attr binary` subprocess per changed file is an
+    // acceptable cost for catching generated/vendored blobs; the
+    // whole-tree scan runs on every drift tick (hot path) and stays
+    // extension-only deliberately. Asymmetry is intentional, not drift.
     if (!isTextFile(file, { runGit, projectCwd })) continue;
 
     let wtContent;
@@ -86,8 +92,8 @@ export function constitutionMergeGate({
       }
       if (wtHits.length === 0) continue;
 
-      // Added file: no trunk version exists — every hit is introduced.
-      if (status === 'A') {
+      // Added file or copy destination: no trunk version exists — every hit is introduced.
+      if (status === 'A' || status === 'C') {
         for (const h of wtHits) {
           out.introduced.push({ ruleId: rule.id, file, line: h.line, snippet: h.snippet, description: rule.description || '' });
         }
@@ -118,11 +124,27 @@ export function constitutionMergeGate({
       const baseHits = baseContent === null ? [] : (evalConstitutionRule(rule, { path: file, content: baseContent }) || []);
       // Match by NORMALIZED LINE CONTENT, not line number — a line
       // added above shifts numbers but the violation is the same one.
-      const baseSnippets = new Set(baseHits.map((h) => h.snippet.trim()));
+      // COUNT-based (not set membership): N trunk occurrences absorb N
+      // worktree occurrences; any additional identical line the branch
+      // introduces is still `introduced` (closes the duplicate-line
+      // gate-evasion: one preexisting `foo()` must not whitelist a
+      // second `foo()` the branch adds).
+      const baseCounts = new Map();
+      for (const bh of baseHits) {
+        const s = bh.snippet.trim();
+        baseCounts.set(s, (baseCounts.get(s) ?? 0) + 1);
+      }
+      const consumed = new Map();
       for (const h of wtHits) {
+        const s = h.snippet.trim();
         const item = { ruleId: rule.id, file, line: h.line, snippet: h.snippet, description: rule.description || '' };
-        if (baseSnippets.has(h.snippet.trim())) out.preexisting.push(item);
-        else out.introduced.push(item);
+        const avail = (baseCounts.get(s) ?? 0) - (consumed.get(s) ?? 0);
+        if (avail > 0) {
+          consumed.set(s, (consumed.get(s) ?? 0) + 1);
+          out.preexisting.push(item);
+        } else {
+          out.introduced.push(item);
+        }
       }
     }
   }
