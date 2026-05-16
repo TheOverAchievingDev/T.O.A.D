@@ -10,13 +10,26 @@
 
 Make the team's work legible by fixing the root cause of the current
 unreadable event stream: **there is no single source of truth for
-"event → human line."** Two divergent client-side implementations exist:
+"event → human line."** **Grounded correction (planning-time, §8d
+question-#1):** the earlier draft named `timelineProjection.tsx` as the
+cockpit incumbent — that is imprecise. `timelineProjection.tsx::bodyForStream`
+consumes an already-projected `StreamEntry`, NOT a normalized runtime
+event. The true landscape is **three related sites**, two of which
+(`summarizeToolInput` / `summarizeToolCall`) are the literal §8c twin:
 
-- `ui/src/components/cockpit/timelineProjection.tsx` → `projectTimeline()` — the cockpit "WHAT'S HAPPENING" feed (`"dev-1 ran Bash — npm run test:e2e"`, `reported`/`system:` verbs), with its own per-tool wording, its own ad-hoc `kind` strings (`'tool'|'system'|…`, inline/untyped, `:101-104`), and its own candidate-capping/drop policy.
-- `ui/src/hooks/useToadData.ts` → `deriveAgentActivity()` / `summarizeToolCall()` — the per-agent-card *latest activity* blurb, with its own per-tool wording and a typed taxonomy `AgentActivityKind = 'text'|'tool'|'thinking'|'idle'` (`ui/src/types/index.ts:20`).
+- **Cockpit-feed path — `ui/src/utils/agentStream.ts`** → `eventToStreamEntry(event, idx)` maps a normalized runtime event → `StreamEntry { kind: 'thought'|'tool'|'output'|'system', tool?, body }`, with per-tool wording in its own `summarizeToolInput(toolName, input)`. This is the **real per-normalized-event narration** feeding the "WHAT'S HAPPENING" feed. (`agentStream.ts` is node-importable — a type-only `RuntimeEvent` import, no JSX.)
+- **Cockpit-feed re-projection — `ui/src/components/cockpit/timelineProjection.tsx`** → `bodyForStream(agentName, entry)` is a thin **`StreamEntry` → verb/JSX** re-projection riding on the above (`tool→edited/opened/ran/searched for/used`, `output→reported`, `thought→thinking:`, `system→system:`), plus `projectTimeline()`'s composition + candidate-capping. NOT a normalized-event consumer.
+- **Agent-card path — `ui/src/hooks/useToadData.ts`** → `deriveAgentActivity(event)` maps a normalized event → `AgentActivity { kind: AgentActivityKind, label, tool?, at }` (`AgentActivityKind = 'text'|'tool'|'thinking'|'idle'`, `ui/src/types/index.ts:20`), with per-tool wording in its own `summarizeToolCall(toolName, input)`.
 
-This is the §8c smell: two implementations of the same logical
-decision (event→prose), guaranteed to disagree on edge cases. Slice 1's
+`summarizeToolInput` (agentStream) and `summarizeToolCall` (useToadData)
+are wildly divergent twins of the same decision (e.g. `Read` →
+`"<file_path>"` vs `"Reading <basename>"`; `Bash` → `"<command>"` vs
+`"Bash: <cmd60>…"`; default → `JSON(input).slice(0,200)` vs
+`"Tool: <short>"`); the two `kind` taxonomies don't even share a
+vocabulary (`thought|tool|output|system` vs `text|tool|thinking|idle`).
+
+This is the §8c smell: three sites implementing one logical decision
+(normalized-event → prose + kind), guaranteed to disagree. Slice 1's
 work is **consolidation, not greenfield** (the §8d question-#1 catch).
 
 Slice 1 also ships the **lines-of-code activity counter** — a sibling
@@ -40,8 +53,9 @@ metric).
 - **Tool input shapes** (from `tool_use.input`, the *request* — there is no applied-diff result event): `Edit` → `{ file_path, old_string, new_string }`; `MultiEdit` → `{ file_path, edits: [{ old_string, new_string }, …] }`; `Write` → `{ file_path, content }`; `Bash` → `{ command }`; `Read` → `{ file_path }`; MCP tools are prefixed `mcp__<server>__<tool>`.
 - **Everything legible today is client-side & ephemeral.** SSE → browser projections → discarded. The only durable substrate is `SqliteRuntimeEventLog` (raw events + `payload.raw`). There is **no server-side event→prose projection** and **no `tool_result`/narrated-line persistence**. (This is why historical narrative view does not work today — and why persistence is correctly deferred to post-C when the ingestor surface is open.)
 - **No `.claudeignore`** exists; only `.gitignore`. (An earlier assertion that `.claudeignore` existed was wrong and ungrounded — corrected here per §8d.)
-- **`timelineProjection` does multi-source composition** beyond per-event narration: it folds in drift-score-change rows and task-lifecycle-transition rows, and caps candidates "to stay cheap." That composition is **not duplicated** anywhere — it is single-site, view-specific work.
-- **Two divergent `kind` taxonomies**: typed `AgentActivityKind` (`types/index.ts:20`) vs `timelineProjection`'s inline untyped strings (`:101-104`).
+- **`timelineProjection.projectTimeline()` does multi-source composition** beyond narration: it consumes `StreamEntry`s (already narrated by `agentStream.eventToStreamEntry`), folds in drift-score-change rows and task-lifecycle-transition rows, and caps candidates "to stay cheap." That composition + `StreamEntry`→verb re-projection (`bodyForStream`) is **not duplicated** — single-site, view-specific work — but it is a *consumer* of the narration decision and is repointed in §4.4.
+- **Three divergent `kind` taxonomies for one concept**: `StreamEntry.kind` `'thought'|'tool'|'output'|'system'` (`agentStream.ts:8`), `AgentActivityKind` `'text'|'tool'|'thinking'|'idle'` (`types/index.ts:20`), and `timelineProjection`'s `dotForStream` switch keyed off `StreamEntry.kind` (`:100-106`). The sealed `NarrationKind` (§4.3) replaces the narration-decision taxonomy; the view-specific `dot`/verb mapping is a thin adapter over it.
+- **`agentStream.ts` is node-importable** (type-only `RuntimeEvent` import, no JSX); `useToadData.ts` is a React hook module (not node-importable) and post-consolidation both incumbents *call* `narrate()` — so the agreement test compares **committed golden snapshots** of each incumbent path's *pre-consolidation* output over the fixture, not live re-imports (§5).
 
 ---
 
@@ -178,12 +192,19 @@ switched on their own kind values map onto `NarrationKind` (e.g.
 old `'system'→amber`, `'tool'→clay` mappings are preserved by mapping,
 documented in the behavior table).
 
-### 4.4 Wiring the two consumers (preserve rendering — Scope boundary B)
+### 4.4 Wiring the three sites (preserve rendering — Scope boundary B)
 
-- `timelineProjection.projectTimeline()` — replace its per-tool wording + inline kind logic for **runtime-event rows** with `narrate()`. **Keep** its drift/task-transition composition and candidate-capping/drop policy verbatim. Color/verb selection switches on the imported `NarrationKind`.
-- `deriveAgentActivity()` — replace its `summarizeToolCall()` wording with `narrate()`. **Keep** its "latest activity" selection and the `Working…/Thinking…` fallback (these are selection, not wording). `AgentActivity.kind` is sourced from `narrate()`'s `NarrationKind` (and the selection-only `'thinking'/'idle'` states it adds itself).
+- **`agentStream.eventToStreamEntry()`** — replace its per-tool wording (`summarizeToolInput`) and its event→`kind` classification with `narrate()`: compute `const n = narrate(event)`, set `StreamEntry.body = n.line`, and derive `StreamEntry.kind` from `n.kind` via a pinned **`NarrationKind` → `StreamEntry.kind` adapter** (`tool→'tool'`, `text→'output'`, `system→'system'`; the legacy `'thought'` had exactly one producer — `runtime_event/post_turn_summary` — which `narrate()` classifies, ruled in the behavior table). `summarizeToolInput` is **deleted** (its logic moves into `narrate()`). The `null`-drop decisions (`assistant_text` with no text, `runtime_event` lifecycle, `turn_completed` without `raw.result`) stay in `eventToStreamEntry` (selection, not wording).
+- **`timelineProjection.tsx::bodyForStream()`** — its `StreamEntry.kind`→verb map and `dotForStream` continue to key off `StreamEntry.kind` (now derived via the adapter above), so it is **a consumer, unchanged in logic** — but its behavior is now *fed by* `narrate()` transitively. No per-tool wording remains here (there never was; it only re-verbs). Verified by the agreement test through the full `event → eventToStreamEntry → bodyForStream` path.
+- **`useToadData.deriveAgentActivity()`** — replace its `summarizeToolCall()` wording with `narrate()`. **Keep** its "latest activity" selection and the `Working…/Thinking…` fallback (selection, not wording). `AgentActivity.label = narrate(event).line`; `AgentActivity.kind` is mapped from `narrate()`'s `NarrationKind` via a pinned **`NarrationKind` → `AgentActivityKind` adapter** (`tool→'tool'`, `text→'text'`, `system→'thinking'` — ruled in the behavior table) plus the selection-only `'thinking'/'idle'` states `deriveAgentActivity` adds itself. `summarizeToolCall` is **deleted**.
 
-- **Named wiring task — new `'system'` kind on the agent card (Finding #3).** Today's `AgentActivityKind` is `'text'|'tool'|'thinking'|'idle'` — it has **no `'system'`**. Sourcing `AgentActivity.kind` from `NarrationKind` means the agent-card renderer now receives `'system'` (from `compact_boundary`/`api_retry`/`turn_*`), a value it has never seen. The card renderer **must gain an explicit `'system'` case** (styling + verb, or suppress-from-card-entirely). This is called out here as a **known wiring task**, not left to be discovered: the *exact* card behavior for `'system'` (render minimally vs. suppress) is a behavior-table ruling (§5), but the *fact that the renderer needs the new case* is pinned scope for Commit 1. The agent-card renderer's existing `kind` switch must become exhaustive over `NarrationKind | 'thinking' | 'idle'` (a `tsc` exhaustiveness check enforces it — a non-exhaustive switch is a compile error, so this cannot silently regress).
+Both `summarize*` twins collapse into one `narrate()`; the two
+view-specific taxonomy adapters (`NarrationKind`→`StreamEntry.kind`,
+`NarrationKind`→`AgentActivityKind`) are tiny pinned pure maps living in
+the *consumers* (not in `eventNarration` — they are view concerns), each
+covered by the agreement test.
+
+- **Named wiring task — the `NarrationKind`→`AgentActivityKind` adapter (Finding #3, corrected).** `narrate()` emits `'system'` (from `compact_boundary`/`api_retry`/`turn_*`/`approval_request`), which `AgentActivityKind` (`'text'|'tool'|'thinking'|'idle'`) has no member for. Rather than add a fifth value to the card's taxonomy (the corrected wiring uses an **adapter**, not a passthrough), the pinned **`NarrationKind`→`AgentActivityKind` map** lives in `deriveAgentActivity` and maps `system→'thinking'` (proposed; ruled in the behavior table). The adapter function MUST be exhaustive over `NarrationKind` (a `tsc` `satisfies`/`never`-default exhaustiveness check — a missing case is a compile error, so a future `NarrationKind` addition cannot silently fall through). Symmetrically the `NarrationKind`→`StreamEntry.kind` adapter in `agentStream.ts` is exhaustive over `NarrationKind`. The card renderer itself is unchanged (still switches on `AgentActivityKind`); the new-kind risk is absorbed at the adapter, tsc-enforced.
 
 No new feed UX. The cockpit feed and agent cards render *identically*
 after Slice 1 **except** for the deliberately-reconciled deltas (§5).
@@ -209,7 +230,7 @@ test** (`node:test`) plus a **fixture-coverage test**:
 
 1. **Fixture + minimum coverage (pinned).** A captured real run committed at `test/fixtures/eventNarration.events.json` (array of normalized event-log rows). A separate **fixture-coverage test** asserts the fixture contains **≥1 of every normalized event type** (`tool_use`, `assistant_text`, `turn_completed`, `turn_failed`, `compact_boundary`, `api_retry`, `approval_request`) **and ≥1 MCP-prefixed `tool_use`** (`mcp__…`). Without this, a fixture heavy on `assistant_text` would pass with false completeness. Coverage test fails listing the missing types.
 2. **Matching key (pinned).** Each fixture event gets a stable **signature** = `sha1(eventType + ' ' + canonicalJSON(salientInput))` where `salientInput` = `{ toolName, file_path, command, subtype }` projected from the event (the fields narration keys off), NOT the array index — so adding events to the fixture later does not renumber/invalidate prior rulings. The signature is the table key. Pinned projection: `salientInput = { toolName: event.toolName ?? null, file_path: event.input?.file_path ?? null, command: event.input?.command ?? null, subtype: event.raw?.subtype ?? null }` — `subtype` path is **grounded** (system/result frames carry `parsed.subtype`; `event.raw` is that frame, per Section 2). **Lockstep invariant (pinned):** `salientInput` MUST be a superset of every field `narrate()` reads to produce `line`/`kind`. Low-cardinality types (`assistant_text`, `turn_*`) carry none of these fields, so all events of such a type collapse to ONE signature — acceptable ONLY because `narrate()` is a pure function of exactly the salient fields for those types (one ruling per event-class equivalence). If `narrate()` ever keys off an additional field, `salientInput` extends in the same change; a test asserts `narrate`'s read-set is a subset of `salientInput` keys. (The concrete field list is an implementation-plan task; the superset invariant is the spec pin.)
-3. **Run + diff.** For every fixture event compute `(oldCockpit = projectTimeline-wording, oldCard = deriveAgentActivity/summarizeToolCall, new = narrate())`. A **divergence** = the triple is not all-equal on `line` and/or mapped `kind`. Emit the divergence set keyed by signature.
+3. **Golden snapshots + diff (pinned — grounded model).** The incumbents are `.ts`/`.tsx` and post-consolidation *call* `narrate()`, so they cannot be live-imported as a stable "before" by the root `node:test` runner (`agentStream.ts` is node-importable but its post-refactor body is `narrate()` itself; `useToadData.ts` is a non-importable React hook). Therefore a **one-time golden-capture step** (run BEFORE the refactor, harness provided by the plan: it copies the *current* verbatim bodies of `agentStream.eventToStreamEntry`+`summarizeToolInput` and `useToadData.deriveAgentActivity`+`summarizeToolCall`+the `bodyForStream` verb map into a throwaway script) emits committed goldens: `test/fixtures/eventNarration.feedGolden.json` (cockpit-feed path: per fixture event → `{ line, kind }` where `line` = `bodyForStream`-rendered text of the `StreamEntry`, `kind` = `StreamEntry.kind`) and `test/fixtures/eventNarration.cardGolden.json` (agent-card path: per event → `{ line: AgentActivity.label, kind: AgentActivity.kind }`; `null`-dropped events recorded as `null`). The agreement test then computes, per fixture event, `new = narrate(event)` adapted through each path's pinned taxonomy adapter, and compares against the two goldens. A **divergence** = for some path, golden vs new is not equal on `line` and/or `kind` (a golden of `null` vs a produced line is a divergence — the expected `approval_request`/drop-rule cases). Emit the divergence set keyed by signature. The goldens are the frozen pre-consolidation "before"; they are regenerated only by deliberately re-running the capture harness (never auto-rewritten by the agreement test).
 4. **Behavior-changes table — location & format (pinned).** A committed machine-readable manifest `test/fixtures/eventNarration.behaviorTable.json`: a JSON object `{ entries: { [signature]: Entry }, softCapAcknowledged?: boolean, acknowledgmentRationale?: string }`. `Entry = { eventType: string, salient: <the human-readable salientInput object, not the hash>, oldCockpit: { line: string, kind: string }, oldCard: { line: string, kind: string }, new: { line: string, kind: string }, ruling: "cockpit-was-right" | "card-was-right" | "new-unified", rationale: string }`. Each of `oldCockpit`/`oldCard`/`new` is the **`{ line, kind }` tuple** (not a bare string) so the rendered table shows the full divergence (wording AND mapped kind). The spec/PR additionally renders `entries` as a human Markdown table (generated from the JSON, not hand-maintained: single source).
 5. **Pass condition (pinned, mechanical).** The agreement test asserts `divergenceSet ⊆ keys(behaviorTable.entries)` keyed by signature — i.e. **every** observed divergence has a matching `behaviorTable.entries[signature]` with a non-empty `ruling` + `rationale`. Unaccounted divergence ⇒ **fail**. This is the recoverable §8e teeth: a failing run is cleared by *ruling* the divergence (committing the entry), never blocked permanently.
 6. **Developer ergonomics (pinned).** On failure the test writes the unaccounted divergences as a ready-to-paste JSON block to `test/.eventNarration.divergences.out` **and** prints a compact table to stdout, so the implementer pastes/rules them into `behaviorTable.json` and re-runs. (This test runs many times during the consolidation — the ergonomics are part of the contract.)
@@ -298,7 +319,7 @@ feature, same shape as `judgeSpawn` extraction → L3 build):
 ## 8. Testing & gates
 
 - **TDD throughout** (project discipline).
-- `eventNarration`: per-event unit tests across the full taxonomy (tool_use incl. MCP-prefixed, assistant_text, turn_*, compact_boundary, api_retry, malformed/missing-field events → must degrade to a safe line, never throw); **`tokens` per-type assertions mirroring §4.1's full enumeration** (`turn_completed` → its `output_tokens`; `turn_failed` → `output_tokens` if the partial `usage` is present else `null`; `tool_use` / `assistant_text` / `compact_boundary` / `api_retry` / `approval_request` → `null`); the **import-purity test** (no `node:*` builtins in the transitive import set); the **fixture-coverage test** (≥1 of every event type + ≥1 MCP `tool_use`); the **agreement test** vs both incumbents over the committed fixture (signature-keyed, `⊆` pass-condition, ≤20 soft cap, divergence-output file).
+- `eventNarration`: per-event unit tests across the full taxonomy (tool_use incl. MCP-prefixed, assistant_text, turn_*, compact_boundary, api_retry, malformed/missing-field events → must degrade to a safe line, never throw); **`tokens` per-type assertions mirroring §4.1's full enumeration** (`turn_completed` → its `output_tokens`; `turn_failed` → `output_tokens` if the partial `usage` is present else `null`; `tool_use` / `assistant_text` / `compact_boundary` / `api_retry` / `approval_request` → `null`); the **import-purity test** (no `node:*` builtins in the transitive import set); the **fixture-coverage test** (≥1 of every event type + ≥1 MCP `tool_use`); the **golden-snapshot agreement test** vs the two committed pre-consolidation goldens (`feedGolden.json` = `eventToStreamEntry`→`bodyForStream` path; `cardGolden.json` = `deriveAgentActivity` path) over the committed fixture, comparing adapted `narrate()` (signature-keyed, `⊆` pass-condition, recoverable >20 soft-cap acknowledgment gate, divergence-output file); plus exhaustiveness tests for the two taxonomy adapters (`NarrationKind`→`StreamEntry.kind`, `NarrationKind`→`AgentActivityKind`) — a missing case is a `tsc`/test failure.
 - `locCount`: formula tests (Edit/MultiEdit/Write incl. `removed:null` Write, empty content, no-trailing-newline); `.gitignore` edit-time filtering; `locIgnorePaths` augment-not-replace; attribution (deleter not penalised); aggregate `removedUnknown` propagation + footnote rendering.
 - **Gates:** root `npm test` `fail 0`; UI `cd ui && npm run typecheck` zero `error TS` + `npm run build` ✓. Both new modules wired into the canonical `npm test` chain (no un-wired-test false-green).
 
@@ -331,6 +352,20 @@ decision — flagged here, not silently actioned.
 ---
 
 ## 10. Pinned-vs-open summary
+
+**Incumbent inventory (grounded correction — planning-time):** the
+consolidation collapses `agentStream.summarizeToolInput` **and**
+`useToadData.summarizeToolCall` into `narrate()`, replaces
+`agentStream.eventToStreamEntry`'s event→kind classification with
+`narrate()` + a pinned `NarrationKind`→`StreamEntry.kind` adapter, and
+maps `narrate()`'s kind into `deriveAgentActivity` via a pinned
+`NarrationKind`→`AgentActivityKind` adapter. `timelineProjection.tsx`
+(`bodyForStream`/`projectTimeline`) is an unchanged-logic *consumer* of
+the now-`narrate()`-fed `StreamEntry`. The agreement test compares
+committed **golden snapshots** of both pre-consolidation paths
+(feed: `eventToStreamEntry`→`bodyForStream`; card:
+`deriveAgentActivity`) vs adapted `narrate()`. `summarizeToolInput` and
+`summarizeToolCall` are both **deleted**.
 
 **Pinned:** Option 1 architecture; module path `src/runtime/eventNarration/`
 (browser-safe pure — no `node:*`/fs/path/env, import-purity test);
