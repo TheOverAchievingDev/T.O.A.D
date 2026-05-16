@@ -952,6 +952,73 @@ test('no hardcoded context-window literal outside the single-source map', () => 
 
 > If a legitimate unrelated `1_000_000`/`200_000` exists elsewhere (e.g. an unrelated timeout), tighten the regex to the context/token usage sites or add a precise `:(exclude)` for that file with a comment — but do NOT loosen it to the point it stops guarding the denominator. Verify by running it and inspecting any hit.
 
+> **Controller ratification (T6 run-and-tighten grounding) —
+> SUPERSEDES the Step-1 test above. The regex is UNCHANGED (both
+> window magnitudes kept — NOT loosened); three precise audited file
+> `:(exclude)` pathspecs are added per the note's sanctioned option.
+> Plan-only ratification; spec §6 intent unchanged. Same convention as
+> T3/T4/T5.**
+>
+> Running the exact Step-1 regex over `toad-local/src toad-local/ui/src`
+> (post-T5, canonical map excluded) yields **5 legitimate
+> non-denominator hits**, all `1_000_000`-family for M/m-suffix number
+> formatting and per-million cost-rate math (audited 2026-05-16):
+> `ui/src/components/CostsScreen.tsx:40,44` (cost = tokens/1_000_000 ×
+> rate; `M` suffix), `ui/src/components/PlanUsagePanel.tsx:120,121`
+> (`M` suffix formatting), `ui/src/components/Workspace.tsx:57` (`m`
+> suffix formatting). None is a context-window denominator (the live
+> denominator flows via `agent.tokenLimit` ← `contextUsage.total` ←
+> the backend map). Dropping `1_000_000` from the regex is FORBIDDEN
+> (it would un-guard the `claude-opus-4-1m` 1,000,000 window). Correct
+> fix = precise documented file-excludes. Replace the Step-1 test file
+> with EXACTLY:
+>
+> ```javascript
+> import test from 'node:test';
+> import assert from 'node:assert/strict';
+> import { execSync } from 'node:child_process';
+>
+> // Structural regression guard (design §6): once the context-window
+> // denominator is single-sourced in MODEL_CONTEXT_WINDOW, NO other
+> // src/ or ui/src/ file may hardcode a context-window literal. This
+> // makes the split-denominator divergence (Bug 2) structurally hard
+> // to reintroduce. The regex covers BOTH window magnitudes —
+> // 200_000 (every current Claude family) and 1_000_000
+> // (claude-opus-4-1m). Do NOT drop 1_000_000: that would un-guard
+> // the opus-1m window. Tighten only via audited file :(exclude)s.
+> test('no hardcoded context-window literal outside the single-source map', () => {
+>   let hits = '';
+>   try {
+>     hits = execSync(
+>       `git -C /c/Project-TOAD grep -nE "200[_]?000|1[_]?000[_]?000" -- ` +
+>       `toad-local/src toad-local/ui/src ` +
+>       // The canonical single source — the ONLY place a window literal lives.
+>       `":(exclude)toad-local/src/runtime/contextUsage/modelContextWindow.js" ` +
+>       // Audited 2026-05-16: the following use 1_000_000 for per-million
+>       // COST-RATE math / M|m-suffix number FORMATTING — NOT a
+>       // context-window denominator (verified: no token-limit/occupancy
+>       // divisor). Excluded so the guard stays strict everywhere else.
+>       `":(exclude)toad-local/ui/src/components/CostsScreen.tsx" ` +
+>       `":(exclude)toad-local/ui/src/components/PlanUsagePanel.tsx" ` +
+>       `":(exclude)toad-local/ui/src/components/Workspace.tsx"`,
+>       { encoding: 'utf8' }
+>     );
+>   } catch (e) {
+>     // git grep exits 1 when no matches — that's the pass case.
+>     hits = e.status === 1 ? '' : (e.stdout || '');
+>   }
+>   assert.equal(hits.trim(), '',
+>     `hardcoded context-window literal(s) found — route through MODEL_CONTEXT_WINDOW (do NOT add to the :(exclude) list unless audited non-denominator):\n${hits}`);
+> });
+> ```
+>
+> (`readFileSync` is no longer imported — it was unused in the
+> original snippet too; omit it.) RuntimeDrawer.tsx is NOT excluded —
+> T5 made it literal-free (verified), so the guard actively protects
+> it. After applying, Step 2 must PASS with these 4 excludes; if it
+> fails, a REAL denominator hardcode remains — fix the source, never
+> widen the exclude list without an audit comment.
+
 - [ ] **Step 2: Run — verify it PASSES post-migration**
 
 Run: `cd /c/Project-TOAD/toad-local && node --no-warnings --test test/contextUsage.regressionGuard.test.js`
