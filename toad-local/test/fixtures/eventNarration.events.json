@@ -1,0 +1,15 @@
+[
+  { "type": "tool_use", "toolName": "Read", "input": { "file_path": "/repo/src/recorder.ts" }, "createdAt": "2026-05-16T00:00:01.000Z", "raw": { "message": { "content": [{ "name": "Read", "input": { "file_path": "/repo/src/recorder.ts" } }] } } },
+  { "type": "tool_use", "toolName": "Bash", "input": { "command": "cargo test --all --features integration -- --nocapture extra" }, "createdAt": "2026-05-16T00:00:02.000Z", "raw": { "message": { "content": [{ "name": "Bash", "input": { "command": "cargo test --all --features integration -- --nocapture extra" } }] } } },
+  { "type": "tool_use", "toolName": "Edit", "input": { "file_path": "/repo/src/foo.rs", "old_string": "a\nb", "new_string": "a\nb\nc" }, "createdAt": "2026-05-16T00:00:03.000Z", "raw": { "message": { "content": [{ "name": "Edit", "input": { "file_path": "/repo/src/foo.rs" } }] } } },
+  { "type": "tool_use", "toolName": "mcp__toad__task_create", "input": { "taskId": "T-9", "subject": "wire it" }, "createdAt": "2026-05-16T00:00:04.000Z", "raw": { "message": { "content": [{ "name": "mcp__toad__task_create", "input": { "taskId": "T-9", "subject": "wire it" } }] } } },
+  { "type": "assistant_text", "text": "Investigating the auth path now.", "createdAt": "2026-05-16T00:00:05.000Z", "raw": { "message": { "content": [{ "type": "text", "text": "Investigating the auth path now." }] } } },
+  { "type": "assistant_text", "createdAt": "2026-05-16T00:00:06.000Z", "raw": { "message": { "content": [] } } },
+  { "type": "turn_completed", "createdAt": "2026-05-16T00:00:07.000Z", "raw": { "result": "done", "duration_ms": 6000, "usage": { "output_tokens": 222 } } },
+  { "type": "turn_completed", "createdAt": "2026-05-16T00:00:08.000Z", "raw": {} },
+  { "type": "turn_failed", "createdAt": "2026-05-16T00:00:09.000Z", "raw": { "usage": { "output_tokens": 4 } } },
+  { "type": "compact_boundary", "createdAt": "2026-05-16T00:00:10.000Z", "raw": { "subtype": "compact_boundary" } },
+  { "type": "api_retry", "createdAt": "2026-05-16T00:00:11.000Z", "raw": { "subtype": "api_retry" } },
+  { "type": "approval_request", "toolName": "Bash", "createdAt": "2026-05-16T00:00:12.000Z", "raw": { "request": { "subtype": "can_use_tool", "tool_name": "Bash" } } },
+  { "type": "runtime_event", "createdAt": "2026-05-16T00:00:13.000Z", "raw": { "subtype": "post_turn_summary", "status_detail": "compiling" } }
+]

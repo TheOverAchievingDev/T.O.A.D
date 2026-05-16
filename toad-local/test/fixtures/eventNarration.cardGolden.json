@@ -1,0 +1,30 @@
+[
+  {
+    "line": "Reading recorder.ts",
+    "kind": "tool"
+  },
+  {
+    "line": "Bash: cargo test --all --features integration -- --nocapture extra",
+    "kind": "tool"
+  },
+  {
+    "line": "Edit foo.rs",
+    "kind": "tool"
+  },
+  {
+    "line": "Created task T-9 — wire it",
+    "kind": "tool"
+  },
+  {
+    "line": "Investigating the auth path now.",
+    "kind": "text"
+  },
+  null,
+  null,
+  null,
+  null,
+  null,
+  null,
+  null,
+  null
+]

@@ -2,3 +2,4 @@
 node_modules/
 api-dev.err.log
 api-dev.out.log
+test/fixtures/.eventNarration.divergences.out

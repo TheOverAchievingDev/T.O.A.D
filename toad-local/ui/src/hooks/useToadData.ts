@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { callTool, ToadApiError, type Actor } from '@/api/client';
 import { useToadEvents, type RuntimeEvent } from '@/api/events';
 import { eventToStreamEntry, MAX_STREAM_PER_AGENT, type StreamEntry } from '@/utils/agentStream';
+import { narrate } from '../../../src/runtime/eventNarration/index.js';
 import type {
   Agent,
   AgentActivity,
@@ -387,6 +388,15 @@ function normalizeRuntime(raw: BackendRuntime): Runtime {
   };
 }
 
+function cardKind(k: 'tool' | 'text' | 'system'): AgentActivity['kind'] {
+  switch (k) {
+    case 'tool': return 'tool';
+    case 'text': return 'text';
+    case 'system': return 'thinking';
+    default: { const _exhaustive: never = k; return _exhaustive; }
+  }
+}
+
 /**
  * Map a raw SSE runtime event into a short, human-readable activity blurb
  * for the agent's card. Returns null when the event isn't worth surfacing
@@ -405,21 +415,16 @@ function deriveAgentActivity(event: RuntimeEvent): AgentActivity | null {
       (typeof (event as Record<string, unknown>).toolName === 'string' && (event as Record<string, unknown>).toolName as string)
       || ((event as { raw?: { message?: { content?: Array<{ name?: string }> } } }).raw?.message?.content?.[0]?.name)
       || 'tool';
-    const input =
-      ((event as { raw?: { message?: { content?: Array<{ input?: unknown }> } } }).raw?.message?.content?.[0]?.input as Record<string, unknown> | undefined)
-      || (event as { input?: Record<string, unknown> }).input;
-    const tool = String(toolName);
-    const summary = summarizeToolCall(tool, input);
-    return { kind: 'tool', label: summary, tool: tool.replace(/^mcp__[^_]+__/, ''), at };
+    const n = narrate(event);
+    return { kind: cardKind(n.kind), label: n.line, tool: String(toolName).replace(/^mcp__[^_]+__/, ''), at };
   }
   if (event.type === 'assistant_text') {
     const text =
       (typeof (event as Record<string, unknown>).text === 'string' && (event as Record<string, unknown>).text as string)
       || ((event as { raw?: { message?: { content?: Array<{ type?: string; text?: string }> } } }).raw?.message?.content?.find((c) => c.type === 'text')?.text);
     if (!text) return null;
-    const oneLine = text.replace(/\s+/g, ' ').trim();
-    const truncated = oneLine.length > 120 ? `${oneLine.slice(0, 117)}…` : oneLine;
-    return { kind: 'text', label: truncated, at };
+    const n = narrate(event);
+    return { kind: cardKind(n.kind), label: n.line, at };
   }
   // Hook events / system events — show "Thinking…" so the user knows the
   // agent is doing work even when no tool/text has arrived yet.
@@ -428,57 +433,6 @@ function deriveAgentActivity(event: RuntimeEvent): AgentActivity | null {
     if (subtype === 'task_started') return { kind: 'thinking', label: 'Working…', at };
   }
   return null;
-}
-
-function summarizeToolCall(toolName: string, input: Record<string, unknown> | undefined): string {
-  const safe = (v: unknown) => (typeof v === 'string' ? v : v === undefined ? '' : JSON.stringify(v));
-  // Strip MCP namespace prefix to keep the label tight on the card.
-  const short = toolName.replace(/^mcp__[^_]+__/, '');
-  if (short === 'task_create') {
-    const tid = safe(input?.taskId) || '';
-    const subj = safe(input?.subject) || '';
-    return `Created task ${tid}${subj ? ` — ${subj.slice(0, 60)}` : ''}`;
-  }
-  if (short === 'message_send') {
-    const to = (input?.to as { agentId?: string })?.agentId;
-    return `Sent message → ${to || 'team'}`;
-  }
-  if (short === 'task_update') {
-    return `Updated task ${safe(input?.taskId) || ''}`.trim();
-  }
-  if (short === 'task_plan_propose') {
-    return `Proposed plan for ${safe(input?.taskId) || 'task'}`;
-  }
-  if (short === 'review_decide') {
-    return `Review decided: ${safe(input?.decision) || ''}`;
-  }
-  if (short === 'validation_run') {
-    return `Running validation: ${safe(input?.kind) || ''}`;
-  }
-  if (short === 'Read') {
-    const fp = safe(input?.file_path);
-    const base = fp ? fp.split(/[/\\]/).pop() : '';
-    return `Reading ${base || 'file'}`;
-  }
-  if (short === 'Bash') {
-    const cmd = safe(input?.command);
-    return `Bash: ${cmd.slice(0, 60)}${cmd.length > 60 ? '…' : ''}`;
-  }
-  if (short === 'Edit' || short === 'Write') {
-    const fp = safe(input?.file_path);
-    const base = fp ? fp.split(/[/\\]/).pop() : '';
-    return `${short} ${base || 'file'}`;
-  }
-  if (short === 'Grep') {
-    return `Grep: ${safe(input?.pattern)?.slice(0, 60) || ''}`;
-  }
-  if (short === 'Glob') {
-    return `Glob: ${safe(input?.pattern) || ''}`;
-  }
-  if (short === 'TodoWrite') {
-    return 'Updated todos';
-  }
-  return `Tool: ${short}`;
 }
 
 function normalizeTeam(

@@ -1,0 +1,39 @@
+[
+  {
+    "line": "opened Read — /repo/src/recorder.ts",
+    "kind": "tool"
+  },
+  {
+    "line": "ran Bash — cargo test --all --features integration -- --nocapture extra",
+    "kind": "tool"
+  },
+  {
+    "line": "edited Edit — /repo/src/foo.rs",
+    "kind": "tool"
+  },
+  {
+    "line": "used task_create — T-9 — wire it",
+    "kind": "tool"
+  },
+  {
+    "line": "reported — Investigating the auth path now.",
+    "kind": "output"
+  },
+  null,
+  {
+    "line": "system: — Turn complete (6s)",
+    "kind": "system"
+  },
+  null,
+  null,
+  null,
+  null,
+  {
+    "line": "system: — Approval requested",
+    "kind": "system"
+  },
+  {
+    "line": "thinking: — compiling",
+    "kind": "thought"
+  }
+]

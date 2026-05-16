@@ -1,0 +1,159 @@
+{
+  "entries": {
+    "31bd3c3058520d4d4d852fcbe962f4af49010d35": {
+      "eventType": "tool_use",
+      "salient": {
+        "toolName": "Read",
+        "file_path": "/repo/src/recorder.ts",
+        "command": null,
+        "subtype": null
+      },
+      "feedOld": {
+        "line": "opened Read — /repo/src/recorder.ts",
+        "kind": "tool"
+      },
+      "cardOld": {
+        "line": "Reading recorder.ts",
+        "kind": "tool"
+      },
+      "new": {
+        "line": "Reading recorder.ts",
+        "kind": "tool"
+      },
+      "ruling": "card-was-right",
+      "rationale": "Basename + action verb ('Reading recorder.ts') is more readable than the feed's verbose 'opened Read — /full/path' format which leaks internal tool names and full paths."
+    },
+    "69122b2dee2f8c19f6010782049bae3aac17d9d8": {
+      "eventType": "tool_use",
+      "salient": {
+        "toolName": "Bash",
+        "file_path": null,
+        "command": "cargo test --all --features integration -- --nocapture extra",
+        "subtype": null
+      },
+      "feedOld": {
+        "line": "ran Bash — cargo test --all --features integration -- --nocapture extra",
+        "kind": "tool"
+      },
+      "cardOld": {
+        "line": "Bash: cargo test --all --features integration -- --nocapture extra",
+        "kind": "tool"
+      },
+      "new": {
+        "line": "Bash: cargo test --all --features integration -- --nocapture extra",
+        "kind": "tool"
+      },
+      "ruling": "card-was-right",
+      "rationale": "'Bash: <cmd>' leads directly with the command content without the redundant 'ran Bash — ' prefix that states the obvious."
+    },
+    "7dd147d3f5a9558e5a3348a99f6d09ff4f578c2a": {
+      "eventType": "tool_use",
+      "salient": {
+        "toolName": "Edit",
+        "file_path": "/repo/src/foo.rs",
+        "command": null,
+        "subtype": null
+      },
+      "feedOld": {
+        "line": "edited Edit — /repo/src/foo.rs",
+        "kind": "tool"
+      },
+      "cardOld": {
+        "line": "Edit foo.rs",
+        "kind": "tool"
+      },
+      "new": {
+        "line": "Edit foo.rs",
+        "kind": "tool"
+      },
+      "ruling": "card-was-right",
+      "rationale": "'Edit foo.rs' with basename is compact and unambiguous; the feed's 'edited Edit — /full/path' is redundant (verb + tool name) and exposes the full path unnecessarily."
+    },
+    "c7518c6b663dce8ec0b4d868cccca4631501a51b": {
+      "eventType": "tool_use",
+      "salient": {
+        "toolName": "mcp__toad__task_create",
+        "file_path": null,
+        "command": null,
+        "subtype": null
+      },
+      "feedOld": {
+        "line": "used task_create — T-9 — wire it",
+        "kind": "tool"
+      },
+      "cardOld": {
+        "line": "Created task T-9 — wire it",
+        "kind": "tool"
+      },
+      "new": {
+        "line": "Created task T-9 — wire it",
+        "kind": "tool"
+      },
+      "ruling": "card-was-right",
+      "rationale": "'Created task T-9 — wire it' is semantically specific whereas 'used task_create — ...' exposes the internal MCP method name rather than describing the action performed."
+    },
+    "e5a81c4b18afccddb368cc53a1260f83c09179f4": {
+      "eventType": "assistant_text",
+      "salient": {
+        "toolName": null,
+        "file_path": null,
+        "command": null,
+        "subtype": null
+      },
+      "feedOld": {
+        "line": "reported — Investigating the auth path now.",
+        "kind": "output"
+      },
+      "cardOld": {
+        "line": "Investigating the auth path now.",
+        "kind": "text"
+      },
+      "new": {
+        "line": "Investigating the auth path now.",
+        "kind": "text"
+      },
+      "ruling": "card-was-right",
+      "rationale": "Verbatim assistant text without a 'reported — ' prefix is less redundant; the kind already distinguishes this as a text event."
+    },
+    "d3c867d48de26ae42afcc0a997acc6b6d0e88dad": {
+      "eventType": "turn_completed",
+      "salient": {
+        "toolName": null,
+        "file_path": null,
+        "command": null,
+        "subtype": null
+      },
+      "feedOld": {
+        "line": "system: — Turn complete (6s)",
+        "kind": "system"
+      },
+      "cardOld": null,
+      "new": {
+        "line": "Turn complete (6s)",
+        "kind": "system"
+      },
+      "ruling": "new-unified",
+      "rationale": "card produced no line for turn_completed and feed prefixed 'system: — '; narrate unifies to a clean 'Turn complete (6s)' since the kind field already signals a system event."
+    },
+    "c85dab1dca4ec76e45a85bdbf5b5346f7fbb03c7": {
+      "eventType": "approval_request",
+      "salient": {
+        "toolName": "Bash",
+        "file_path": null,
+        "command": null,
+        "subtype": null
+      },
+      "feedOld": {
+        "line": "system: — Approval requested",
+        "kind": "system"
+      },
+      "cardOld": null,
+      "new": {
+        "line": "Awaiting approval: Bash",
+        "kind": "system"
+      },
+      "ruling": "new-unified",
+      "rationale": "Naming the specific tool ('Awaiting approval: Bash') is more actionable than the generic 'Approval requested', and drops the redundant 'system: — ' prefix."
+    }
+  }
+}

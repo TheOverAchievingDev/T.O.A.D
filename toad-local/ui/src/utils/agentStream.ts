@@ -1,4 +1,5 @@
 import type { RuntimeEvent } from '@/api/events';
+import { narrate } from '../../../src/runtime/eventNarration/index.js';
 
 export interface StreamEntry {
   /** Stable key for React rendering. Derived from event uuid + index. */
@@ -21,33 +22,13 @@ function formatTime(iso?: string): string {
   return d.toTimeString().slice(0, 8);
 }
 
-function safeString(v: unknown): string {
-  return typeof v === 'string' ? v : v === undefined ? '' : JSON.stringify(v);
-}
-
-function summarizeToolInput(toolName: string, input: Record<string, unknown> | undefined): string {
-  const short = toolName.replace(/^mcp__[^_]+__/, '');
-  if (short === 'Read') return safeString(input?.file_path);
-  if (short === 'Bash') return safeString(input?.command);
-  if (short === 'Edit' || short === 'Write') return safeString(input?.file_path);
-  if (short === 'Grep') return `pattern: ${safeString(input?.pattern)}`;
-  if (short === 'Glob') return safeString(input?.pattern);
-  if (short === 'task_create') return `${safeString(input?.taskId)} — ${safeString(input?.subject)}`;
-  if (short === 'message_send') {
-    const to = (input?.to as { agentId?: string })?.agentId;
-    const text = safeString(input?.text);
-    return `→ ${to || 'team'}: ${text.slice(0, 120)}`;
+function streamKind(k: 'tool' | 'text' | 'system'): StreamEntry['kind'] {
+  switch (k) {
+    case 'tool': return 'tool';
+    case 'text': return 'output';
+    case 'system': return 'system';
+    default: { const _exhaustive: never = k; return _exhaustive; }
   }
-  if (short === 'task_update') return `${safeString(input?.taskId)}`;
-  if (short === 'task_plan_propose') return `Plan for ${safeString(input?.taskId) || 'task'}`;
-  if (short === 'review_decide') return `Decision: ${safeString(input?.decision) || ''}`;
-  if (short === 'validation_run') return `Kind: ${safeString(input?.kind) || ''}`;
-  if (short === 'TodoWrite') {
-    const todos = input?.todos as Array<{ content?: string; status?: string }> | undefined;
-    if (Array.isArray(todos)) return todos.map((t) => `${t.status === 'completed' ? '✓' : '·'} ${t.content}`).join(' / ');
-    return '';
-  }
-  return JSON.stringify(input ?? {}).slice(0, 200);
 }
 
 /**
@@ -67,7 +48,8 @@ export function eventToStreamEntry(event: RuntimeEvent, idx: number): StreamEntr
       (typeof (event as Record<string, unknown>).text === 'string' && (event as Record<string, unknown>).text as string)
       || ((event as { raw?: { message?: { content?: Array<{ type?: string; text?: string }> } } }).raw?.message?.content?.find((c) => c.type === 'text')?.text);
     if (!text) return null;
-    return { id, time, kind: 'output', body: text };
+    const n = narrate(event);
+    return { id, time, kind: streamKind(n.kind), body: n.line };
   }
 
   if (event.type === 'tool_use') {
@@ -75,15 +57,13 @@ export function eventToStreamEntry(event: RuntimeEvent, idx: number): StreamEntr
       (typeof (event as Record<string, unknown>).toolName === 'string' && (event as Record<string, unknown>).toolName as string)
       || ((event as { raw?: { message?: { content?: Array<{ name?: string }> } } }).raw?.message?.content?.[0]?.name)
       || 'tool';
-    const input =
-      ((event as { raw?: { message?: { content?: Array<{ input?: unknown }> } } }).raw?.message?.content?.[0]?.input as Record<string, unknown> | undefined)
-      || (event as { input?: Record<string, unknown> }).input;
+    const n = narrate(event);
     return {
       id,
       time,
-      kind: 'tool',
+      kind: streamKind(n.kind),
       tool: String(toolName).replace(/^mcp__[^_]+__/, ''),
-      body: summarizeToolInput(String(toolName), input),
+      body: n.line,
     };
   }
 
@@ -103,15 +83,14 @@ export function eventToStreamEntry(event: RuntimeEvent, idx: number): StreamEntr
 
   if (event.type === 'turn_completed') {
     const result = (event as { raw?: { result?: string; duration_ms?: number; num_turns?: number } }).raw;
-    if (result?.result) {
-      const dur = result.duration_ms ? ` (${Math.round(result.duration_ms / 1000)}s)` : '';
-      return { id, time, kind: 'system', body: `Turn complete${dur}` };
-    }
-    return null;
+    if (!result?.result) return null;
+    const n = narrate(event);
+    return { id, time, kind: streamKind(n.kind), body: n.line };
   }
 
   if (event.type === 'approval_request') {
-    return { id, time, kind: 'system', body: 'Approval requested' };
+    const n = narrate(event);
+    return { id, time, kind: streamKind(n.kind), body: n.line };
   }
 
   return null;
