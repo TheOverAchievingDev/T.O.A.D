@@ -150,20 +150,44 @@ never mutates working state:
        finding, **does not block** (needs its own remediation task).
      - hit in worktree **only** → **introduced by this merge** →
        **gate → block**.
-3. **Binary skip — one shared `isTextFile` helper (no asymmetry).**
+3. **Binary skip — one shared `isTextFile` helper; gate opts into the
+   stricter probe (RATIFIED AMENDMENT — see note).**
    Binary detection is extracted into a shared pure helper
-   `isTextFile(path, { content?, runGit?, projectCwd? })` → boolean,
-   the same one-source-of-truth extraction pattern as
-   `evalConstitutionRule` (§4.2). It combines the stricter signals
-   (`git check-attr binary` + an extension/MIME binary set) and
-   subsumes scanConstitution's existing ad-hoc `TEXT_EXT` regex —
-   **both** the whole-tree scanner and the gate route binary
-   decisions through `isTextFile`, so the stricter check is used
-   everywhere and the two paths cannot drift. (The earlier draft made
-   the gate deliberately stricter than scanConstitution; consolidation
-   is preferred over a defended asymmetry — the stricter check is the
-   one you want in both places.) Prevents a rule like "no API keys in
-   source" spuriously matching a base64 chunk inside a PNG.
+   `isTextFile(path, { runGit?, projectCwd? })` → boolean, the same
+   one-source-of-truth extraction pattern as `evalConstitutionRule`
+   (§4.2): one helper, one extension allow-list, one decision
+   function. It subsumes scanConstitution's old ad-hoc `TEXT_EXT`
+   regex. **Both** the whole-tree scanner and the gate route binary
+   decisions through `isTextFile` — there is exactly one
+   implementation, so the *logic* cannot drift. The two call sites
+   differ only in whether they engage the helper's *optional*
+   `git check-attr binary` probe:
+
+   - `constitutionMergeGate` calls `isTextFile(file, { runGit,
+     projectCwd })` — engages the stricter `git check-attr binary`
+     probe (catches a `.gitattributes`-flagged generated/vendored blob
+     that slips the extension allow-list).
+   - `scanConstitution` calls `isTextFile(rel)` — extension-only, no
+     probe.
+
+   > **Ratified-amendment note.** The original §4.3 draft mandated the
+   > probe in *both* places ("the stricter check everywhere, no
+   > asymmetry"). During Task-4 review this was deliberately amended:
+   > `scanConstitution` runs whole-tree on **every drift tick**
+   > (periodic + task-event cadence), so spawning one `git check-attr`
+   > subprocess **per file per tick** is an unacceptable hot-path
+   > cost; the merge gate runs only at the **infrequent merge
+   > boundary**, where the per-changed-file probe cost is negligible
+   > and the extra strictness is worth it. The single-source-of-truth
+   > goal is still met (one helper, identical logic); the asymmetry is
+   > only *which optional signal each cost-context opts into*, mirrored
+   > by the in-code comment at the gate's `isTextFile` call. Future
+   > contributors: do **not** "consolidate" `scanConstitution` onto the
+   > probe — that regresses the every-tick hot path and this amendment
+   > is the reason.
+
+   Prevents a rule like "no API keys in source" spuriously matching a
+   base64 chunk inside a PNG.
 
 ### 4.4 Reviewed-spec clamp
 
