@@ -116,8 +116,14 @@ impossibility of layer-divergence, not a convention.
 > logical question another check already asks, the answer is a shared
 > helper, never a reimplementation.** Cost of the principle: one
 > extraction per case. Cost of violating it: silent layer-divergence
-> bugs that are near-undiagnosable. State this in the Symphony
-> architecture notes so it is not re-litigated each time.
+> bugs that are near-undiagnosable.
+>
+> **Action item (tracked, not floating):** the implementation plan
+> MUST include a step that records this as a named doctrine in
+> `PROJECT.md` (alongside the §8/§8a drift doctrine it already holds)
+> — "shared-helper-over-reimplementation, with a lockstep-agreement
+> test." Naming the destination here so the meta-instruction does not
+> get lost between specs.
 
 ## 5. `meetsMagnitudeFloor`
 
@@ -175,6 +181,19 @@ The gate defines the rules; the engine respects them. Inverting this
 consumers of a rule with no source of truth — the exact anti-pattern
 the §4 lockstep test exists to prevent.
 
+> **Pre-existing duplicate to repoint (lockstep, in Slice B scope).**
+> The submission set is currently defined **twice**, independently:
+> `l3Gate.js` (`const SUBMISSION = new Set(['review','merge_ready',
+> 'done'])`, module-local, unexported) and `driftMonitor.js`
+> (`TRIGGER_TRANSITIONS = new Set(['review','merge_ready','done'])`,
+> its own copy; it does not import from `l3Gate`). Making `l3Gate.js`
+> the canonical owner means Slice B's export work MUST also repoint
+> `driftMonitor.js`'s `TRIGGER_TRANSITIONS` at the shared export (same
+> `isFileDeclaredByModule` lockstep principle — do not leave a third
+> path defining the set). This repoint is in Slice B's blast radius
+> (§14) and gets its own lockstep coverage; `driftMonitor`'s existing
+> tests must stay green across the repoint.
+
 ## 7. Engine wiring (honest blast radius — wider than "only the body")
 
 Today the engine passes a **literal `silentSignificant: false`** at
@@ -204,17 +223,35 @@ packet-builder change.** The engine selects `l1Signal` by precedence:
   findings: [...] }` — Slice A, unchanged, **wins** (more specific
   signal);
 - else (silent path) → `{ kind: 'silent_significant',
-  declaredFiles: [the matched changed files], changedLines: N,
+  declaredFiles: [the matched changed files], declaredFilesTotal: T,
+  declaredFilesTruncated: boolean, changedLines: N,
   note: "L1 raised no semantic-review flag. This diff modifies
   spec-declared module surface (listed) by N lines. Adjudicate
   whether the change semantically drifts from spec.json — L1 is
   structurally blind to behavior change within declared structure." }`.
 
+**`declaredFiles` cardinality cap (pinned).** `declaredFiles` is
+capped at **20** entries. If more matched, include the first 20
+(stable order: the diff's changed-file order) and set
+`declaredFilesTotal: T` (the true count) and
+`declaredFilesTruncated: true`; the `note` gains a trailing
+`" (showing 20 of T modified declared files)"`. The judge needs a
+representative sample to reason about scope, not the exhaustive list;
+this keeps the packet kilobyte-scale (the L3 reform §4.1 budget
+assumed bounded inputs) and deterministic on large refactors. When
+not truncated, `declaredFilesTotal === declaredFiles.length` and
+`declaredFilesTruncated: false`.
+
 ## 9. Verdict cache — flagged and silent must not cross-serve
 
-`l3CacheKey` gains a new component, `l1SignalKind`, folded into the
-hash alongside `diffHash + specProvenanceHash + l1FindingSetHash +
-l3PromptHash`. Rationale: a flagged invocation and a silent invocation
+`l3CacheKey` gains **one** new component, `l1SignalKind`, folded into
+the hash alongside the **four pre-existing Slice-A components**
+`diffHash + specProvenanceHash + l1FindingSetHash + l3PromptHash`.
+Attribution (so the plan budgets correctly): `l3PromptHash` and the
+other three already exist and are already folded into `l3CacheKey` in
+**shipped Slice A** (`l3Gate.js`) — Slice B does **not** introduce
+them; Slice B's entire cache-key change is the single additive
+`l1SignalKind` component. Rationale: a flagged invocation and a silent invocation
 for the *same* diff/spec/prompt represent different adjudication
 framings (different packet `l1Signal`) and may yield different
 verdicts; they must be **structurally** distinct cache entries, not
@@ -249,10 +286,25 @@ engine emits a single meta-finding:
 
 - `severity: 'observer'` (reuses Slice A's observer taxonomy: weight
   0, surfaced, never scored, never blocking);
-- `checkName: 'check_llm_semantic'`, a stable code such as
-  `silent_clean`;
+- `checkName: 'check_llm_semantic'`, a stable code `silent_clean`;
 - human text along the lines of *"Silent-significance check ran on
   task X (modified N declared file(s) by M lines): clean."*
+
+> **Taxonomy registration (grep-verified, no new entry needed).**
+> `checkKinds.js` keys the taxonomy on **`checkName` only**
+> (`check_llm_semantic: 'drift'`); the `code` passed to `#l3Meta`
+> (`rate_cap`, `over_budget`, `judge_failed`, and now `silent_clean`)
+> is purely an id/title field (`id: f_l3_<code>_<team>`,
+> `title: "L3 <code>"`), **not** a registered taxonomy key. Verified
+> by grep that nothing — not `checkKinds`, not the scorer, not the UI
+> — switches on the L3 meta `code` (the only `=== 'rate_cap'` is
+> inside `#l3Meta` itself, for its own recommendedCorrection text; the
+> stray `judge_failed` hits live in `ui/src-tauri/target/**` which is
+> stale Rust/Tauri build output of the deleted `checkLlmSemantic.js`,
+> not live source). `silent_clean` therefore rides on the existing
+> `check_llm_semantic: 'drift'` mapping with **zero** taxonomy/registry
+> change and cannot trip the `checkKinds` load-time guard. No
+> code-level distinction exists anywhere to keep in lockstep.
 
 It is **operator-UI-only**: explicitly **not** lead-routed and **not**
 action-required. The lead review-packet bundling (L3 reform §6) keys
@@ -327,7 +379,12 @@ diff touching `src/sampler.rs` with ≥ floor non-whitespace lines and
 no L1 flag → gate `invoke` with reason `ambiguous` (silent path); a
 3-line change to `src/sampler.rs` → `skip` (below floor); a large
 change to a non-declared file → `skip` (not declared surface); a
-whitespace-only reformat of `src/sampler.rs` → `skip` (zero magnitude).
+whitespace-only reformat of `src/sampler.rs` → `skip` (zero
+magnitude); **a comment-only change of ≥ floor lines to
+`src/sampler.rs` → `invoke` (silent path) — exercising the documented
+comment-inclusive limitation on real Reaper so it is observable, not
+theoretical (and confirming the cheap Haiku verdict path it relies
+on).**
 
 ## 13. Non-goals (named so they do not creep)
 
@@ -353,12 +410,21 @@ Not "just the stub body":
   duplicates) re-pointed at it; L1.2 tests unchanged & green.
 - **Commit 2 (Slice B):** `silentButSignificant` body;
   `touchesDeclaredSurface` + `meetsMagnitudeFloor`;
-  `l3CheapEligible` + `SUBMISSION` export from `l3Gate.js`; engine
-  wiring at **both** gate call sites + cheap-eligibility guard +
-  `l1Signal` kind selection; `l3CacheKey` `l1SignalKind` fold;
-  `DEFAULT_SETTINGS.drift.l3SilentMagnitudeFloor`; the `silent_clean`
-  observer telemetry meta; unit + lockstep + gate + engine + cache
-  tests; Reaper dogfood.
+  `l3CheapEligible` + `SUBMISSION` export from `l3Gate.js` **plus
+  repointing `driftMonitor.js`'s duplicate `TRIGGER_TRANSITIONS` at
+  the shared export** (§6, with its own lockstep coverage;
+  `driftMonitor` tests stay green); engine wiring at **both** gate
+  call sites + cheap-eligibility guard + `l1Signal` kind selection +
+  `declaredFiles` 20-cap/truncation; `l3CacheKey` **single additive**
+  `l1SignalKind` fold (the other four key components pre-exist in
+  Slice A); `DEFAULT_SETTINGS.drift.l3SilentMagnitudeFloor`; the
+  `silent_clean` observer telemetry meta (rides on existing
+  `check_llm_semantic` taxonomy — no registry change); unit +
+  lockstep + gate + engine + cache tests; Reaper dogfood (incl. the
+  comment-only observability case).
+- **Doc deliverable (in the plan):** record the
+  shared-helper-over-reimplementation doctrine in `PROJECT.md` (§4
+  action item).
 
 ## 15. Spec self-review
 
@@ -367,13 +433,19 @@ Not "just the stub body":
   (floor 10), enum (`'flagged' | 'silent_significant'`), and file
   locus.
 - **Internal consistency:** §5's whitespace-excluded / comment-included
-  / binary-zero matches the §12 truth-table cases exactly; §10's
-  observer-severity + not-lead-routed is consistent with the L3 reform
-  §6 lead-bundling predicate (drift findings only) and §3.4 observer
-  taxonomy (weight 0, surfaced); §9's kind-fold matches §11's
-  cache-invalidating `'contract_silent'` note.
+  / binary-zero matches the §12 truth-table cases exactly (incl. the
+  new comment-only dogfood line); §10's observer-severity +
+  not-lead-routed + grep-verified no-new-taxonomy is consistent with
+  the L3 reform §6 lead-bundling predicate (drift findings only) and
+  §3.4 observer taxonomy (weight 0, surfaced); §8's `declaredFiles`
+  20-cap/truncation fields (`declaredFilesTotal`/`Truncated`) are
+  consistent with the L3 reform §4.1 kilobyte budget; §9's single
+  additive `l1SignalKind` fold (four components pre-exist Slice A)
+  matches §11's cache-invalidating `'contract_silent'` note and the
+  §14 attribution; §6's `driftMonitor` repoint is reflected in §14's
+  blast radius.
 - **Scope:** one implementation plan, two commits (extraction then
-  feature); Slice C explicitly out.
+  feature) + a `PROJECT.md` doctrine doc step; Slice C explicitly out.
 - **Ambiguity:** "silent" defined unambiguously as emergent from the
   gate, not a predicate clause; "declared surface" pinned to
   `structure.required` modules via the shared L1.2 resolver;
