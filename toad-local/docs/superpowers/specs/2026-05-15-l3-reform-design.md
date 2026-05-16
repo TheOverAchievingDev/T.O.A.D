@@ -134,11 +134,31 @@ never cached so the next boundary retries.
 correctness is the kind of thing that goes quietly wrong)
 
 - **`diffHash`** = sha1 over the **sorted list of changed files, each
-  paired with the sha1 of its post-image content** — NOT the full
-  diff text. Rationale: the judge reasons about *what the code says*,
-  not how the diff is formatted; content-hash is stable to
-  whitespace/formatting churn → more cache hits on no-real-change
-  transitions, while still changing whenever real content changes.
+  paired with the sha1 of a whitespace-normalized rendering of the
+  scoped diff content the judge will read for that file-scope**, NOT
+  the raw diff text verbatim. Rationale: the judge reasons about
+  *what the code says*, not how the diff is formatted; the
+  normalization (collapse horizontal whitespace, trim each line, drop
+  trailing blank lines) is stable to whitespace/formatting churn →
+  more cache hits on no-real-change transitions, while still changing
+  whenever real content or the changed-file set changes.
+
+  > **Ratified-amendment note (T7 review).** The original draft said
+  > "sha1 of each file's *post-image content*". The implemented +
+  > planned construction hashes the **scoped diff text the judge
+  > actually reads** (from `snapshot.diffsByTask[taskId]`: the changed-
+  > file list + the task's diff body), not a separately-read per-file
+  > post-image. This is deliberately ratified as the correct key: the
+  > cache answers "would re-running the judge on *this packet* produce
+  > the same verdict?", and the judge's packet contains the diff, not
+  > post-image files — so hashing exactly what the judge sees is the
+  > precise staleness signal. (The snapshot does not carry per-file
+  > post-images; reading/splitting them would add I/O for a weaker
+  > key.) `diffHash`'s JSDoc states this as-built contract so a future
+  > contributor does not "restore" a post-image read that the design
+  > does not actually want. Whitespace-significant-language indent-
+  > only changes collapsing to one hash is a documented, accepted
+  > tradeoff (norm() comment + a named test).
 - **`spec.provenanceHash`** = sha1 over the exact fields
   `{ version, provenance.reviewed, provenance.extracted_at,
   provenance.extracted_by }`. A ratification flip
