@@ -40,6 +40,13 @@ export interface Agent {
   tokenLimit: number;
   contextStale?: boolean;
   contextSource?: 'precise' | 'coarse' | 'unknown';
+  loc?: {
+    added: number;
+    removed: number;
+    removedUnknown: boolean;
+    filesTouched: number;
+    byFile: Record<string, { added: number; removed: number }>;
+  };
   provider: string;
   model: string;
   tasksDone: number;

@@ -195,6 +195,14 @@ export function AgentCard({ agent, selected, onSelect, variant = 'detail' }: Age
             {formatTokens(agent.tokens)}
           </span>
           <div className="tokens-bar"><div className="tokens-bar-fill" style={{ width: `${tokensPct}%` }} /></div>
+          {agent.loc !== undefined && (
+            <span
+              style={{ color: 'var(--fg-dim)', fontSize: '0.85em', whiteSpace: 'nowrap' }}
+              title={`Activity volume — requested edits; the runtime emits no applied-diff signal, so failed/denied edits are included. Overwrite-write removals are unknowable (—).${Object.entries(agent.loc.byFile).map(([file, fc]) => `\n${file}: +${fc.added} / −${fc.removed}`).join('')}`}
+            >
+              +{agent.loc.added}&nbsp;/&nbsp;{agent.loc.removedUnknown ? '—' : `−${agent.loc.removed}`}
+            </span>
+          )}
           <span style={{ color: 'var(--fg-dim)' }}>· {agent.tasksDone} done</span>
         </div>
       </div>

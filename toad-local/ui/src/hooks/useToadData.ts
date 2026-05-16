@@ -3,6 +3,7 @@ import { callTool, ToadApiError, type Actor } from '@/api/client';
 import { useToadEvents, type RuntimeEvent } from '@/api/events';
 import { eventToStreamEntry, MAX_STREAM_PER_AGENT, type StreamEntry } from '@/utils/agentStream';
 import { narrate } from '../../../src/runtime/eventNarration/index.js';
+import { accumulateLoc } from '../../../src/runtime/locCount/index.js';
 import type {
   Agent,
   AgentActivity,
@@ -519,6 +520,11 @@ export function useToadData(preferredTeamId: string | null = null): ToadData {
   // not grow this unbounded.
   const [agentStreams, setAgentStreams] = useState<Record<string, StreamEntry[]>>({});
   const streamCounterRef = useRef(0);
+  // Per-agent raw RuntimeEvent buffer for LoC accumulation. Holds only
+  // tool_use events (the only kind locForEvent can score). Bounded to
+  // MAX_STREAM_PER_AGENT, mirroring the agentStreams trim.
+  const runtimeEventsByAgentRef = useRef<Record<string, RuntimeEvent[]>>({});
+  const [locByAgent, setLocByAgent] = useState<Record<string, NonNullable<Agent['loc']>>>({});
 
   const refresh = useCallback(() => {
     refreshNonceRef.current += 1;
@@ -681,20 +687,37 @@ export function useToadData(preferredTeamId: string | null = null): ToadData {
           return { ...prev, [agentId]: trimmed };
         });
       }
+      // LoC accumulation: only tool_use events carry Edit/Write/MultiEdit
+      // inputs that locForEvent can score. Buffer them per-agent (bounded),
+      // then recompute the running total for this agent.
+      if (event.type === 'tool_use') {
+        const existing = runtimeEventsByAgentRef.current[agentId] ?? [];
+        const next = [...existing, event];
+        const trimmed = next.length > MAX_STREAM_PER_AGENT
+          ? next.slice(next.length - MAX_STREAM_PER_AGENT)
+          : next;
+        runtimeEventsByAgentRef.current[agentId] = trimmed;
+        // LoC ignore-filtering wired with no rules in Slice 1 — useToadData has no .gitignore/settings access here; the matcher is pure + tested, gitignore/locIgnorePaths sourcing is a documented follow-up (spec §6.2). No-filter is the honest default, not a silent failure.
+        const locForAll = accumulateLoc(runtimeEventsByAgentRef.current[agentId], { gitRules: [], locIgnorePaths: [] });
+        setLocByAgent((prev) => ({
+          ...prev,
+          [agentId]: locForAll[agentId] ?? { added: 0, removed: 0, removedUnknown: false, filesTouched: 0, byFile: {} },
+        }));
+      }
     }
   }, [refresh]);
 
-  // Re-derive team membership when activity stream updates so cards show
-  // the latest activity even if no fetch happened.
+  // Re-derive team membership when activity stream or LoC data updates so
+  // cards show the latest activity and LoC indicator even without a fetch.
   useEffect(() => {
     setTeam((prev) => {
       if (!prev || prev === EMPTY_TEAM) return prev;
       return {
         ...prev,
-        members: prev.members.map((m) => ({ ...m, activity: activityByAgent[m.id] ?? m.activity ?? null })),
+        members: prev.members.map((m) => ({ ...m, activity: activityByAgent[m.id] ?? m.activity ?? null, loc: locByAgent[m.id] ?? m.loc })),
       };
     });
-  }, [activityByAgent]);
+  }, [activityByAgent, locByAgent]);
 
   useToadEvents({ onEvent: handleEvent });
 
