@@ -682,7 +682,25 @@ Expected: FAIL — no preflight wired; block case still calls supervisor.
 - `refreshOnceImpl = null` (when null, build the real `defaultRefreshOnce` bound with the Windows-safe spawn + `llmJudge`'s `CLAUDE_ISOLATION_FLAGS`)
 - a private `#authPreflightMutex = Promise.resolve()` and `#authRelaunchState = new Map()` (wiring-layer state, NOT in the pure core)
 - a private `#authPreflightEnabled` set in the constructor to `typeof projectCwd === 'string' && projectCwd.length > 0` — the **exact** enable idiom this file already uses for every production-only collaborator (`worktreeManager`/`mergeChecker`/`mergeIntegrator`/`riskPolicy`/`remoteMergePolicy`/`riskPolicyStore`). **CONTROLLER-RATIFIED (T7, §8d):** the original plan gated the preflight on `isClaudeCommand` alone and Step 5's rationale wrongly asserted the existing suite is "non-claude/no-command" — it is in fact `command:'claude'` 12/12 with no projectCwd. The projectCwd gate is what actually keeps the existing suite hermetic (a true no-op, not green-by-machine-luck) while staying non-inert in production (every real launch path sets projectCwd) and spec-faithful to §4.3.
-- `readClaudeCredsStatus = () => getAuthStatus({ providerId: 'anthropic' })` (import `getAuthStatus` from `../providers/providerAuth.js`). **CONTROLLER-RATIFIED (T7 grounding, §8d):** the original plan said "reuse the existing provider-auth DI seam … `readFileImpl:this.providerAuthReadFile, statImpl:this.providerAuthStat`". That seam **does not exist** — `LocalToadRuntime` has NO `this.providerAuthReadFile`/`this.providerAuthStat`; its `providerAuthSpawn`/`providerAuthSpawnSync` constructor params are passed straight into `LocalToolFacade` (≈L207-208) and are never stored on `this`. The verified-correct seam is the whole-function injection pattern this file already uses (`*Impl = null → build real default`): the real default `getAuthStatus({ providerId:'anthropic' })` reads `~/.claude/.credentials.json` via providerAuth's own real `readFileSync`/`statSync` defaults and returns `{ providerId, supported, signedIn, tokenStatus, reason }` — exactly the pure core's `readCredsStatus()` contract. Tests inject a fake `readClaudeCredsStatus` **function** via the constructor (NOT readFile/stat sub-seams). `TOKEN_STATUS` is consumed by the pure core, not needed in `LocalToadRuntime` — import only `getAuthStatus`.
+- `readClaudeCredsStatus = () => readClaudeCredsStatusForPreflight()` (import `readClaudeCredsStatusForPreflight` from `../providers/providerAuth.js`). **CONTROLLER-RATIFIED #1 (T7 grounding, §8d):** the original plan said "reuse the existing provider-auth DI seam … `readFileImpl:this.providerAuthReadFile, statImpl:this.providerAuthStat`". That seam **does not exist** — `LocalToadRuntime` has NO `this.providerAuthReadFile`/`this.providerAuthStat`; its `providerAuthSpawn`/`providerAuthSpawnSync` constructor params are passed straight into `LocalToolFacade` (≈L207-208) and are never stored on `this`. The verified-correct seam is the whole-function injection pattern this file already uses (`*Impl = null → build real default`). Tests inject a fake `readClaudeCredsStatus` **function** via the constructor (NOT readFile/stat sub-seams).
+  **CONTROLLER-RATIFIED #2 (whole-impl-review-found CRITICAL — the no-creds fail-open):** the default must NOT be the bare `() => getAuthStatus({ providerId:'anthropic' })`. Independently verified against the real code: `getAuthStatus`→`readFileStatus` has THREE early returns that bypass `parseAnthropicFileStatus` and therefore **omit `tokenStatus` entirely** — ENOENT/missing file (providerAuth.js L201-206), non-ENOENT read failure (L208-213), JSON-parse failure (L220-225). With `tokenStatus===undefined` the pure core (which has NO 4th branch — its post-`UNRECOVERABLE` path *is* the implicit stale_refreshable path) skips FRESH and UNRECOVERABLE, **pointlessly spawns `claude --print`, and ends in `proceed+warn`** for the single most common doomed state (never logged in / logged out / creds file deleted). That defeats the feature's core goal (a knowably-dead state must `block` fast, not fail open). Fix at the `tokenStatus` source-of-truth: add an exported pure helper to `src/providers/providerAuth.js`:
+  ```javascript
+  // The Claude preflight requires a sealed tokenStatus. readFileStatus's
+  // ENOENT / unreadable / unparseable early-returns bypass
+  // parseAnthropicFileStatus and omit tokenStatus — those states mean
+  // "no usable token", strictly worse than expired-no-refresh →
+  // UNRECOVERABLE (fail-closed; honest-degradation: never proceed on a
+  // state we cannot substantiate). Pure; statImpl/readFileImpl injectable
+  // for hermetic unit tests via the seam getAuthStatus already threads.
+  export function readClaudeCredsStatusForPreflight(opts = {}) {
+    const s = getAuthStatus({ providerId: 'anthropic', ...opts });
+    if (!s || !s.tokenStatus) {
+      return { ...s, tokenStatus: TOKEN_STATUS.UNRECOVERABLE };
+    }
+    return s;
+  }
+  ```
+  `LocalToadRuntime` imports only `readClaudeCredsStatusForPreflight` (NOT `getAuthStatus`/`TOKEN_STATUS`). The pure core stays untouched (it correctly trusts its injected-IO contract — the violation was in the default IO provider, not the core). This is Claude-scoped (does NOT modify the generic `readFileStatus` → zero codex/gemini facade / Commit-1 byte-identical-regression risk). `providerAuth.js` (additive export, existing functions byte-unchanged) joins the Commit-2 file list (ratified separately).
 
 (b) A helper to detect the Claude CLI from `input.command` (grounded — provider lives in `input.command`, basename, Windows `.cmd`/`.exe` tolerant):
 
@@ -799,7 +817,14 @@ Run: `cd /c/Project-TOAD/toad-local/ui && npm run typecheck 2>&1 | grep -E "erro
 # it (verified via diff). Committing without RuntimeSupervisor.js would
 # land LocalToadRuntime.js importing a non-exported symbol → broken main.
 # RuntimeSupervisor.js is therefore part of the atomic Commit-2 surface.
-git -C /c/Project-TOAD add toad-local/src/runtime/authPreflight toad-local/test/authPreflight.decision.test.js toad-local/test/authPreflight.refreshOnce.test.js toad-local/src/app/LocalToadRuntime.js toad-local/src/runtime/RuntimeSupervisor.js toad-local/test/localToadRuntime.authPreflight.test.js toad-local/package.json
+# CONTROLLER-RATIFIED #2 (whole-impl-review CRITICAL fix): the no-creds
+# fail-open is fixed by an additive exported `readClaudeCredsStatusForPreflight`
+# in toad-local/src/providers/providerAuth.js (existing functions
+# byte-unchanged — Commit-1 providerAuth/facade regression guards stay
+# green) + its hermetic unit test toad-local/test/authPreflight.credsContract.test.js
+# (also wired into package.json scripts.test — un-wired-test trap).
+# Both join the atomic Commit-2 surface.
+git -C /c/Project-TOAD add toad-local/src/runtime/authPreflight toad-local/test/authPreflight.decision.test.js toad-local/test/authPreflight.refreshOnce.test.js toad-local/test/authPreflight.credsContract.test.js toad-local/src/app/LocalToadRuntime.js toad-local/src/runtime/RuntimeSupervisor.js toad-local/src/providers/providerAuth.js toad-local/test/localToadRuntime.authPreflight.test.js toad-local/package.json
 git -C /c/Project-TOAD commit -m "$(cat <<'EOF'
 feat(auth): Claude pre-launch token preflight gate (Layer B)
 
