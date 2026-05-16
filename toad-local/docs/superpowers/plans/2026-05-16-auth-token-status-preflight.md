@@ -792,7 +792,14 @@ Run: `cd /c/Project-TOAD/toad-local/ui && npm run typecheck 2>&1 | grep -E "erro
 - [ ] **Step 1: Commit** (explicit file list):
 
 ```bash
-git -C /c/Project-TOAD add toad-local/src/runtime/authPreflight toad-local/test/authPreflight.decision.test.js toad-local/test/authPreflight.refreshOnce.test.js toad-local/src/app/LocalToadRuntime.js toad-local/test/localToadRuntime.authPreflight.test.js toad-local/package.json
+# CONTROLLER-RATIFIED (T8/T9, §8d): the original list OMITTED
+# toad-local/src/runtime/RuntimeSupervisor.js. T7's LocalToadRuntime.js
+# imports `resolveWindowsCommand` from RuntimeSupervisor.js — that symbol
+# only exists because T7 added an (additive, body-unchanged) `export` to
+# it (verified via diff). Committing without RuntimeSupervisor.js would
+# land LocalToadRuntime.js importing a non-exported symbol → broken main.
+# RuntimeSupervisor.js is therefore part of the atomic Commit-2 surface.
+git -C /c/Project-TOAD add toad-local/src/runtime/authPreflight toad-local/test/authPreflight.decision.test.js toad-local/test/authPreflight.refreshOnce.test.js toad-local/src/app/LocalToadRuntime.js toad-local/src/runtime/RuntimeSupervisor.js toad-local/test/localToadRuntime.authPreflight.test.js toad-local/package.json
 git -C /c/Project-TOAD commit -m "$(cat <<'EOF'
 feat(auth): Claude pre-launch token preflight gate (Layer B)
 
