@@ -890,11 +890,23 @@ test('accumulateLoc: per-agent {added,removed,removedUnknown,filesTouched}, igno
   ];
   const out = accumulateLoc(events, { gitRules: ['*.lock'], locIgnorePaths: [] });
   assert.deepEqual(out.dev, { added: 1 + 1 + 2, removed: 1 + 0 + 0, removedUnknown: true, filesTouched: 2 });
-  assert.deepEqual(out.qa, { added: 1, removed: 2, removedUnknown: false, filesTouched: 1 });
+  assert.deepEqual(out.qa, { added: 0, removed: 2, removedUnknown: false, filesTouched: 1 });
 });
 ```
 
-(`a.ts` Edit added: `lineCount('x\ny')=2 removed lineCount('x')=1`; Write `b.ts` added 2 removedKnown false; `pnpm.lock` ignored; qa `a.ts` added `lineCount('')=0`? — note: qa Edit new_string `''` → added 0, removed `lineCount('x\ny')=2`. Adjust expected: `out.qa = { added: 0, removed: 2, removedUnknown: false, filesTouched: 1 }`. Fix the assertion to `added: 0` before running.)
+> **Controller ratification (T12):** the assertion above is the
+> corrected one (`out.qa.added: 0`). Trace: dev Edit `a.ts` `x`→`x\ny`
+> = added `lineCount('x\ny')`=2 / removed `lineCount('x')`=1; dev Write
+> `b.ts` `'p\nq'` = added 2 / removed 0 / removedUnknown; dev Edit
+> `pnpm.lock` is `*.lock`-ignored (skipped) → `out.dev = { added: 4
+> (2+2), removed: 1 (1+0), removedUnknown: true, filesTouched: 2 }`
+> (the `1 + 1 + 2`/`1 + 0 + 0` expressions evaluate to 4/1 — correct).
+> qa Edit `a.ts` `x\ny`→`''` is NOT a no-op (old≠new) → added
+> `lineCount('')`=0 / removed `lineCount('x\ny')`=2 →
+> `out.qa = { added: 0, removed: 2, removedUnknown: false,
+> filesTouched: 1 }`. Implement the test block exactly as shown
+> (with `added: 0`); the earlier "fix before running" prose note is
+> superseded by this ratified assertion.
 
 - [ ] **Step 2: Run — verify fail** — Run: `cd /c/Project-TOAD/toad-local && node --no-warnings --test test/locCount.test.js` — Expected: FAIL (`accumulateLoc` not a function).
 
