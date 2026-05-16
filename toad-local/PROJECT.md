@@ -319,6 +319,26 @@ cross-namespacing a setting. (Origin: a reviewer-pinned
 `settings.drift.contextStaleness` was caught in spec review as a
 category error and corrected to `settings.runtime.contextStaleness`.)
 
+### 8e. Consolidation-requires-deliberate-reconciliation — INVARIANT
+
+When a cycle collapses **two or more existing implementations of one
+logical decision** into a shared module (the §8c fix applied to
+existing divergence), it MUST include a deliberate
+divergence-reconciliation step — never a silent "trust the refactor":
+capture real fixtures → run every old implementation **and** the new
+shared module over them → table every disagreement (output and/or
+type) → rule each case deliberately (which incumbent was right, or a
+new unified behavior) → commit the rulings as a documented
+behavior-changes table the reviewer reads. "Preserve current behavior"
+is a *goal that requires work to verify*, not an assumption; some
+divergences will legitimately resolve as "implementation A was wrong" —
+that is an intentional behavior change and must be visible, not
+smoothed. Discovering edge-case divergence in production is the failure
+mode this prevents. Same shape as the `isFileDeclaredByModule`
+agreement test and the merge-gate "diff against trunk, flag only what
+this change introduces" rule. (Origin: the readability-layer Slice-1
+consolidation — event→prose existed twice, divergently.)
+
 ## 9. Provider architecture
 
 Symphony supports three CLI providers, each with its own adapter:
