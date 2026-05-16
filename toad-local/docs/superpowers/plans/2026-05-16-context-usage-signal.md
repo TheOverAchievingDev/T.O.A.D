@@ -806,6 +806,108 @@ Expected: `CLEAN` (zero `error TS`). `AgentCard.tsx`/`cockpit/Inspector.tsx`/`Co
 Run: `cd /c/Project-TOAD/toad-local/ui && npm run build 2>&1 | tail -3`
 Expected: `✓ built` (vite build succeeds).
 
+> **Controller ratification (T5 grounding pass) — SUPERSEDES Steps 1–3
+> above. Plan-only ratification: the spec's replace-not-parallel /
+> single-source / honest-degradation intents are unchanged; this pins
+> the exact grounded anchors and corrects a false premise about
+> RuntimeDrawer. Same convention as the T3/T4 ratifications.**
+>
+> Grounded against the real code (`§8d` grounding-first in action):
+> - The only `Agent` literal is `useToadData.ts` `rawMembers.map` (≈L488–506);
+>   no `data/seed.ts` / fixture Agent literals. Baseline `tsc` CLEAN.
+> - **`RuntimeDrawer.tsx` is a fully MOCK component** — mounted at
+>   `App.tsx:1357` with props `{ team, onClose }` ONLY; it renders const
+>   mocks (`RUNTIME`, `CONTEXT_BREAKDOWN`). It has **no live runtime row
+>   and no `contextUsage`**. The Step-2 instruction "read it from the
+>   runtime row it already renders" referenced something that does not
+>   exist. The UI is a separate Vite project with **no precedent for
+>   importing the backend `src/`**; duplicating the window map in the UI
+>   would violate the single-source invariant. Resolution below.
+> - The live meters (`AgentCard.tsx:53`, `Inspector.tsx:248`,
+>   `CockpitFlowCanvas.tsx:376`) read `agent.tokens`/`agent.tokenLimit`
+>   from the mapper — the mapper IS the whole live fix. **`Inspector`
+>   and `CockpitFlowCanvas` already guard `tokenLimit` (`>0` / `!tokenLimit`);
+>   `AgentCard.tsx:53` does NOT** (`Math.min(100,(agent.tokens/agent.tokenLimit)*100)`)
+>   → with the honest `tokenLimit:0` it renders a misleading full/NaN
+>   bar. Fixing that guard is a mandatory lockstep, not optional
+>   "verify they degrade sanely".
+>
+> **Step 1 (revised) — exact anchors, apply verbatim:**
+>
+> 1. `ui/src/hooks/useToadData.ts` `interface BackendRuntime` (the
+>    block ending `tokensOut?: number; }` ≈L126–128): add
+>    ```typescript
+>      contextUsage?: {
+>        used: number | null; total: number | null; percentage: number | null;
+>        model: string | null; provider: string; lastUpdatedAt: string | null;
+>        stale: boolean; source: 'precise' | 'coarse' | 'unknown';
+>      } | null;
+>    ```
+> 2. `ui/src/types/index.ts` `interface Runtime` (≈L164–177, ends
+>    `tokensOut: number; }`): add the SAME optional `contextUsage?: {…} | null;`
+>    block (identical shape) so `normalizeRuntime`'s return typechecks.
+> 3. `useToadData.ts` `normalizeRuntime` return object (after
+>    `tokensOut: raw.tokensOut ?? 0,` ≈L380): add
+>    `contextUsage: raw.contextUsage ?? null,`.
+> 4. `ui/src/types/index.ts` `interface Agent` (≈L32–48): add two
+>    **optional** fields (optional = defensive; only constructed at the
+>    one map site, but optional avoids any hidden cascade and consumers
+>    default them):
+>    `contextStale?: boolean;` and
+>    `contextSource?: 'precise' | 'coarse' | 'unknown';`
+>    (`tokens`/`tokenLimit` already exist — keep them.)
+> 5. `useToadData.ts` the agent map (≈L504–505) — replace exactly:
+>    ```typescript
+>          tokens: (runtime?.tokensIn ?? 0) + (runtime?.tokensOut ?? 0),
+>          tokenLimit: 200_000,
+>    ```
+>    with:
+>    ```typescript
+>          tokens: runtime?.contextUsage?.used ?? 0,
+>          tokenLimit: runtime?.contextUsage?.total ?? 0,
+>          contextStale: runtime?.contextUsage?.stale ?? true,
+>          contextSource: runtime?.contextUsage?.source ?? 'unknown',
+>    ```
+> 6. **Mandatory lockstep guard** — `ui/src/components/AgentCard.tsx:53`
+>    replace exactly:
+>    ```typescript
+>      const tokensPct = Math.min(100, (agent.tokens / agent.tokenLimit) * 100);
+>    ```
+>    with (mirrors the existing `Inspector.tsx:248` guard):
+>    ```typescript
+>      const tokensPct = agent.tokenLimit > 0
+>        ? Math.min(100, (agent.tokens / agent.tokenLimit) * 100)
+>        : 0;
+>    ```
+>    Do NOT touch `Inspector.tsx`/`CockpitFlowCanvas.tsx` (already guarded).
+>
+> **Step 2 (revised) — RuntimeDrawer is unwired mock → honest
+> placeholder, NOT live-wiring:** In `ui/src/components/RuntimeDrawer.tsx`,
+> the mock context meter has no real denominator (the component is
+> demo-only, never receives `contextUsage`). Per the spec's
+> honest-degradation principle and the plan's own "—/hidden when total
+> null/0" fallback (here the total is *always* unavailable), replace the
+> mock context-window meter so it shows the honest unknown affordance
+> instead of a fabricated 200k scale. Concretely, remove BOTH numeric
+> `200_000` literals (≈L217 `budgetPct = (totalContextTokens / 200_000) * 100`;
+> ≈L361 bar width `(item.tokens / 200_000) * 100`) and the `/ 200k`
+> text label (≈L347): render the "Context window" stat value as
+> `context unknown` (or `—`) and the headroom/bar as a neutral
+> hidden/empty state (e.g. `budgetPct = null` → omit the headroom % and
+> render the `rt-context-bar` empty). Do **NOT**: thread new props
+> from `App.tsx` (scope creep), introduce any new window numeric
+> literal, or duplicate the backend map in the UI. Leave the OTHER mock
+> tabs (activity/inputs) and unrelated mock fields (`RUNTIME.tokens`,
+> the `184_320/226_150/500_000` demo numbers — none match the guard
+> regex) untouched. Net effect: RuntimeDrawer carries **zero**
+> context-window literals afterward.
+>
+> **Step 3 consequence:** unchanged commands; additionally confirm
+> `git -C /c/Project-TOAD grep -nE "200[_]?000|1[_]?000[_]?000" -- toad-local/ui/src/components/RuntimeDrawer.tsx` returns nothing
+> (RuntimeDrawer is now literal-free → **Task 6 needs NO RuntimeDrawer
+> `:(exclude)`**; the guard stays global and strict, its sole exclude
+> remaining `modelContextWindow.js`).
+
 ---
 
 ## Task 6: Structural regression guard + wire tests into the suite
