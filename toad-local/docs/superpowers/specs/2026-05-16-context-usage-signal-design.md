@@ -88,6 +88,18 @@ threshold will fire on**. This `output_tokens` inclusion is a C design
 constraint expressed in B — a future contributor must NOT "simplify"
 it away (doing so silently breaks C's threshold semantics).
 
+**Missing/non-numeric field handling (pinned).** A `result.usage`
+frame is normally complete, but B must never derive a confidently-
+wrong number from a malformed/partial frame. Rule: each of the four
+fields, if missing or non-numeric, contributes `0` to the sum — but
+the two cache fields defaulting to `0` is **silent and legitimate**
+(non-cached requests genuinely have no cache tokens), whereas
+`input_tokens` **or** `output_tokens` missing/non-numeric makes the
+snapshot untrustworthy → that snapshot yields `used`/`percentage`
+`null` and `source:'unknown'` (the prompt and response counts are
+mandatory; the cache counts are optional). The meter degrades
+honestly rather than reporting a wrong occupancy off a broken frame.
+
 ### Bug 2 — `total` is a hardcoded / split denominator
 
 **Wrong (current):** `RuntimeDrawer.tsx` hardcodes `/ 200_000`;
@@ -134,8 +146,20 @@ idle for a while*, **not** *a turn is in flight*. Specifically:
   window and no turn in flight.
 
 **Staleness window (pinned):** default **60s**, config-tunable via
-`settings.drift.contextStaleness` (same `settings.<ns>.<key>`-with-
-default shape as the other drift config knobs).
+`settings.runtime.contextStaleness` (same `settings.<ns>.<key>`-with-
+default shape as the existing config knobs).
+
+**Namespace rationale (banked).** Drift checks live under
+`settings.drift.*`; runtime-supervisor behavior lives under
+`settings.runtime.*`. Context-window staleness is a **runtime
+property** (how long a runtime can be idle before its meter goes
+stale), **not** a drift-subsystem concern, despite this sub-project
+being co-located with drift work chronologically. The namespace
+boundary is determined by **what the setting governs, not proximity
+to prior settings**. The future C/D/E settings (compaction
+thresholds, rotation thresholds, routing rules) likewise go under
+`settings.runtime.*`, not `settings.drift.*`. This is a stated
+principle, banked alongside §8's grounding-first invariant — see §8.
 
 **`source` is a sealed enum (pinned):** `'precise' | 'coarse' |
 'unknown'`.
@@ -175,6 +199,17 @@ with **explicit deferred slots** specified enough that pickup is
   (the unbuilt F.2.5+ item). *Sketch:* `/stats`, degrading to
   `source:'coarse'` under OAuth plan-auth (cached-token detail
   hidden). *Contract:* same shape/semantics as above.
+
+**Empty-slot safety (pinned — "agnostic from day one, not just in
+design").** `getContextUsage(agentId)` MUST return a valid,
+correctly-shaped, **degraded** response for an agent on *any*
+provider — including one whose slot is unimplemented — and MUST never
+throw and never return an invalid shape. An unimplemented slot
+returns `{ used: null, total: null, percentage: null, model,
+provider, lastUpdatedAt: null, stale: true, source: 'unknown' }`.
+This is distinct from "the slot is implemented": it is the property
+that makes the interface honestly provider-agnostic on day one rather
+than agnostic-in-design / throws-in-practice. Tested in §6.
 
 **Architectural clarification (kept in-spec verbatim so a future
 reader does not misread Appendix A):** Appendix A conflated three
@@ -225,15 +260,36 @@ operations are sequenced so there is no intermediate half-built state:
   `cache_creation` + `output` (NOT Σ over turns); a synthetic
   multi-turn event sequence proves the value does **not** grow
   monotonically with turn count (the exact Bug-1 regression).
+- missing/non-numeric field handling (§2): cache fields absent →
+  silently `0`; `input_tokens` **or** `output_tokens` absent/non-
+  numeric → that snapshot is `used/percentage=null`,
+  `source:'unknown'` (no confidently-wrong number off a broken frame).
 - `MODEL_CONTEXT_WINDOW` resolution per model; unknown model →
   `total/percentage=null`, `source:'unknown'`.
-- staleness: `stale` false within window / during in-flight turn;
-  true only on idle-beyond-window; window honors
-  `settings.drift.contextStaleness`.
+- staleness: `stale` true only on idle-beyond-window; window honors
+  `settings.runtime.contextStaleness`. **In-flight-turn scenario
+  (explicit named test, not a list item):** synthesize an event
+  sequence where a `turn_started` arrives *after* `lastUpdatedAt` and
+  *before* any `turn_completed`, then call `getContextUsage` — assert
+  `stale === false` and `used` equals the *previous* completed turn's
+  snapshot (the §3 in-flight pin, locked in code).
 - `source` sealed-enum values; `'coarse'` never emitted by the Claude
   impl.
+- empty-slot safety (§4): `getContextUsage` for an agent on an
+  unimplemented provider slot returns the correctly-shaped degraded
+  response (`used/total/percentage=null`, `stale:true`,
+  `source:'unknown'`) and never throws / never returns an invalid
+  shape.
 - lockstep: the UI denominator equals the model window, never a
   constant.
+
+**Corrective-test comment convention (pinned).** Every test that
+guards a specific corrected bug carries a one-line header comment
+naming the bug class it defends, e.g.
+`// Bug 1 regression guard: legacy tokensIn cumulative sum grew with`
+`// session length; assert the occupancy formula does NOT exhibit that.`
+This prevents a future contributor from "simplifying" a corrective
+test without understanding what regression it exists to catch.
 
 **Structural regression guard (pinned):** a grep-style test that
 **fails if a hardcoded context-window literal (`200_000`/`200000`/
@@ -263,12 +319,18 @@ spend telemetry is retained, not redesigned.
   regression-guard tests; "observation only" (§1) is consistent with
   the non-goals (§6).
 - **Scope:** one implementation plan — Claude impl + facade swap + 4
-  UI repoints + model map + deferred stubs + the PROJECT.md doctrine
-  note (§8). Codex/Gemini impl explicitly out.
+  UI repoints + model map + deferred stubs + the two PROJECT.md
+  banked invariants (§8: grounding-first + settings-namespace).
+  Codex/Gemini impl explicitly out.
 - **Ambiguity:** "completed turn" pinned (agent-finished, not
-  message-send); `stale` pinned (idle, not in-flight); denominator
-  pinned (model window, null on unknown); Codex mechanism explicitly
-  deferred while its interface contract is pinned now.
+  message-send); `stale` pinned (idle, not in-flight, with an
+  explicit in-flight test); denominator pinned (model window, null on
+  unknown); missing/non-numeric `usage` fields pinned (cache→0 silent,
+  input/output missing→`source:'unknown'`); empty provider slot pinned
+  (degraded shape, never throws); config key pinned
+  `settings.runtime.contextStaleness` (namespace rationale stated);
+  Codex mechanism explicitly deferred while its interface contract is
+  pinned now.
 
 ## 8. Banked discipline (PROJECT.md deliverable)
 
@@ -285,3 +347,19 @@ flag-disabled discipline) as a named invariant:
 > prose (appendices, deferred notes) is the *plan*, not *current
 > state*; reality moves. Every Appendix-A sub-project (and similar)
 > opens with a grounding pass.
+
+And — endorsed in spec review — bank the **settings-namespace
+boundary** as a second named invariant in the same PROJECT.md
+location (alongside grounding-first, §8c shared-helper, and
+structural-deletion-vs-flag-disabled):
+
+> **Settings namespace is governed by what the setting controls, not
+> by chronological proximity to prior settings.** `settings.drift.*`
+> = drift-monitor behavior; `settings.runtime.*` = runtime-supervisor
+> behavior (context staleness, and the future C/D/E compaction /
+> rotation / routing knobs). Co-location of work in one sub-project
+> does not justify cross-namespacing a setting. (Origin: a
+> reviewer-pinned `settings.drift.contextStaleness` was caught in
+> spec review as a category error and corrected to
+> `settings.runtime.contextStaleness` — the operator catching the
+> reviewer is the system working as intended.)
