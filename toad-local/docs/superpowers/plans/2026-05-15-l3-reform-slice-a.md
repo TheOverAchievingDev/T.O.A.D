@@ -1026,6 +1026,65 @@ In `#runDriftInner`, replace the entire `// Decide tier 2.` … through the end 
 
 > NOTE on the `nowТs` identifier above: that is a transcription guard — when implementing, use a plain ASCII name `nowTs`. (The plan author flags this so the engineer types `nowTs`, not a homoglyph.)
 
+> **Controller ratification (2026-05-16) — code-quality review, two Important fixes. SUPERSEDES the gate/cache structure shown in the Step-4 code block above.**
+>
+> **Fix A — `l3Gate` is the single decision authority (design §3); the `cacheHasKey: false` placeholder + the post-gate `if (trigger !== 'manual' && cached)` are a defect.** The block above calls the gate with `cacheHasKey: false` and a comment "refined just below" that never refines, then re-implements serve-vs-invoke after the gate. That makes the gate's `serve_cached` branch dead and forks the decision authority (a Slice-B hazard — Slice B builds on `decision.action`). But naïvely "compute the key before the gate" would hash `sha1(scoped-diff + whole spec.json + L1 + prompt)` on **every periodic tick**, defeating the gate's deliberate hash-last ordering (`l3Gate.js` step-ordering comment) and the reform's cost ethos. Implement the **two-phase** structure instead — replace everything from `const decision = l3Gate({` down to and including the `if (trigger !== 'manual' && cached) { … } else {` line with:
+>
+> ```javascript
+>       // Phase-1 gate (cacheHasKey:false): cheap steps 1–4 + manual.
+>       // Periodic/non-submission/not-ambiguous skip here WITHOUT paying
+>       // the cache-key hash (design §3 gate-ordering discipline).
+>       const gate1 = l3Gate({
+>         trigger, boundaryTo, boundaryTaskId,
+>         l1FindingsForTask: taskFindings,
+>         cacheHasKey: false,
+>         silentSignificant: false, // Slice B fills this
+>       });
+>       if (gate1.action === 'skip') {
+>         l3Status = `skipped:${gate1.reason}`;
+>       } else {
+>         const spec = snapshot.spec ?? null;
+>         const d = snapshot.diffsByTask?.[boundaryTaskId] || null;
+>         const diffFiles = d && Array.isArray(d.changedFiles)
+>           ? d.changedFiles.map((file) => ({ file, content: typeof d.diff === 'string' ? d.diff : '' }))
+>           : [];
+>         const key = l3CacheKey({ diffFiles, spec, l1Findings: taskFindings, promptTemplate: L3_PROMPT_TEMPLATE });
+>         const teamCache = this.#l3VerdictCache.get(teamId) || new Map();
+>         // Phase-2: authoritative serve_cached vs invoke. manual already
+>         // short-circuited to invoke/manual_bypass in gate1 (its
+>         // cacheHasKey is irrelevant) — reuse gate1, don't re-call.
+>         const decision = gate1.reason === 'manual_bypass'
+>           ? gate1
+>           : l3Gate({
+>               trigger, boundaryTo, boundaryTaskId,
+>               l1FindingsForTask: taskFindings,
+>               cacheHasKey: teamCache.has(key),
+>               silentSignificant: false,
+>             });
+>         if (decision.action === 'serve_cached') {
+>           const cached = teamCache.get(key);
+>           l3Findings = cached.findings;
+>           l3Status = `served_cached:${cached.tier}`;
+>         } else {
+> ```
+>
+> The middle (circuit breaker → `buildL3Packet` → HOME-isolated spawn → `l3Judge` → cache `set`) is **unchanged**. The OLD trailing `} else { l3Status = \`skipped:${decision.reason}\`; }` that closed `if (decision.action !== 'skip')` is **removed** — the skip is now the leading `if (gate1.action === 'skip')` and `decision` is block-scoped to the non-skip branch; the brace structure (one outer if/else, one inner if/else) is otherwise preserved, with the inner `else` remaining the circuit-breaker/judge path and the outer `} else { l3Status = 'skipped:disabled'; }` for `if (llmEnabled)` unchanged. Outcomes are identical to the old code on every path (gate1 reproduces the old skip reasons; manual_bypass reproduces the old `trigger !== 'manual'` bypass; serve_cached reproduces the old `cached` serve) so `l3Gate.test.js`, `driftEngineLlm.test.js`, the full suite, and the Reaper dogfood all stay green.
+>
+> **Fix B — `observer` severity taxonomy lockstep (the severity analogue of the Step-1 `checkKinds` *kind* lockstep, which the plan omitted).** The circuit-breaker trip emits `severity: 'observer'` (design §3.4, user-ratified). `observer` is net-new and absent from the severity taxonomy, so the operator alert NaNs the DriftScreen sort and renders an invisible badge. Propagate `observer` in lockstep (do NOT downgrade to `info` — that violates the ratified design):
+> - `src/drift/scoreFindings.js` `SEVERITY_WEIGHT`: add `observer: 0` (explicit; `weightOf` already defaults unknown→0, so score-neutral — observer is surfaced-but-never-scored/blocking by design). Add/extend a `scoreFindings` test asserting an `observer` finding contributes 0 to the score and is retained in output.
+> - `ui/src/hooks/useDrift.ts` (`severity:` union, ~line 10): add `'observer'`.
+> - `ui/src/components/DriftScreen.tsx`: `SEVERITY_ORDER` add `observer: -1` (sorts below `info`); `SEVERITY_COLOR` add `observer: 'var(--accent, #7aa2f7)'` (distinct operator tone); the severity filter list (`['critical','high','medium','low','info']`, ~line 176) add `'observer'`.
+> No engine/severity-string change; `driftEngine.js` keeps emitting `'observer'`.
+>
+> **Fix C — CRITICAL (T9 final whole-implementation review): the un-pause is inert without a whole-tree-finding-aware boundary filter.** The Step-4 line `const taskFindings = tier1Findings.filter((f) => f.taskId === boundaryTaskId);` drops 100% of the real L1→L3 signal: both production `needsSemanticReview` producers (`check_structural_undeclared_present`, `check_constitution` observe-mode) emit `taskId: null` (whole-tree scanners — see design §5 ratified note). With a real non-null `boundaryTaskId` the filter yields `[]` → `l3Gate` → `not_ambiguous` → L3 never fires. Replace that line with:
+> ```javascript
+>       const taskFindings = tier1Findings.filter(
+>         (f) => f.taskId === boundaryTaskId
+>           || (f.taskId === null && f.needsSemanticReview === true),
+>       );
+> ```
+> (Safe on every path: l3Gate's `no_boundary_task` skip fires before the ambiguity check, so a null/empty `boundaryTaskId` still skips even though the first clause would match `taskId:null`; periodic skips at step 1; cache key includes per-task `diffHash` so team-level flagged findings don't collide across tasks.) **Mandatory companion fix:** `test/drift/driftEngineLlm.test.js`'s `flaggingCheck` currently emits `taskId` = the boundary id, which *masked* this bug — change it to emit `taskId: null` (mirroring the real checks) so the contract is regression-locked; the run still passes `boundaryTaskId:'task-1'` and the resulting L3 finding is still stamped `taskId: boundaryTaskId` (engine line ~287), so the existing assertions hold. Also fix the stale `escalationGate` mention in `src/drift/checks/index.js`'s registry doc-comment (the path is deleted). The `ui/src/components/findingTier.ts` stale `_t1/_t2` badge mapping is a non-blocking cosmetic follow-up (tracked separately), out of this atomic commit.
+
 Then change the findings-combine to fold `l3Findings` in place of `tier2Findings`:
 ```javascript
     const findingsById = new Map();
@@ -1091,11 +1150,15 @@ console.log("review+flagged:", JSON.stringify(l3Gate({ trigger:"task_event", bou
 // review + no flag → skip
 console.log("review+clean:", JSON.stringify(l3Gate({ trigger:"task_event", boundaryTo:"review", boundaryTaskId:"T1", l1FindingsForTask:[{checkName:"x",severity:"low",file:"a",line:1,ruleId:null}], cacheHasKey:false })));
 const built = buildL3Packet({ snapshot:{ teamId:"reaper", spec, diffsByTask:{ T1:{ changedFiles:["src/win/procs.rs"], diff:"+ enable(SeDebugPrivilege);\n", error:null } } }, boundaryTaskId:"T1", l1Signal:{ kind:"flagged", findings:flagged } });
-console.log("packet overBudget:", built.overBudget, "bytes:", built.bytes, "hasSpec:", /\"version\"/.test(built.packet||""), "noProse:", !/product-brief|## Foundry/.test(built.packet||""));
+console.log("packet inBudget:", built.overBudget !== true, "bytes:", built.bytes, "hasSpec:", /\"version\"/.test(built.packet||""), "noProse:", !/^#{1,2}\s+(Product Brief|Foundry|Goals|Non-Goals|Requirements|EARS)\b/mi.test(built.packet||""));
 console.log("cacheKey stable:", l3CacheKey({diffFiles:[{file:"a",content:"x"}],spec,l1Findings:flagged,promptTemplate:"P"}) === l3CacheKey({diffFiles:[{file:"a",content:"x"}],spec,l1Findings:flagged,promptTemplate:"P"}));
 '
 ```
-Expected: `periodic:{...skip,periodic}`, `review+flagged:{...invoke,ambiguous}`, `review+clean:{...skip,not_ambiguous}`, `packet overBudget: false`, `hasSpec: true`, `noProse: true`, `cacheKey stable: true`. If any line is wrong, fix before the commit.
+Expected: `periodic:{...skip,periodic}`, `review+flagged:{...invoke,ambiguous}`, `review+clean:{...skip,not_ambiguous}`, `packet inBudget: true`, `hasSpec: true`, `noProse: true`, `cacheKey stable: true`. If any line is wrong, fix before the commit.
+
+> **Controller ratification (2026-05-16) — harness-only reconciliation, engine is correct.** The original Step-9 one-liner asserted `built.overBudget === false` and `!/product-brief|## Foundry/`. Both were *verification-harness defects* contradicting frozen, already-shipped Task 1–8 contracts — corrected above with **zero engine/T6/src/test change**:
+> 1. `buildL3Packet` (T6) returns `{packet,bytes}` with **no `overBudget` key** on the success path (only `{overBudget:true,...}` when over budget). So in-budget ⇒ `built.overBudget === undefined`, never the literal `false`. The engine's `if (built.overBudget)` correctly treats `undefined` as falsy. The harness now asserts `built.overBudget !== true` ("in budget" = absence of the over-budget signal).
+> 2. The L3 packet embeds the **whole `spec.json` including `spec.provenance.source_docs`** — this is ratified design §4.1 ("the whole spec.json") and is what `specProvenanceHash` hashes. A real spec's provenance legitimately *names* `docs/foundry/product-brief.md` as a source filename, so the blunt `product-brief` substring regex false-positived even though the packet contains **zero brief prose** (verified: single occurrence, inside the JSON `source_docs` array; no `## Foundry`, no EARS body, 5.1 KB scoped packet — not a whole-brief dump). The corrected `noProse` regex targets brief-prose **headings** (`# Product Brief`, `## Goals`, `## EARS …`), which is the actual doctrinal invariant ("never the brief prose"), not foundry filename strings inside the machine-checkable spec. **Do NOT strip `provenance` from the packet or alter `buildL3Packet`'s return shape to satisfy the old harness — that would break the frozen T6 contract and `specProvenanceHash` cache semantics.**
 
 - [ ] **Step 10: The single atomic un-pause commit**
 

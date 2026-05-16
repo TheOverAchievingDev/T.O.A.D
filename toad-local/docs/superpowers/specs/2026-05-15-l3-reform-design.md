@@ -130,6 +130,24 @@ engine's existing `#tier2Cooldown`/`#lastRunAt` maps (lost on restart
 **successful** verdicts are cached; a failed/timed-out judge call is
 never cached so the next boundary retries.
 
+> **Ratified-amendment note (T9 code-quality review).** As-built,
+> `l3Gate` takes `cacheHasKey` as an **input** (the caller does the
+> key compute + cache lookup); step 5 above is the gate *consuming*
+> that boolean, not hashing internally. To honor BOTH "the gate is the
+> single serve_cached/invoke/skip authority" AND "no hash on the
+> cheap-skip common case", the engine calls the pure gate **twice**:
+> phase-1 with `cacheHasKey:false` resolves steps 1–4 + manual without
+> hashing (periodic/non-submission/not-ambiguous skip here for free);
+> only a non-manual would-be-invoke then computes the key and re-calls
+> the gate with the real `cacheHasKey` for the authoritative
+> serve_cached-vs-invoke decision (manual short-circuited to
+> `invoke/manual_bypass` in phase-1 and is reused, not re-called). The
+> engine MUST branch solely on `decision.action`; it must NOT
+> re-implement a post-gate `if (trigger!=='manual' && cached)` serve
+> (that forks the decision authority and is a Slice-B hazard). The
+> Slice-A plan's Step-4 `cacheHasKey:false // refined just below`
+> placeholder was a defect superseded by this note.
+
 ### 3.3 Cache-key hash component definitions (pinned — cache
 correctness is the kind of thing that goes quietly wrong)
 
@@ -205,6 +223,21 @@ ambiguity predicate that flags everything.
   (not info) because the cap firing in normal operation **indicates a
   bug worth investigating**, not routine throttling — the lead/operator
   must see it.
+
+  > **Ratified-amendment note (T9 code-quality review).** `observer`
+  > is a net-new severity introduced here. It requires the same
+  > lockstep propagation discipline as the `checkKinds` *kind*
+  > taxonomy (Slice-A plan Step 1): add it to **every** severity
+  > taxonomy site or the operator alert renders broken. Required
+  > lockstep: `scoreFindings.SEVERITY_WEIGHT` → `observer: 0`
+  > (surfaced-but-never-scored/blocking, consistent with "observe-only,
+  > can never cause a bad merge"); `ui/src/hooks/useDrift.ts` severity
+  > union → add `'observer'`; `ui/src/components/DriftScreen.tsx`
+  > `SEVERITY_ORDER` → `observer: -1` (below `info`), `SEVERITY_COLOR`
+  > → a distinct operator tone, and the severity filter option list →
+  > add `'observer'`. Downgrading the emission to `info` to dodge this
+  > is explicitly rejected — it contradicts the "observer not info"
+  > rationale immediately above.
 - A circuit-breaker skip does **not** populate the verdict cache for
   that key. When the window clears, the next boundary on that key
   computes fresh.
@@ -252,6 +285,26 @@ New `src/drift/llm/buildL3Packet.js`. Replaces `buildUserPayload`'s
 - The L1 signal being adjudicated: the `needsSemanticReview`-flagged
   finding(s) for that task (Slice A), or the silent-gap note
   (Slice B).
+
+> **Ratified-amendment note (T9 dogfood).** "No foundry prose docs"
+> means the packet never carries a brief's **prose body or headings**
+> (`# Product Brief`, `## Goals`, EARS requirement text). It does **not**
+> mean the literal substring `product-brief` is absent: the whole
+> `spec.json` is embedded incl. `spec.provenance.source_docs`, which
+> legitimately *names* `docs/foundry/product-brief.md` as a source
+> filename (this is the same provenance `spec.provenanceHash` hashes).
+> The original Slice-A Step-9 dogfood used a blunt
+> `!/product-brief|## Foundry/` regex that false-positived on that
+> filename, and asserted `built.overBudget === false` though T6 returns
+> **no `overBudget` key** on the success path. Both were
+> verification-harness defects vs frozen T1–T8 contracts; the plan's
+> Step 9 was corrected (assert `overBudget !== true`; match brief-prose
+> *headings*) with **zero engine / `buildL3Packet` / src / test
+> change**. Stripping `provenance` from the packet or reshaping T6's
+> return to satisfy the old harness is explicitly forbidden — it would
+> break the frozen T6 contract and `spec.provenanceHash` cache
+> semantics. Verified on real Reaper: single `product-brief` occurrence
+> (inside `source_docs`), no prose, 5.1 KB scoped packet.
 
 Result is kilobyte-scale. Still written to the temp brief file and
 read via the **unchanged** HOME-isolated `llmJudge` spawn — the
@@ -392,6 +445,28 @@ one-line opt-in later):
   honest-dormant metas (L1.2a — spec says X, source has X or not,
   task delivers X or not), contract presence/arity (L1.4a/b —
   signature matches or not).
+
+> **Ratified-amendment note (T9 final whole-implementation review) —
+> CRITICAL integration contract.** Both flagged classes are **whole-tree
+> standing-invariant scanners**: `check_structural_undeclared_present`
+> and `check_constitution` emit their `needsSemanticReview` findings
+> with **`taskId: null`** by construction (they are not, and cannot
+> cheaply be, scoped to one task's diff). Therefore the engine's
+> boundary-task L1 selection MUST treat a `taskId:null`
+> `needsSemanticReview` finding as **in-scope for whichever submission
+> boundary is under review** — a naïve `findings.filter(f => f.taskId
+> === boundaryTaskId)` drops 100% of the real L1→L3 signal and the
+> un-pause is **inert** (gate always sees `[]` → `not_ambiguous`). The
+> ratified selection is:
+> `f.taskId === boundaryTaskId || (f.taskId === null && f.needsSemanticReview === true)`.
+> Doctrine: a standing judgment-call ambiguity (undeclared module /
+> observe-mode constitution hit) SHOULD prompt L3 to adjudicate *this
+> task's diff* against the spec at each submission boundary while the
+> ambiguity stands — bounded by the same §8a guardrails (submission-
+> only, ambiguity-gated, per-task `diffHash` cache, rate cap), so it is
+> not a cost regression. The `driftEngineLlm` integration test MUST
+> emit its flagging finding with `taskId: null` (mirroring the real
+> checks) so this contract is regression-locked, not masked.
 
 ## 6. Lead system-prompt change (same slice — ruled)
 
