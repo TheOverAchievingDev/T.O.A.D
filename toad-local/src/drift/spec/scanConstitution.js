@@ -3,6 +3,7 @@ import {
   statSync as realStatSync,
   readFileSync as realReadFileSync,
 } from 'node:fs';
+import { evalConstitutionRule } from './evalConstitutionRule.js';
 
 /**
  * Apply spec.constitution.rules[] against the project tree.
@@ -55,78 +56,10 @@ function isExcludedPath(rel) {
   return false;
 }
 
-const CLIKE_EXT = /\.(rs|js|jsx|ts|tsx|mjs|cjs|go|java|kt|c|h|cpp|hpp|cs|swift|gradle|css|scss)$/i;
-const HASH_EXT = /\.(toml|py|sh|bash|zsh|yaml|yml|ini|cfg|env|properties|conf)$/i;
-
-/**
- * Strip comments from a single line before applying a grep rule.
- *
- * The 2026-05-15 dogfood's dominant false-positive: security never-dos
- * are routinely DOCUMENTED in code comments ("// no SeDebugPrivilege
- * required per ADR-004"). Matching the prohibition's own description
- * as a violation erodes trust faster than anything. True comment
- * removal is AST work (reviewer scoped that to later) but a
- * line-level strip kills the dominant class without a parser:
- *
- *   - c-like: remove inline / * ... * / blocks, then everything from
- *     the first `//` that is NOT preceded by `:` (so https:// URLs
- *     and a::b paths survive). Catches //, ///, //! doc comments.
- *   - hash-like: everything from the first `#`.
- *
- * Tradeoffs accepted for v1 (documented, not hidden): no string-
- * literal awareness (a `//` inside a non-URL string literal is rare
- * for rule tokens); multi-line block comments aren't tracked across
- * lines. A genuine violation on the SAME line before a trailing
- * comment is still caught (we only strip the comment tail).
- */
-function stripComments(line, ext) {
-  if (CLIKE_EXT.test(ext)) {
-    // Inline block comments first.
-    let s = line.replace(/\/\*[\s\S]*?\*\//g, ' ');
-    // Then line comments: first `//` not immediately preceded by `:`
-    // (preserves `https://`, and `a://b`). `^//` (doc comment at col 0
-    // / after indent) is handled by the `(^|[^:])` group.
-    s = s.replace(/(^|[^:])\/\/.*$/, '$1');
-    return s;
-  }
-  if (HASH_EXT.test(ext)) {
-    return line.replace(/#.*$/, '');
-  }
-  return line;
-}
 // Heuristic: only grep files that are plausibly text. Anything else
 // (images, compiled binaries) is skipped — a forbidden token can't
 // meaningfully live there and scanning them wastes time.
 const TEXT_EXT = /\.(rs|toml|js|jsx|ts|tsx|mjs|cjs|json|md|txt|py|go|java|kt|rb|c|h|cpp|hpp|cs|swift|sh|bat|ps1|yaml|yml|toml|cfg|ini|env|manifest|xml|html|css|sql|gradle|properties|lock)$/i;
-
-/** Tiny glob → RegExp. Supports ** (any depth) and * (within a
- *  segment). No braces/extglob — keeps zero-dep and predictable. */
-function globToRe(glob) {
-  let re = '';
-  for (let i = 0; i < glob.length; i += 1) {
-    const c = glob[i];
-    if (c === '*') {
-      if (glob[i + 1] === '*') { re += '.*'; i += 1; if (glob[i + 1] === '/') i += 1; }
-      else re += '[^/]*';
-    } else if ('.+^${}()|[]\\'.includes(c)) {
-      re += `\\${c}`;
-    } else if (c === '?') {
-      re += '[^/]';
-    } else {
-      re += c;
-    }
-  }
-  return new RegExp(`^${re}$`);
-}
-
-function matchesAny(path, globs) {
-  if (!Array.isArray(globs) || globs.length === 0) return false;
-  for (const g of globs) {
-    if (typeof g !== 'string' || g.length === 0) continue;
-    try { if (globToRe(g).test(path)) return true; } catch { /* skip bad glob */ }
-  }
-  return false;
-}
 
 export function scanConstitution({
   projectCwd,
@@ -193,8 +126,13 @@ export function scanConstitution({
 
       // path_presence: any forbidden glob matching this file's path.
       for (const pr of pathRules) {
-        if (matchesAny(rel, pr.detector.forbidden_paths)) {
-          out.hits.push({ ruleId: pr.id ?? '(unnamed)', file: rel, line: 0, snippet: `forbidden path present: ${rel}` });
+        const hits = evalConstitutionRule(pr, { path: rel, content: '' });
+        if (hits === null) {
+          out.unsupportedRules.push(pr.id ?? '(unnamed)');
+        } else {
+          for (const h of hits) {
+            out.hits.push({ ruleId: pr.id ?? '(unnamed)', file: rel, line: h.line, snippet: h.snippet });
+          }
         }
       }
 
@@ -205,28 +143,14 @@ export function scanConstitution({
       try { content = readFileSyncImpl(childAbs, 'utf-8'); } catch { continue; }
       if (typeof content !== 'string' || content.length === 0) continue;
 
-      const applicable = grepRules.filter((g) => !matchesAny(rel, g.exclude));
-      if (applicable.length === 0) continue;
-      const lines = content.split('\n');
-      for (let ln = 0; ln < lines.length; ln += 1) {
-        const rawLine = lines[ln];
-        // Strip comments before matching — a forbidden token that only
-        // appears in a comment describing the prohibition is not a
-        // violation (2026-05-15 dogfood's dominant FP class).
-        const codeLine = stripComments(rawLine, name);
-        if (codeLine.length === 0) continue;
-        for (const g of applicable) {
-          // Fresh lastIndex each test (regex may be /g from author).
-          g.re.lastIndex = 0;
-          if (g.re.test(codeLine)) {
-            out.hits.push({
-              ruleId: g.rule.id ?? '(unnamed)',
-              file: rel,
-              line: ln + 1,
-              // Snippet from the RAW line so the operator sees the
-              // real source context, not the comment-stripped form.
-              snippet: rawLine.trim().slice(0, 200),
-            });
+      for (const g of grepRules) {
+        const hits = evalConstitutionRule(g.rule, { path: rel, content });
+        if (hits === null) {
+          // Bad regex or unsupported — already recorded in unsupportedRules at compile time;
+          // skip silently here to avoid double-recording.
+        } else {
+          for (const h of hits) {
+            out.hits.push({ ruleId: g.rule.id ?? '(unnamed)', file: rel, line: h.line, snippet: h.snippet });
           }
         }
       }
