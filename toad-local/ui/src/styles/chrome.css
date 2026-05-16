@@ -378,7 +378,10 @@
 .sidebar {
   display: flex;
   flex-direction: column;
+  flex: 0 0 auto;       /* rigid flex child — never shrink into neighbours */
+  flex-shrink: 0;       /* belt-and-suspenders against cascade overrides   */
   width: var(--w-sidebar);
+  min-width: var(--w-sidebar);  /* prevents content-forced collapse */
   background: var(--bg-1);
   border-right: 1px solid var(--line-soft);
   font-family: var(--font-display);
