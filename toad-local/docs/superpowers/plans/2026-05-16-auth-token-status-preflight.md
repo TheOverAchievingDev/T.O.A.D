@@ -439,7 +439,7 @@ export async function claudeAuthPreflight({ readCredsStatus, refreshOnce, now, r
     return { decision: 'proceed', tokenStatus: s1.tokenStatus };
   }
   if (s1.tokenStatus === TOKEN_STATUS.UNRECOVERABLE) {
-    return { decision: 'block', tokenStatus: s1.tokenStatus, reason: s1.reason || BLOCK_REASON };
+    return { decision: 'block', tokenStatus: s1.tokenStatus, reason: BLOCK_REASON }; // Controller ratification (T5): always the ACTIONABLE BLOCK_REASON — spec §4.2/§5 require block to carry the re-login instruction; Layer-A's diagnostic reason (e.g. "no refresh token") is not actionable. (Was `s1.reason || BLOCK_REASON` — a plan transcription defect that contradicted the verbatim test's /re-login|\/login/ assertion.)
   }
   // stale_refreshable
   const prev = relaunchState.get(credsPath);
@@ -456,7 +456,7 @@ export async function claudeAuthPreflight({ readCredsStatus, refreshOnce, now, r
     return { decision: 'block', tokenStatus: s2.tokenStatus, reason: BLOCK_REASON };
   }
   if (s2.tokenStatus === TOKEN_STATUS.UNRECOVERABLE) {
-    return { decision: 'block', tokenStatus: s2.tokenStatus, reason: s2.reason || BLOCK_REASON };
+    return { decision: 'block', tokenStatus: s2.tokenStatus, reason: BLOCK_REASON }; // Controller ratification (T5): always BLOCK_REASON (actionable), per spec §4.2/§5 — see the s1 branch note above. (Was `s2.reason || BLOCK_REASON`.)
   }
   if (r.ok === true) {
     // A turn COMPLETED yet creds are still stale: the CLI was given a
