@@ -746,7 +746,7 @@ export class LocalToolFacade {
       // fail-open both flow to the observer sink and DO NOT block.
       if (fromStatus === 'merge_ready' && args.status === 'done') {
         const wt = current?.worktree;
-        if (wt && wt.status === 'created' && typeof wt.branch === 'string'
+        if (wt && wt.status === 'created' && wt.path && typeof wt.branch === 'string'
             && wt.branch.length > 0 && typeof wt.baseRef === 'string'
             && wt.baseRef.length > 0) {
           const gateSpec = this.#loadGateSpec();
@@ -762,13 +762,14 @@ export class LocalToolFacade {
             gv = { blocked: false, introduced: [], preexisting: [], unsupported: [],
               scanError: { command: 'constitutionMergeGate', file: null, message: String(err && err.message ? err.message : err) } };
           }
-          for (const p of gv.preexisting) {
+          const preexisting = Array.isArray(gv?.preexisting) ? gv.preexisting : [];
+          for (const p of preexisting) {
             this.onObserverFinding({ kind: 'observer', severity: 'medium', ...p });
           }
-          if (gv.scanError) {
+          if (gv?.scanError) {
             this.onObserverFinding({ kind: 'observer', severity: 'high', scanError: gv.scanError });
           }
-          if (gv.blocked) {
+          if (gv?.blocked && Array.isArray(gv.introduced) && gv.introduced.length > 0) {
             const lines = gv.introduced
               .map((i) => `  [constitution.${i.ruleId}] ${i.file}:${i.line} — ${i.description || i.snippet}`)
               .join('\n');
@@ -782,6 +783,10 @@ export class LocalToolFacade {
               specRef: `constitution.${i.ruleId}`, description: i.description || '',
             }));
             throw err;
+          } else if (gv?.blocked) {
+            this.onObserverFinding({ kind: 'observer', severity: 'high',
+              scanError: { command: 'constitutionMergeGate', file: null,
+                message: 'gate returned blocked:true with empty/invalid introduced[]' } });
           }
         }
       }
