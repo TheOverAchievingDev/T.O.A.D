@@ -138,3 +138,29 @@ test('stable ids + required DriftFinding fields', () => {
   assert.ok(Array.isArray(a.evidence));
   assert.equal(a.autoFixable, false);
 });
+
+test('observe-mode rule-violation findings carry needsSemanticReview; gate-mode + metas do not', () => {
+  const snapshot = {
+    teamId: 't',
+    spec: {
+      version: 1,
+      provenance: { reviewed: true, extracted_by: 'h', source_docs: ['docs/foundry/steering.md'] },
+      constitution: { rules: [
+        { id: 'obs', description: 'o', detector: { type: 'grep', pattern: 'X' }, severity: 'medium', mode: 'observe' },
+        { id: 'gat', description: 'g', detector: { type: 'grep', pattern: 'Y' }, severity: 'critical', mode: 'gate' },
+      ] },
+    },
+    constitutionHits: [
+      { ruleId: 'obs', file: 'src/a.rs', line: 3, snippet: 'X' },
+      { ruleId: 'gat', file: 'src/b.rs', line: 7, snippet: 'Y' },
+    ],
+    constitutionUnsupported: [],
+    constitutionError: null,
+  };
+  const findings = checkConstitution({ snapshot });
+  const obs = findings.find((f) => f.title.includes('obs'));
+  const gat = findings.find((f) => f.title.includes('gat'));
+  assert.ok(obs && gat, 'expected both rule-violation findings');
+  assert.equal(obs.needsSemanticReview, true, 'observe-mode hit is a judgment call');
+  assert.notEqual(gat.needsSemanticReview, true, 'gate-mode is deterministic — no L3');
+});

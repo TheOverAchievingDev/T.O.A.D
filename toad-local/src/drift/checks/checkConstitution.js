@@ -129,6 +129,7 @@ export function checkConstitution({ snapshot } = {}) {
       // (findings surface in the drift stream; broker notification deferred);
       // gate = block at merge_ready→done constitution gate when this
       // violation is diff-introduced.
+      ...(mode === 'observe' ? { needsSemanticReview: true } : {}),
       constitutionMode: mode,
     });
   }
