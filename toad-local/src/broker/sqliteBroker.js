@@ -3,12 +3,33 @@ import { createMessageEnvelope } from '../protocol/envelopes.js';
 import { jsonParseObject, jsonStringify, openToadDatabase } from '../storage/sqlite.js';
 
 export class SqliteBroker {
+  #subscribers = new Set();
+
   constructor({ filePath = ':memory:', db = null } = {}) {
     this.db = db || openToadDatabase(filePath);
   }
 
   close() {
     this.db.close();
+  }
+
+  /**
+   * Register a subscriber that fires AFTER each successfully-inserted
+   * message. Mirrors SqliteTaskBoard.subscribe's contract verbatim:
+   * does NOT fire on idempotent dedup hits; subscriber exceptions are
+   * caught + logged so they cannot break the broker write path.
+   *
+   * Durability contract: fires synchronously after the message is
+   * recorded; the message is queryable via this broker on the same
+   * connection from within the handler. No stronger cross-process
+   * disk-durability guarantee is made.
+   */
+  subscribe(fn) {
+    if (typeof fn !== 'function') {
+      throw new TypeError('SqliteBroker.subscribe: fn must be a function');
+    }
+    this.#subscribers.add(fn);
+    return () => { this.#subscribers.delete(fn); };
   }
 
   appendMessage(input) {
@@ -66,7 +87,20 @@ export class SqliteBroker {
       ).run(envelope.messageId, taskId);
     }
 
-    return { inserted: true, message: this.getMessage(envelope.messageId) };
+    const message = this.getMessage(envelope.messageId);
+    this.#fireSubscribers(message);
+    return { inserted: true, message };
+  }
+
+  #fireSubscribers(message) {
+    for (const fn of this.#subscribers) {
+      try {
+        fn(message);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[broker] subscriber threw:', err && err.message ? err.message : err);
+      }
+    }
   }
 
   getMessage(messageId) {
