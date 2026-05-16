@@ -126,8 +126,9 @@ export function checkConstitution({ snapshot } = {}) {
       specReviewed: reviewed === true,
       specProvenance: provenance,
       // Carried for the merge-gate consumer. observe = flag only
-      // (lead notified, no block); gate = block at merge_ready→done
-      // constitution gate when this violation is diff-introduced.
+      // (findings surface in the drift stream; broker notification deferred);
+      // gate = block at merge_ready→done constitution gate when this
+      // violation is diff-introduced.
       constitutionMode: mode,
     });
   }

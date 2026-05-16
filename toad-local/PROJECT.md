@@ -241,19 +241,23 @@ continuously — and at the right boundary, block a merge that
 introduces a spec violation.
 
 Concrete consequence: when the lead tells a worker "implement OAuth,"
-the broker sees that message. Drift is observed continuously
-(post-`appendMessage`, cheap, never blocks delivery). Enforcement
-happens at the merge boundary — the `merge_ready → done` constitution
-gate refuses to land code that introduces a `mode:'gate'` constitution
-rule violation. The work was visible the whole time; the gate closes
-the exit.
+the broker sees that message — every meaningful inter-agent action
+flows through it. Today drift runs at the periodic + task-event
+cadence and surfaces findings; the broker observer seam (Slice 2,
+deferred) will additionally enable post-`appendMessage` observation.
+ENFORCEMENT, already shipped, happens at the merge boundary: the
+`merge_ready → done` constitution gate refuses to land code that
+introduces a `mode:'gate'` constitution-rule violation. The work was
+visible the whole time; the gate closes the exit.
 
 Three enforcement tiers, declared per-rule:
 
 - **info**: unreviewed spec or low confidence (ruling #4 clamp). Logged
   for human review; never sent to the lead.
-- **observer**: real drift, reviewed spec. Lead notified via broker;
-  shapes coordination. Does **not** block delivery or merge.
+- **observer**: real drift, reviewed spec. Surfaced as drift findings
+  in the drift stream/UI; the broker observer seam (Slice 2, deferred)
+  will additionally route these to the lead in-session. Does **not**
+  block delivery or merge.
 - **gate**: `mode:'gate'` constitution rule, reviewed spec, **and** the
   violation is introduced by this merge (diff-scoped vs trunk).
   Blocks `merge_ready → done` until resolved.
