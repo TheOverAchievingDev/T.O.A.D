@@ -2381,9 +2381,10 @@ export class LocalToolFacade {
         providerId: entry.providerId,
         label: entry.label,
         signedIn: signedIn || false,
+        tokenStatus: authStatus?.tokenStatus ?? null,
         plan: authStatus?.plan ?? authStatus?.subscriptionType ?? null,
         user: authStatus?.user ?? null,
-        reason: !signedIn ? (authStatus?.reason ?? null) : null,
+        reason: ((authStatus?.tokenStatus && authStatus.tokenStatus !== 'fresh') || !signedIn) ? (authStatus?.reason ?? null) : null,
         quota: providerQuota,
         symphonyUsage,
       };

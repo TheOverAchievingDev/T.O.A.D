@@ -23,6 +23,16 @@ import path from 'node:path';
 
 export const SUPPORTED_PROVIDERS = Object.freeze(['anthropic', 'openai', 'gemini', 'opencode']);
 
+// Sealed single source of truth for Claude OAuth token state (design
+// §3). `unrecoverable` = no path to a working token from here — covers
+// expired-with-no-refresh AND absent/unparseable creds (the gate treats
+// them identically; the human distinction is in `reason`).
+export const TOKEN_STATUS = Object.freeze({
+  FRESH: 'fresh',
+  STALE_REFRESHABLE: 'stale_refreshable',
+  UNRECOVERABLE: 'unrecoverable',
+});
+
 /**
  * @typedef {Object} ProviderConfig
  * @property {string} label
@@ -323,39 +333,42 @@ export function triggerAuthLogout({ providerId, spawnSyncImpl } = {}) {
  * subscriptionType, rateLimitTier } }`. The file has no email/login —
  * username comes from a separate API call we don't make here.
  *
- * An expired access token + a refresh token still counts as signed in
- * because the CLI silently refreshes on next use.
+ * An expired access token + a refresh token is reported signedIn:true
+ * but tokenStatus:'stale_refreshable' — the CLI's "silent refresh on
+ * next use" is NOT reliable for a non-interactively-spawned stream-json
+ * agent (it 401s mid-run), so the launch preflight (design §4) attempts
+ * the refresh explicitly. This function only classifies; never refreshes.
  */
 function parseAnthropicFileStatus(authJson, _infoJson, providerId) {
   if (!authJson || typeof authJson !== 'object' || Array.isArray(authJson)) {
-    return { providerId, supported: true, signedIn: false, reason: 'credentials file did not parse as a JSON object' };
+    return { providerId, supported: true, signedIn: false, tokenStatus: TOKEN_STATUS.UNRECOVERABLE, reason: 'credentials file did not parse as a JSON object' };
   }
   const oauth = authJson.claudeAiOauth;
   if (!oauth || typeof oauth !== 'object' || typeof oauth.accessToken !== 'string' || oauth.accessToken.length === 0) {
-    return { providerId, supported: true, signedIn: false, reason: 'no claudeAiOauth.accessToken in credentials file' };
+    return { providerId, supported: true, signedIn: false, tokenStatus: TOKEN_STATUS.UNRECOVERABLE, reason: 'no claudeAiOauth.accessToken in credentials file' };
   }
   const now = Date.now();
   const expiresAt = typeof oauth.expiresAt === 'number' ? oauth.expiresAt : null;
   const accessExpired = expiresAt !== null && expiresAt < now;
   const hasRefresh = typeof oauth.refreshToken === 'string' && oauth.refreshToken.length > 0;
-  if (accessExpired && !hasRefresh) {
-    return { providerId, supported: true, signedIn: false, reason: 'OAuth tokens expired and no refresh token to renew them' };
-  }
   const subscriptionType = typeof oauth.subscriptionType === 'string' ? oauth.subscriptionType : null;
+  if (accessExpired && !hasRefresh) {
+    return { providerId, supported: true, signedIn: false, tokenStatus: TOKEN_STATUS.UNRECOVERABLE, reason: 'OAuth tokens expired and no refresh token to renew them' };
+  }
+  const plan = subscriptionType ? `Claude ${subscriptionType.charAt(0).toUpperCase()}${subscriptionType.slice(1)}` : null;
+  const raw = { accessExpired, hasRefreshToken: hasRefresh, scopes: Array.isArray(oauth.scopes) ? oauth.scopes : [], rateLimitTier: typeof oauth.rateLimitTier === 'string' ? oauth.rateLimitTier : null };
+  if (accessExpired && hasRefresh) {
+    return {
+      providerId, supported: true, signedIn: true,
+      tokenStatus: TOKEN_STATUS.STALE_REFRESHABLE,
+      reason: 'access token expired; a refresh token is present but the credentials have not been renewed yet',
+      user: null, plan, subscriptionType, authMethod: 'claude.ai oauth', raw,
+    };
+  }
   return {
-    providerId,
-    supported: true,
-    signedIn: true,
-    user: null, // file has no email/login; CLI fetches them on demand from the API
-    plan: subscriptionType ? `Claude ${subscriptionType.charAt(0).toUpperCase()}${subscriptionType.slice(1)}` : null,
-    subscriptionType,
-    authMethod: 'claude.ai oauth',
-    raw: {
-      accessExpired,
-      hasRefreshToken: hasRefresh,
-      scopes: Array.isArray(oauth.scopes) ? oauth.scopes : [],
-      rateLimitTier: typeof oauth.rateLimitTier === 'string' ? oauth.rateLimitTier : null,
-    },
+    providerId, supported: true, signedIn: true,
+    tokenStatus: TOKEN_STATUS.FRESH,
+    user: null, plan, subscriptionType, authMethod: 'claude.ai oauth', raw,
   };
 }
 
