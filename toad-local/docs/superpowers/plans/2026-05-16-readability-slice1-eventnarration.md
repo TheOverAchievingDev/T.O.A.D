@@ -769,13 +769,21 @@ export function locForEvent(event) {
   const name = typeof event.toolName === 'string' ? event.toolName.replace(/^mcp__[^_]+__/, '') : '';
   const input = (event.input && typeof event.input === 'object') ? event.input : {};
   const file = typeof input.file_path === 'string' ? input.file_path : '';
+  // Controller ratification (T10): spec §6.1 pins no-op (old===new)
+  // contributes nothing — a no-op replace is not activity. The original
+  // plan code omitted this guard (transcription gap); add it for Edit
+  // and per-edit in MultiEdit. Test expects no-op → {added:0,removed:0}.
   if (name === 'Edit') {
+    if (input.old_string === input.new_string) return { file, added: 0, removed: 0, removedKnown: true };
     return { file, added: lineCount(input.new_string), removed: lineCount(input.old_string), removedKnown: true };
   }
   if (name === 'MultiEdit') {
     const edits = Array.isArray(input.edits) ? input.edits : [];
     let a = 0; let r = 0;
-    for (const ed of edits) { a += lineCount(ed && ed.new_string); r += lineCount(ed && ed.old_string); }
+    for (const ed of edits) {
+      if (ed && ed.old_string === ed.new_string) continue; // no-op edit contributes nothing (§6.1)
+      a += lineCount(ed && ed.new_string); r += lineCount(ed && ed.old_string);
+    }
     return { file, added: a, removed: r, removedKnown: true };
   }
   if (name === 'Write') {
