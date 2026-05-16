@@ -107,7 +107,7 @@ narrate(event, options?) → { line: string; kind: NarrationKind; tokens: number
 - **Pure, deterministic, no I/O.** One normalized event in → one line out.
 - `line` — the operator-readable one-liner (e.g. `Reading recorder.ts`, `Bash: cargo test`, `Edited foo.rs`, `Created task T-12 — …`, `Sent message → reviewer`).
 - `kind` — a value of the **sealed `NarrationKind` enum** (§4.3), so callers keep styling/verb control without re-deriving the taxonomy.
-- `tokens` — **always present in the return object** (never omitted), value `number | null`. **Source pinned (Finding #2, grounded):** `narrate()` itself derives it as `num(event.raw?.usage?.output_tokens) ?? null` (`num` = finite-number-or-null, same helper discipline as Sub-project B's `computeContextUsage`). It is **not** an ingestor passthrough slot — the value is a property already present on the event (the Claude `result` frame carries `usage`), so a pure function surfacing it keeps the contract single-sourced; the post-C ingestor *persists* what `narrate()` returns, it does not re-derive token sizing. **Grounded reconciliation of Finding #2 vs Finding #4:** `usage` lives ONLY on the `result` frame, which is `turn_completed`'s `raw` (and `turn_failed` may carry a partial one). So `tokens` is non-null **exactly for `turn_completed`/`turn_failed` events** and `null` for `tool_use`/`assistant_text`/`compact_boundary`/`api_retry`. The earlier "assert it's always null in Slice 1" framing is therefore wrong (the §4-required fixture must contain a `turn_completed`, which will have a real `output_tokens`). Slice 1 tests instead assert **per event type**: `turn_completed` fixture event → `tokens === <its output_tokens>`; `tool_use`/`assistant_text` → `tokens === null`. Slice 1's client consumers ignore `tokens` entirely; freezing it now means post-C adds a *caller*, not a signature change.
+- `tokens` — **always present in the return object** (never omitted), value `number | null`. **Source pinned (Finding #2, grounded):** `narrate()` itself derives it as `num(event.raw?.usage?.output_tokens) ?? null` (`num(v)` = `typeof v === 'number' && Number.isFinite(v) ? v : null` — **strict, never coerces**: `num("1234") === null`, same helper discipline as Sub-project B's `computeContextUsage`). It is **not** an ingestor passthrough slot — the value is a property already present on the event (the Claude `result` frame carries `usage`), so a pure function surfacing it keeps the contract single-sourced; the post-C ingestor *persists* what `narrate()` returns, it does not re-derive token sizing. **Grounded reconciliation of Finding #2 vs Finding #4:** `usage` lives ONLY on the `result` frame, which is `turn_completed`'s `raw` (and `turn_failed` may carry a partial one). So `tokens` is non-null **exactly for `turn_completed`/`turn_failed` events** and `null` for `tool_use`/`assistant_text`/`compact_boundary`/`api_retry`. The earlier "assert it's always null in Slice 1" framing is therefore wrong (the §4-required fixture must contain a `turn_completed`, which will have a real `output_tokens`). Slice 1 tests instead assert **per event type**: `turn_completed` fixture event → `tokens === <its output_tokens>`; `tool_use`/`assistant_text` → `tokens === null`. Slice 1's client consumers ignore `tokens` entirely; freezing it now means post-C adds a *caller*, not a signature change.
 - **Input shape (pinned — ambiguity caught in re-review).** `narrate()` consumes the **normalized event shape where the original frame is at `event.raw`** (the client SSE shape — exactly what `deriveAgentActivity` reads today, so Slice 1's client callers pass events unchanged). The persisted event-log row exposes the frame at `payload.raw` instead; the **post-C ingestor caller is responsible for adapting** the log row to `{ ..., raw: row.payload.raw }` before calling `narrate()`. `narrate()` does **not** implement dual-shape handling — one input contract, the caller adapts. Stated so the post-C wiring is unambiguous and the module stays single-responsibility.
 - `options?` — reserved, forward-compat (e.g. future `{ verbosity }`); unused in Slice 1, documented as reserved so post-C does not change the signature.
 
@@ -163,6 +163,7 @@ type NarrationKind = 'tool' | 'text' | 'system'
 - `assistant_text` → `'text'`
 - `compact_boundary` | `api_retry` | `turn_failed` → `'system'`
 - `turn_completed` → `'system'` (proposed)
+- `approval_request` → `'system'` (proposed; line e.g. `Awaiting approval: <toolName>`). **Disposition is open-per-reconciliation (Finding #2):** the incumbents likely render nothing for it today (approvals have their own UI surface), so the agreement test will show `oldCockpit`/`oldCard` ≈ none vs `new` = a line — that divergence is *expected* and ruled in the behavior table (does the narrated stream include approval lines at all, or does `narrate()` still return the shape but callers filter `'system'`/approval out of the feed?). Pinned now only so `narrate()` never throws on it and the fixture-coverage requirement (§5 item 1) is satisfiable.
 
 The *exact* final mapping for `turn_completed` / `turn_failed` /
 `compact_boundary` / `api_retry`, and whether any of them deserves a
@@ -206,12 +207,12 @@ a preservation framing**, and it must be explicit, not smoothed.
 test** (`node:test`) plus a **fixture-coverage test**:
 
 1. **Fixture + minimum coverage (pinned).** A captured real run committed at `test/fixtures/eventNarration.events.json` (array of normalized event-log rows). A separate **fixture-coverage test** asserts the fixture contains **≥1 of every normalized event type** (`tool_use`, `assistant_text`, `turn_completed`, `turn_failed`, `compact_boundary`, `api_retry`, `approval_request`) **and ≥1 MCP-prefixed `tool_use`** (`mcp__…`). Without this, a fixture heavy on `assistant_text` would pass with false completeness. Coverage test fails listing the missing types.
-2. **Matching key (pinned).** Each fixture event gets a stable **signature** = `sha1(eventType + ' ' + canonicalJSON(salientInput))` where `salientInput` = `{ toolName, file_path, command, subtype }` projected from the event (the fields narration keys off), NOT the array index — so adding events to the fixture later does not renumber/invalidate prior rulings. The signature is the table key.
+2. **Matching key (pinned).** Each fixture event gets a stable **signature** = `sha1(eventType + ' ' + canonicalJSON(salientInput))` where `salientInput` = `{ toolName, file_path, command, subtype }` projected from the event (the fields narration keys off), NOT the array index — so adding events to the fixture later does not renumber/invalidate prior rulings. The signature is the table key. Pinned projection: `salientInput = { toolName: event.toolName ?? null, file_path: event.input?.file_path ?? null, command: event.input?.command ?? null, subtype: event.raw?.subtype ?? null }` — `subtype` path is **grounded** (system/result frames carry `parsed.subtype`; `event.raw` is that frame, per Section 2). **Lockstep invariant (pinned):** `salientInput` MUST be a superset of every field `narrate()` reads to produce `line`/`kind`. Low-cardinality types (`assistant_text`, `turn_*`) carry none of these fields, so all events of such a type collapse to ONE signature — acceptable ONLY because `narrate()` is a pure function of exactly the salient fields for those types (one ruling per event-class equivalence). If `narrate()` ever keys off an additional field, `salientInput` extends in the same change; a test asserts `narrate`'s read-set is a subset of `salientInput` keys. (The concrete field list is an implementation-plan task; the superset invariant is the spec pin.)
 3. **Run + diff.** For every fixture event compute `(oldCockpit = projectTimeline-wording, oldCard = deriveAgentActivity/summarizeToolCall, new = narrate())`. A **divergence** = the triple is not all-equal on `line` and/or mapped `kind`. Emit the divergence set keyed by signature.
-4. **Behavior-changes table — location & format (pinned).** A committed machine-readable manifest `test/fixtures/eventNarration.behaviorTable.json`: a map `{ [signature]: { eventType, salient, oldCockpit, oldCard, new, ruling: "cockpit-was-right" | "card-was-right" | "new-unified", rationale } }`. The spec/PR additionally renders it as a human Markdown table (generated from the JSON, not hand-maintained — single source).
-5. **Pass condition (pinned, mechanical).** The agreement test asserts `divergenceSet ⊆ ruledSet` keyed by signature — i.e. **every** observed divergence has a matching `behaviorTable.json` entry with a non-empty `ruling` + `rationale`. Unaccounted divergence ⇒ **fail**.
+4. **Behavior-changes table — location & format (pinned).** A committed machine-readable manifest `test/fixtures/eventNarration.behaviorTable.json`: a JSON object `{ entries: { [signature]: Entry }, softCapAcknowledged?: boolean, acknowledgmentRationale?: string }`. `Entry = { eventType: string, salient: <the human-readable salientInput object, not the hash>, oldCockpit: { line: string, kind: string }, oldCard: { line: string, kind: string }, new: { line: string, kind: string }, ruling: "cockpit-was-right" | "card-was-right" | "new-unified", rationale: string }`. Each of `oldCockpit`/`oldCard`/`new` is the **`{ line, kind }` tuple** (not a bare string) so the rendered table shows the full divergence (wording AND mapped kind). The spec/PR additionally renders `entries` as a human Markdown table (generated from the JSON, not hand-maintained: single source).
+5. **Pass condition (pinned, mechanical).** The agreement test asserts `divergenceSet ⊆ keys(behaviorTable.entries)` keyed by signature — i.e. **every** observed divergence has a matching `behaviorTable.entries[signature]` with a non-empty `ruling` + `rationale`. Unaccounted divergence ⇒ **fail**. This is the recoverable §8e teeth: a failing run is cleared by *ruling* the divergence (committing the entry), never blocked permanently.
 6. **Developer ergonomics (pinned).** On failure the test writes the unaccounted divergences as a ready-to-paste JSON block to `test/.eventNarration.divergences.out` **and** prints a compact table to stdout, so the implementer pastes/rules them into `behaviorTable.json` and re-runs. (This test runs many times during the consolidation — the ergonomics are part of the contract.)
-7. **Soft cap (pinned — Finding, "small" quantified).** If the divergence set exceeds **20 unique signatures**, the test fails with a distinct message instructing the implementer to **pause and reconvene** (surface to the human) before mass-ruling — a large divergence count is a signal the two incumbents diverged more than "preserve rendering" implies and the consolidation scope should be re-examined, not rubber-stamped.
+7. **Soft cap (pinned — Finding, "small" quantified).** If the divergence set exceeds **20 unique signatures**, the test additionally requires `behaviorTable.softCapAcknowledged === true` with a non-empty `acknowledgmentRationale`; absent that, it fails with a distinct **pause-and-reconvene** message (surface to the human). This composes (Finding: prior soft-cap was unrecoverable): the ≤20 path needs only all-divergences-ruled (item 5); the >20 path *additionally* needs the committed acknowledgment marker — a **one-time, reviewable gate cleared by the deliberate human acknowledgment** (the rationale is the artifact of having actually reconvened), NOT a forever-fail on set size. After ruling all entries AND committing `softCapAcknowledged`/`acknowledgmentRationale`, the test passes — a large divergence count is a signal the two incumbents diverged more than "preserve rendering" implies and the consolidation scope should be re-examined, not rubber-stamped.
 
 Same discipline as the `isFileDeclaredByModule` agreement test and the
 merge-gate "diff against trunk, only flag what this change introduces"
@@ -225,10 +226,17 @@ Lives at `test/fixtures/eventNarration.behaviorTable.json` (schema in
 PR description / an appendix, never hand-maintained. Empty at design
 time by construction; the implementer fills it as the agreement test
 surfaces cases. Reviewers read the generated table to see exactly what
-changed and why. The §7 commit-1 carries this table; **if it exceeds
-20 entries (the soft cap), ruling is split into a third commit**
-(`readability: eventNarration consolidation rulings`) so commit 1 stays
-a reviewable "consolidation preserves rendering (modulo table)" unit.
+changed and why.
+
+**Two independent, composing mechanisms for >20 (resolves the prior
+incoherence):** (a) *in-test gate* — cleared by committing
+`softCapAcknowledged: true` + `acknowledgmentRationale` (§5 item 7);
+this is what makes the test pass, and it is recoverable. (b) *review
+ergonomics* — independently, when the table exceeds 20 entries the
+rulings move into **Commit 1b** (`readability: eventNarration
+consolidation rulings`) so Commit 1 stays a reviewable "consolidation
+preserves rendering (modulo table)" unit. (a) is a test mechanism; (b)
+is a commit-structure choice; neither blocks the other.
 
 ---
 
@@ -289,7 +297,7 @@ feature, same shape as `judgeSpawn` extraction → L3 build):
 ## 8. Testing & gates
 
 - **TDD throughout** (project discipline).
-- `eventNarration`: per-event unit tests across the full taxonomy (tool_use incl. MCP-prefixed, assistant_text, turn_*, compact_boundary, api_retry, malformed/missing-field events → must degrade to a safe line, never throw); **`tokens` per-type assertions** (`turn_completed` → its `output_tokens`; `tool_use`/`assistant_text` → `null`); the **import-purity test** (no `node:*` builtins in the transitive import set); the **fixture-coverage test** (≥1 of every event type + ≥1 MCP `tool_use`); the **agreement test** vs both incumbents over the committed fixture (signature-keyed, `⊆` pass-condition, ≤20 soft cap, divergence-output file).
+- `eventNarration`: per-event unit tests across the full taxonomy (tool_use incl. MCP-prefixed, assistant_text, turn_*, compact_boundary, api_retry, malformed/missing-field events → must degrade to a safe line, never throw); **`tokens` per-type assertions mirroring §4.1's full enumeration** (`turn_completed` → its `output_tokens`; `turn_failed` → `output_tokens` if the partial `usage` is present else `null`; `tool_use` / `assistant_text` / `compact_boundary` / `api_retry` / `approval_request` → `null`); the **import-purity test** (no `node:*` builtins in the transitive import set); the **fixture-coverage test** (≥1 of every event type + ≥1 MCP `tool_use`); the **agreement test** vs both incumbents over the committed fixture (signature-keyed, `⊆` pass-condition, ≤20 soft cap, divergence-output file).
 - `locCount`: formula tests (Edit/MultiEdit/Write incl. `removed:null` Write, empty content, no-trailing-newline); `.gitignore` edit-time filtering; `locIgnorePaths` augment-not-replace; attribution (deleter not penalised); aggregate `removedUnknown` propagation + footnote rendering.
 - **Gates:** root `npm test` `fail 0`; UI `cd ui && npm run typecheck` zero `error TS` + `npm run build` ✓. Both new modules wired into the canonical `npm test` chain (no un-wired-test false-green).
 
@@ -336,8 +344,16 @@ contract (A) with the Layer-2 half-life caveat flagged in
 handling is a named wiring task (Finding #3); preserve current rendering
 / no new feed UX / no visual companion (B); agreement-test mechanics
 fully pinned — fixture min-coverage test, signature-hash matching key,
-`behaviorTable.json` format, `⊆`-pass-condition, failure-output
-ergonomics, ≤20 soft cap (Finding #4); `locCount` sibling module with
+`behaviorTable.json` format (`{ entries, softCapAcknowledged?,
+acknowledgmentRationale? }`; each old/new = `{line,kind}` tuple),
+`⊆`-pass-condition, failure-output ergonomics, and the **coherent
+recoverable soft cap** — >20 needs a committed acknowledgment marker
+(not a forever-fail), commit-1b split is an independent review-ergonomics
+choice (Finding #4 + round-2 #1); `narrate()` consumes the `event.raw`
+shape, post-C ingestor adapts `payload.raw`; `salientInput` superset-of-
+narrate's-read-set lockstep invariant; `subtype = event.raw?.subtype`
+(grounded); `num` strict (never coerces strings); `approval_request →
+'system'` proposed, disposition open-per-reconciliation (round-2 #2); `locCount` sibling module with
 the Edit/MultiEdit/Write formulas, `lineCount` predicate, no-op-edit=0,
 `filesTouched=|unique|`, Bash-changes-excluded, requested-not-applied
 known-limitation footnote (Finding #6), `removed:null` for Write,
