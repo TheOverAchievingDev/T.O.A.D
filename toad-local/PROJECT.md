@@ -295,6 +295,25 @@ commit per case. Cost of violating it: silent layer-divergence bugs
 that are near-undiagnosable. Reviewers must reject a second
 implementation of an existing cross-layer decision.
 
+### 8d. Grounding-first & settings-namespace — INVARIANTS
+
+**Ground brainstorm rounds against current code before answering**
+whenever the topic touches an existing surface. Captured design prose
+(appendices, deferred notes) is the *plan*, not *current state*;
+reality moves. Repeatedly material (Slice-B contracts/evidence
+reality; Sub-project-B's Claude-only-runtime reality + the
+existing-meter wrongness). Every Appendix-A sub-project (and similar)
+opens with a grounding pass against the code, not the doc.
+
+**Settings namespace is governed by what the setting controls, not by
+chronological proximity to prior settings.** `settings.drift.*` =
+drift-monitor behavior; `settings.runtime.*` = runtime-supervisor
+behavior (context staleness; the future C/D/E compaction / rotation /
+routing knobs). Co-location of work in one sub-project never justifies
+cross-namespacing a setting. (Origin: a reviewer-pinned
+`settings.drift.contextStaleness` was caught in spec review as a
+category error and corrected to `settings.runtime.contextStaleness`.)
+
 ## 9. Provider architecture
 
 Symphony supports three CLI providers, each with its own adapter:

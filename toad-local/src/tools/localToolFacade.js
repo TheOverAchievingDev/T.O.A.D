@@ -79,6 +79,7 @@ import {
   applyIdePatch,
   searchIdeFiles,
 } from '../ide/ideGitTools.js';
+import { computeContextUsage } from '../runtime/contextUsage/index.js';
 
 export class LocalToolFacade {
   // 90s TTL cache for the claude /usage pty probe. We don't store this
@@ -2000,7 +2001,7 @@ export class LocalToolFacade {
    *   status, pid, startedAt, etc. — same shape returned by
    *   SqliteRuntimeRegistry.listRuntimes().
    */
-  #runtimeList(actor, args) {
+  async #runtimeList(actor, args) {
     if (!this.runtimeRegistry || typeof this.runtimeRegistry.listRuntimes !== 'function') {
       return { runtimes: [] };
     }
@@ -2024,7 +2025,11 @@ export class LocalToolFacade {
     // X / 200,000" meter reads tokensIn + tokensOut on each runtime row.
     // Without this aggregation the meter is always 0 even when an agent
     // has been talking — that's the bug the user hit on the live screen.
-    const tokensByRuntime = new Map();
+    const tokensByRuntime = new Map(); // SPEND telemetry only — context occupancy is contextUsage (design §2 Bug 1).
+    // Per-runtime event list (for the corrected context-usage signal).
+    // The cumulative tokensByRuntime above is RETAINED but is SPEND
+    // telemetry only — NOT context-window occupancy (design §2/§5).
+    const eventsByRuntime = new Map();
     // Per-runtime model identity. Claude's stream-json frames carry the
     // model that handled the turn on both the `assistant` frame
     // (`message.model`) and the terminal `result` frame (`model`).
@@ -2043,6 +2048,12 @@ export class LocalToolFacade {
       }
     };
     for (const e of events) {
+      // Bucket events per runtime for the context-usage signal.
+      if (typeof e.runtimeId === 'string' && e.runtimeId.length > 0) {
+        let arr = eventsByRuntime.get(e.runtimeId);
+        if (!arr) { arr = []; eventsByRuntime.set(e.runtimeId, arr); }
+        arr.push(e);
+      }
       if (e.eventType === 'tool_use') {
         reqsByRuntime.set(e.runtimeId, (reqsByRuntime.get(e.runtimeId) || 0) + 1);
       }
@@ -2080,6 +2091,13 @@ export class LocalToolFacade {
       }
     }
 
+    let stalenessMs = 60_000;
+    try {
+      const eff = this.settingsStore && typeof this.settingsStore.readEffective === 'function'
+        ? await this.settingsStore.readEffective() : null;
+      if (eff && Number.isFinite(eff?.runtime?.contextStaleness)) stalenessMs = eff.runtime.contextStaleness;
+    } catch { /* default 60s */ }
+
     const enriched = runtimes.map((r) => {
       const startedMs = r.startedAt ? Date.parse(r.startedAt) : NaN;
       const stoppedMs = r.stoppedAt ? Date.parse(r.stoppedAt) : NaN;
@@ -2102,6 +2120,15 @@ export class LocalToolFacade {
         // hasn't completed a turn yet; the UI falls back to the friendly
         // provider name in that case.
         model: modelEntry?.model || '',
+        // Corrected context-window occupancy signal (design §2 Bug 1).
+        // "used" = latest result-frame snapshot, never Σ over turns.
+        // tokensIn/tokensOut above are SPEND telemetry and are retained.
+        contextUsage: computeContextUsage({
+          events: eventsByRuntime.get(r.runtimeId) || [],
+          now,
+          stalenessMs,
+          providerId: r.providerId || 'claude',
+        }),
       };
     });
     return { runtimes: enriched };

@@ -2208,7 +2208,7 @@ test('LocalToolFacade usage_summary attributes Symphony spend to the correct pro
   assert.equal(result.totals.tokensOut, 50 + 350 + 40 + 999);
 });
 
-test('LocalToolFacade runtime_list returns the runtimeRegistry rows for the requested team', () => {
+test('LocalToolFacade runtime_list returns the runtimeRegistry rows for the requested team', async () => {
   // The UI's useToadData hook calls runtime_list({ teamId }) on every load
   // and after each refresh. Without this command, the UI receives "unsupported
   // command" and falls back to an empty runtime list, which makes every
@@ -2228,7 +2228,7 @@ test('LocalToolFacade runtime_list returns the runtimeRegistry rows for the requ
     runtimeRegistry: fakeRegistry,
   });
 
-  const result = facade.execute({
+  const result = await facade.execute({
     commandName: COMMANDS.RUNTIME_LIST,
     idempotencyKey: 'runtime-list-1',
     actor: { teamId: 'team-x', agentId: 'operator', role: 'human' },
@@ -2248,7 +2248,7 @@ test('LocalToolFacade runtime_list returns the runtimeRegistry rows for the requ
   }
 });
 
-test('LocalToolFacade runtime_list extracts the latest model from stream-json frames', () => {
+test('LocalToolFacade runtime_list extracts the latest model from stream-json frames', async () => {
   // The Inspector's "Provider / model" row reads `runtime.model`. The
   // model identity comes off `payload.raw.model` (result frame) or
   // `payload.raw.message.model` (assistant frame). Latest non-empty
@@ -2287,7 +2287,7 @@ test('LocalToolFacade runtime_list extracts the latest model from stream-json fr
     eventLog: fakeEventLog,
   });
 
-  const result = facade.execute({
+  const result = await facade.execute({
     commandName: COMMANDS.RUNTIME_LIST,
     idempotencyKey: 'runtime-list-model',
     actor: { teamId: 'team-m', agentId: 'operator', role: 'human' },
@@ -2303,7 +2303,7 @@ test('LocalToolFacade runtime_list extracts the latest model from stream-json fr
   assert.equal(byAgent.qa.model, '');
 });
 
-test('LocalToolFacade runtime_list enriches each runtime with tokensIn/tokensOut/costUsd from turn_completed events', () => {
+test('LocalToolFacade runtime_list enriches each runtime with tokensIn/tokensOut/costUsd from turn_completed events', async () => {
   // The Cockpit inspector's "Used X / 200,000" meter and the Costs
   // screen both rely on per-runtime token totals. Without this
   // enrichment the meter always reads 0 even when an agent has been
@@ -2350,7 +2350,7 @@ test('LocalToolFacade runtime_list enriches each runtime with tokensIn/tokensOut
     eventLog: fakeEventLog,
   });
 
-  const result = facade.execute({
+  const result = await facade.execute({
     commandName: COMMANDS.RUNTIME_LIST,
     idempotencyKey: 'runtime-list-tokens',
     actor: { teamId: 'team-x', agentId: 'operator', role: 'human' },
@@ -2373,7 +2373,7 @@ test('LocalToolFacade runtime_list enriches each runtime with tokensIn/tokensOut
   assert.equal(byAgent.qa.costUsd, 0);
 });
 
-test('LocalToolFacade runtime_list falls back to actor.teamId when args.teamId is omitted', () => {
+test('LocalToolFacade runtime_list falls back to actor.teamId when args.teamId is omitted', async () => {
   // The UI sometimes calls runtime_list without an explicit teamId — the
   // facade should derive it from the actor (same pattern as task_list).
   const fakeRegistry = {
@@ -2388,7 +2388,7 @@ test('LocalToolFacade runtime_list falls back to actor.teamId when args.teamId i
     runtimeRegistry: fakeRegistry,
   });
 
-  const result = facade.execute({
+  const result = await facade.execute({
     commandName: COMMANDS.RUNTIME_LIST,
     idempotencyKey: 'runtime-list-fallback',
     actor: { teamId: 'actor-team', agentId: 'operator', role: 'human' },

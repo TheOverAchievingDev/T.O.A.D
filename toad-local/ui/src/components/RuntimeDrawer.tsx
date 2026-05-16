@@ -214,7 +214,7 @@ export function RuntimeDrawer({ onClose, team }: RuntimeDrawerProps) {
   }
   const member = team.members.find((candidate) => candidate.id === RUNTIME.agentId);
   const totalContextTokens = CONTEXT_BREAKDOWN.reduce((total, item) => total + item.tokens, 0);
-  const budgetPct = (totalContextTokens / 200_000) * 100;
+  const budgetPct: number | null = null;
 
   return (
     <div className="drawer-backdrop" onClick={onClose}>
@@ -343,26 +343,17 @@ export function RuntimeDrawer({ onClose, team }: RuntimeDrawerProps) {
                   <div>
                     <div className="rt-stat-label">Context window</div>
                     <div className="rt-stat-value mono" style={{ fontSize: 18 }}>
-                      <span style={{ color: 'var(--fg)' }}>{(totalContextTokens / 1000).toFixed(1)}k</span>
-                      <span style={{ color: 'var(--fg-dim)', fontSize: 13 }}> / 200k</span>
+                      <span style={{ color: 'var(--fg-muted)', fontSize: 13 }}>context unknown</span>
                     </div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
                     <div className="rt-stat-label">Headroom</div>
-                    <div className="mono" style={{ fontSize: 14, color: budgetPct > 80 ? 'var(--warn)' : 'var(--ok)' }}>
-                      {(100 - budgetPct).toFixed(0)}%
+                    <div className="mono" style={{ fontSize: 14, color: budgetPct !== null && budgetPct > 80 ? 'var(--warn)' : 'var(--ok)' }}>
+                      {budgetPct === null ? '—' : `${(100 - budgetPct).toFixed(0)}%`}
                     </div>
                   </div>
                 </div>
-                <div className="rt-context-bar">
-                  {CONTEXT_BREAKDOWN.map((item) => (
-                    <span
-                      key={item.id}
-                      style={{ width: `${(item.tokens / 200_000) * 100}%`, background: item.color }}
-                      title={`${item.label}: ${item.tokens.toLocaleString()} tokens`}
-                    />
-                  ))}
-                </div>
+                <div className="rt-context-bar" />
               </div>
 
               <div className="rt-context-list">

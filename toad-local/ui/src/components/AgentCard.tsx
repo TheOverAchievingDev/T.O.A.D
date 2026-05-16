@@ -50,7 +50,9 @@ function activitySubtitle(label: string, kind: string, tool?: string): string {
 
 export function AgentCard({ agent, selected, onSelect, variant = 'detail' }: AgentCardProps) {
   const role = ROLES[agent.role];
-  const tokensPct = Math.min(100, (agent.tokens / agent.tokenLimit) * 100);
+  const tokensPct = agent.tokenLimit > 0
+    ? Math.min(100, (agent.tokens / agent.tokenLimit) * 100)
+    : 0;
 
   // Tick `now` every 2s so isActive/isRecent transitions reflect reality
   // even when no new SSE event arrived to retrigger a parent re-render.

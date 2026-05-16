@@ -125,6 +125,11 @@ interface BackendRuntime {
   reqs?: number;
   tokensIn?: number;
   tokensOut?: number;
+  contextUsage?: {
+    used: number | null; total: number | null; percentage: number | null;
+    model: string | null; provider: string; lastUpdatedAt: string | null;
+    stale: boolean; source: 'precise' | 'coarse' | 'unknown';
+  } | null;
 }
 
 interface BackendMessage {
@@ -378,6 +383,7 @@ function normalizeRuntime(raw: BackendRuntime): Runtime {
     reqs: raw.reqs ?? 0,
     tokensIn: raw.tokensIn ?? 0,
     tokensOut: raw.tokensOut ?? 0,
+    contextUsage: raw.contextUsage ?? null,
   };
 }
 
@@ -501,8 +507,10 @@ function normalizeTeam(
       avatar: avatarFor(agentId),
       status: normalizeAgentStatus(runtime?.status),
       task: activeTask?.title ?? null,
-      tokens: (runtime?.tokensIn ?? 0) + (runtime?.tokensOut ?? 0),
-      tokenLimit: 200_000,
+      tokens: runtime?.contextUsage?.used ?? 0,
+      tokenLimit: runtime?.contextUsage?.total ?? 0,
+      contextStale: runtime?.contextUsage?.stale ?? true,
+      contextSource: runtime?.contextUsage?.source ?? 'unknown',
       provider: runtime?.provider ?? raw.providerId ?? 'unknown',
       // Empty string from the backend means "no turn completed yet, no
       // model identity captured." Logical-OR (not ??) so empty falls

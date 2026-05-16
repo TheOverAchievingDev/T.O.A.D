@@ -38,6 +38,8 @@ export interface Agent {
   task: string | null;
   tokens: number;
   tokenLimit: number;
+  contextStale?: boolean;
+  contextSource?: 'precise' | 'coarse' | 'unknown';
   provider: string;
   model: string;
   tasksDone: number;
@@ -174,6 +176,11 @@ export interface Runtime {
   reqs: number;
   tokensIn: number;
   tokensOut: number;
+  contextUsage?: {
+    used: number | null; total: number | null; percentage: number | null;
+    model: string | null; provider: string; lastUpdatedAt: string | null;
+    stale: boolean; source: 'precise' | 'coarse' | 'unknown';
+  } | null;
 }
 
 export interface Tweaks {
