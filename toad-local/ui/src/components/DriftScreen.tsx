@@ -242,7 +242,7 @@ export function DriftScreen({ teamId, data, loading, error, refresh, onOpenTask 
                   </span>
                   {(() => {
                     const tier = findingTier(f.checkName);
-                    if (tier === 'llm_t1') {
+                    if (tier === 'llm') {
                       return (
                         <span style={{
                           fontSize: 9, padding: '2px 6px', borderRadius: 3,
@@ -250,15 +250,6 @@ export function DriftScreen({ teamId, data, loading, error, refresh, onOpenTask 
                           color: 'var(--fg-muted)', textTransform: 'uppercase',
                           letterSpacing: '0.04em', fontWeight: 600,
                         }}>AI</span>
-                      );
-                    }
-                    if (tier === 'llm_t2') {
-                      return (
-                        <span style={{
-                          fontSize: 9, padding: '2px 6px', borderRadius: 3,
-                          background: 'var(--clay, #d97757)', color: '#fff',
-                          textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 600,
-                        }}>Verified</span>
                       );
                     }
                     return null;
