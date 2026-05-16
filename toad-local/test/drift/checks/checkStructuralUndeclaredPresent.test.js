@@ -126,3 +126,21 @@ test('stable ids + required DriftFinding fields + checkName', () => {
   assert.ok(Array.isArray(a.evidence));
   assert.equal(a.autoFixable, false);
 });
+
+test('undeclared-module finding carries needsSemanticReview:true (L3 adjudicates scope-creep judgment)', () => {
+  const snapshot = {
+    teamId: 't',
+    spec: {
+      version: 1,
+      provenance: { reviewed: true, extracted_by: 'h', source_docs: ['docs/foundry/tech-spec.md'] },
+      structure: { required: [{ kind: 'module', name: 'sampler', evidence: 'src/sampler.rs' }] },
+    },
+    sourceModules: ['src/sampler.rs', 'src/sneaky_telemetry.rs'],
+  };
+  const findings = checkStructuralUndeclaredPresent({ snapshot });
+  const f = findings.find((x) => x.title.includes('sneaky_telemetry'));
+  assert.ok(f, 'expected an undeclared-module finding');
+  assert.equal(f.needsSemanticReview, true);
+  const metas = findings.filter((x) => x.category === 'risk');
+  for (const m of metas) assert.notEqual(m.needsSemanticReview, true);
+});

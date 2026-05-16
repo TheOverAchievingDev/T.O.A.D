@@ -158,6 +158,7 @@ function makeFinding(teamId, {
     actual,
     recommendedCorrection,
     autoFixable: false,
+    needsSemanticReview: true,
     specReviewed: reviewed === true,
     specProvenance: provenance,
   };
