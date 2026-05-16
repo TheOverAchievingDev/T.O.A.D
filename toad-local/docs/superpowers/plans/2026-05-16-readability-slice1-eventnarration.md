@@ -889,10 +889,20 @@ test('accumulateLoc: per-agent {added,removed,removedUnknown,filesTouched}, igno
     { agentId: 'qa', type: 'tool_use', toolName: 'Edit', input: { file_path: 'a.ts', old_string: 'x\ny', new_string: '' } },
   ];
   const out = accumulateLoc(events, { gitRules: ['*.lock'], locIgnorePaths: [] });
-  assert.deepEqual(out.dev, { added: 1 + 1 + 2, removed: 1 + 0 + 0, removedUnknown: true, filesTouched: 2 });
-  assert.deepEqual(out.qa, { added: 0, removed: 2, removedUnknown: false, filesTouched: 1 });
+  assert.deepEqual(out.dev, { added: 1 + 1 + 2, removed: 1 + 0 + 0, removedUnknown: true, filesTouched: 2, byFile: { 'a.ts': { added: 2, removed: 1 }, 'b.ts': { added: 2, removed: 0 } } });
+  assert.deepEqual(out.qa, { added: 0, removed: 2, removedUnknown: false, filesTouched: 1, byFile: { 'a.ts': { added: 0, removed: 2 } } });
 });
 ```
+
+> **Controller ratification (T12 — whole-impl-review, pre-Commit-2):**
+> `accumulateLoc` now also returns per-agent **`byFile: { [file]:
+> { added, removed } }`**. Spec §6.3 (ratified Finding-#7) pins the
+> rail tooltip as a **per-file breakdown**; the original
+> `{added,removed,removedUnknown,filesTouched}` shape had no per-file
+> data, so T13's tooltip could not be rendered without re-implementing
+> the fold (a §8c divergence). Adding `byFile` to the single tested
+> aggregation keeps one source. `assert.deepEqual` is key-order
+> insensitive, so the prior assertions just gain the `byFile` key.
 
 > **Controller ratification (T12):** the assertion above is the
 > corrected one (`out.qa.added: 0`). Trace: dev Edit `a.ts` `x`→`x\ny`
@@ -920,15 +930,22 @@ export function accumulateLoc(events, { gitRules = [], locIgnorePaths = [] } = {
     if (!loc) continue;
     if (isIgnored(loc.file, gitRules, locIgnorePaths)) continue;
     const id = e && typeof e.agentId === 'string' ? e.agentId : 'unknown';
-    const a = acc[id] || (acc[id] = { added: 0, removed: 0, removedUnknown: false, _files: new Set() });
+    const a = acc[id] || (acc[id] = { added: 0, removed: 0, removedUnknown: false, _files: new Set(), _byFile: {} });
     a.added += loc.added;
     a.removed += loc.removed;
     if (!loc.removedKnown) a.removedUnknown = true;
-    if (loc.file) a._files.add(loc.file);
+    if (loc.file) {
+      a._files.add(loc.file);
+      const bf = a._byFile[loc.file] || (a._byFile[loc.file] = { added: 0, removed: 0 });
+      bf.added += loc.added;
+      bf.removed += loc.removed;
+    }
   }
   for (const id of Object.keys(acc)) {
     acc[id].filesTouched = acc[id]._files.size;
+    acc[id].byFile = acc[id]._byFile;
     delete acc[id]._files;
+    delete acc[id]._byFile;
   }
   return acc;
 }
@@ -952,9 +969,53 @@ export { lineCount, locForEvent, isIgnored, accumulateLoc } from './locCount.js'
 
 Run: `cd /c/Project-TOAD/toad-local && grep -rln "agent.tokens\|agent.tokenLimit\|members.map" ui/src/components | head` and identify the agent-rail row component (the per-agent list in the TEAM column). Identify where `useToadData` assembles per-agent data and where the SSE event stream per agent is available (the same source `deriveAgentActivity` consumes).
 
-- [ ] **Step 2: Compute per-agent LoC** in the read-model assembly: import `accumulateLoc` (same `ui → src` path approach as Task 8); call it over the per-agent event stream the hook already holds, supplying `gitRules` = the project `.gitignore` lines the UI can read via the existing settings/project API (if no such API is wired, supply `[]` and a code comment that gitignore wiring is a follow-up — the *matcher* is done and pure; default no-filter is honest). Resolve `locIgnorePaths` from effective settings `settings.runtime.locIgnorePaths` if present. Extend the per-agent view type with `loc?: { added: number; removed: number; removedUnknown: boolean; filesTouched: number }`.
+> **Controller ratification (T13 — whole-impl-review, pre-Commit-2;
+> grounded against `useToadData.ts`).** Three pins that supersede the
+> ambiguous parts of Steps 2–3 (the plan said "per-agent event stream
+> the hook already holds" — grounding shows that is the INERT TRAP):
+>
+> 1. **Source = the RAW `RuntimeEvent` stream, NOT `agentStreams`.**
+>    `useToadData` holds `agentStreams: Record<string, StreamEntry[]>`,
+>    and `StreamEntry` is `{id,time,kind,tool?,body}` — it has **no
+>    `toolName`/`input`**, so `locForEvent(streamEntry)` returns `null`
+>    for every row and the rail would render `+0 / −0` forever (a
+>    perfectly inert feature). LoC MUST be derived from the raw
+>    `RuntimeEvent`s. Wire it in the existing `handleEvent` callback
+>    (the same place `deriveAgentActivity(event)` / `eventToStreamEntry
+>    (event,…)` consume the raw event, ~`useToadData.ts:656-685`):
+>    keep a per-agent buffer `runtimeEventsByAgentRef` of the raw
+>    `tool_use` events (cap at `MAX_STREAM_PER_AGENT`, mirroring the
+>    `agentStreams` trim) and, on each event with an `agentId`, set
+>    `locByAgent[agentId] = accumulateLoc(buffer[agentId], { gitRules,
+>    locIgnorePaths })[agentId]` (reuse the tested aggregation — do NOT
+>    re-implement the fold). Fold `loc` into members exactly like
+>    `activity` is folded (the `members: prev.members.map(m => ({ ...m,
+>    loc: locByAgent[m.id] ?? m.loc }))` pattern at ~L694, and the
+>    `rawMembers.map` build at ~L448). Add a `useState<Record<string,
+>    {added,removed,removedUnknown,filesTouched,byFile}>>` mirroring
+>    `activityByAgent`.
+> 2. **`gitRules = []` and `locIgnorePaths = []` — honest documented
+>    default.** Grounded: `useToadData.ts` has NO `.gitignore` reader
+>    and NO effective-settings access in this hook (no `readEffective`/
+>    `settings.runtime` import). Per spec §6.2 + plan intent, supply
+>    `{ gitRules: [], locIgnorePaths: [] }` with a code comment:
+>    `// LoC ignore-filtering wired with no rules in Slice 1 — useToadData
+>    // has no .gitignore/settings access here; the matcher is pure +
+>    // tested, gitignore/locIgnorePaths sourcing is a documented
+>    // follow-up (spec §6.2). No-filter is the honest default, not a
+>    // silent failure.` Do NOT fabricate a settings path that does not
+>    exist (that would be the un-grounded-assertion failure §8d guards).
+> 3. **Tooltip per-file breakdown comes from `loc.byFile`** (added to
+>    `accumulateLoc` by the T12 ratification): render the
+>    `{ [file]: {added,removed} }` map as the `{file}: +a / −r` list.
+>    Extend the `Agent` type with
+>    `loc?: { added: number; removed: number; removedUnknown: boolean;
+>    filesTouched: number; byFile: Record<string,{added:number;removed:number}> }`
+>    (after `contextSource`). `tsc -b`/`vite build` MUST stay green.
 
-- [ ] **Step 3: Render** in the rail row: show `+{added} / {removedUnknown ? '—' : '−'+removed}` (or `+a / −r` when known), as a small muted indicator, **labelled activity volume** (tooltip text: `"Activity volume — requested edits; the runtime emits no applied-diff signal, so failed/denied edits are included. Overwrite-write removals are unknowable (—)."`). Tooltip body = **per-file** breakdown (`{file}: +a / −r` list). Never the word "productivity".
+- [ ] **Step 2: Compute per-agent LoC** — per the ratification above (raw `RuntimeEvent` buffer → `accumulateLoc`; `[]`/`[]` documented default; `loc` folded into members like `activity`).
+
+- [ ] **Step 3: Render** in the rail row (`ui/src/components/AgentCard.tsx`, next to the tokens display ~L194-197): show `+{loc.added} / {loc.removedUnknown ? '—' : '−'+loc.removed}`, a small muted indicator, **labelled activity volume**, `title`/tooltip text exactly: `"Activity volume — requested edits; the runtime emits no applied-diff signal, so failed/denied edits are included. Overwrite-write removals are unknowable (—)."` plus the per-file breakdown rendered from `loc.byFile` (`{file}: +a / −r` lines). Render nothing when `loc` is absent. **Never the word "productivity".**
 
 - [ ] **Step 4: Wire `test/locCount.test.js` into `package.json`** (`&& node --no-warnings --test test/locCount.test.js`); validate JSON.
 
