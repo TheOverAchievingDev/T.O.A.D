@@ -654,7 +654,7 @@ Expected: PASS. Then run `test/authPreflight.decision.test.js` again — still P
 
 **Files:** Modify `src/app/LocalToadRuntime.js` (≈L404-450); Create `test/localToadRuntime.authPreflight.test.js`
 
-- [ ] **Step 1: Write the failing test** — create `test/localToadRuntime.authPreflight.test.js`. Construct `LocalToadRuntime` the way `test/localToadRuntime.test.js` does (mirror it — do NOT invent the constructor/supervisor fakes). Inject a fake `supervisor` whose `launchAgent` records calls, and inject the preflight deps (the constructor must accept an injectable `claudeAuthPreflight` / `refreshOnce` / creds-reader — added in Step 3). Assertions:
+- [ ] **Step 1: Write the failing test** — create `test/localToadRuntime.authPreflight.test.js`. Construct `LocalToadRuntime` the way `test/localToadRuntime.test.js` does (mirror it — do NOT invent the constructor/supervisor fakes). **CONTROLLER-RATIFIED construction note (T7, §8d):** the preflight is gated on `#authPreflightEnabled` (projectCwd non-empty), so this new test **must** construct with a `projectCwd` (use a `mkdtempSync` temp dir, the pattern other projectCwd-using tests in `test/localToadRuntime.test.js` follow) — otherwise the preflight branch is never entered and (a)/(b)/(d) would falsely "pass" by skipping the very logic under test (the inert-test trap). Do **not** set `installDir` (keeps `isolated`=false so launches don't need `input.cwd`), OR set both and pass `input.cwd` — mirror whichever existing projectCwd test does. Inject a fake `supervisor` whose `launchAgent` records calls, and inject the preflight deps (the constructor must accept an injectable `claudeAuthPreflightImpl` / `refreshOnceImpl` / `readClaudeCredsStatus` — added in Step 3); the injected fakes must make the test fully hermetic (no real `getAuthStatus`, no real `claude`). Assertions:
 
 ```javascript
 // (a) input.command basename 'claude' + preflight → block:
@@ -681,6 +681,7 @@ Expected: FAIL — no preflight wired; block case still calls supervisor.
 - `claudeAuthPreflightImpl = claudeAuthPreflight` (import from `../runtime/authPreflight/index.js`)
 - `refreshOnceImpl = null` (when null, build the real `defaultRefreshOnce` bound with the Windows-safe spawn + `llmJudge`'s `CLAUDE_ISOLATION_FLAGS`)
 - a private `#authPreflightMutex = Promise.resolve()` and `#authRelaunchState = new Map()` (wiring-layer state, NOT in the pure core)
+- a private `#authPreflightEnabled` set in the constructor to `typeof projectCwd === 'string' && projectCwd.length > 0` — the **exact** enable idiom this file already uses for every production-only collaborator (`worktreeManager`/`mergeChecker`/`mergeIntegrator`/`riskPolicy`/`remoteMergePolicy`/`riskPolicyStore`). **CONTROLLER-RATIFIED (T7, §8d):** the original plan gated the preflight on `isClaudeCommand` alone and Step 5's rationale wrongly asserted the existing suite is "non-claude/no-command" — it is in fact `command:'claude'` 12/12 with no projectCwd. The projectCwd gate is what actually keeps the existing suite hermetic (a true no-op, not green-by-machine-luck) while staying non-inert in production (every real launch path sets projectCwd) and spec-faithful to §4.3.
 - `readClaudeCredsStatus = () => getAuthStatus({ providerId: 'anthropic' })` (import `getAuthStatus` from `../providers/providerAuth.js`). **CONTROLLER-RATIFIED (T7 grounding, §8d):** the original plan said "reuse the existing provider-auth DI seam … `readFileImpl:this.providerAuthReadFile, statImpl:this.providerAuthStat`". That seam **does not exist** — `LocalToadRuntime` has NO `this.providerAuthReadFile`/`this.providerAuthStat`; its `providerAuthSpawn`/`providerAuthSpawnSync` constructor params are passed straight into `LocalToolFacade` (≈L207-208) and are never stored on `this`. The verified-correct seam is the whole-function injection pattern this file already uses (`*Impl = null → build real default`): the real default `getAuthStatus({ providerId:'anthropic' })` reads `~/.claude/.credentials.json` via providerAuth's own real `readFileSync`/`statSync` defaults and returns `{ providerId, supported, signedIn, tokenStatus, reason }` — exactly the pure core's `readCredsStatus()` contract. Tests inject a fake `readClaudeCredsStatus` **function** via the constructor (NOT readFile/stat sub-seams). `TOKEN_STATUS` is consumed by the pure core, not needed in `LocalToadRuntime` — import only `getAuthStatus`.
 
 (b) A helper to detect the Claude CLI from `input.command` (grounded — provider lives in `input.command`, basename, Windows `.cmd`/`.exe` tolerant):
@@ -696,7 +697,32 @@ function isClaudeCommand(command) {
 (c) In `launchAgent(input)`, **after** the isolation gate and env scrub, **before** `const runtime = await this.supervisor.launchAgent(launchInput);` (≈L450), insert the serialized Claude preflight:
 
 ```javascript
-    if (isClaudeCommand(input && input.command)) {
+    if (this.#authPreflightEnabled && isClaudeCommand(input && input.command)) {
+      // CONTROLLER-RATIFIED (T7 grounding, §8d — hermetic-test +
+      // inert/over-gate epicenter). `#authPreflightEnabled` is true iff
+      // projectCwd is a non-empty string — the VERBATIM enable idiom
+      // every other production-only collaborator in this file already
+      // uses (worktreeManager / mergeChecker / mergeIntegrator /
+      // riskPolicy / remoteMergePolicy / riskPolicyStore). Rationale:
+      //   • Non-inert in production — EVERY real agent-launch path sets
+      //     projectCwd: scripts/dev-api-server.mjs ({projectCwd,
+      //     installDir}) and src/mcp/stdioRuntime.js createMcpRuntimeFromEnv
+      //     ({projectCwd: TOAD_PROJECT_CWD}). Spec §4.3's "run preflight
+      //     for every anthropic/claude launch" is fully preserved (in
+      //     production projectCwd is always set) — this is a
+      //     spec-faithful refinement, NOT a deviation.
+      //   • Hermetic for the existing suite — test/localToadRuntime.test.js
+      //     constructs WITHOUT projectCwd and launches command:'claude'
+      //     12/12 times. Gating only on isClaudeCommand (as the original
+      //     plan did) would run the REAL getAuthStatus + (on a non-fresh
+      //     machine, e.g. the very expired-token symptom that opened this
+      //     thread) the REAL `claude --print` inside the unit suite —
+      //     machine-state-dependent green / real subprocess in tests.
+      //     The projectCwd gate makes the existing suite a true no-op
+      //     (zero behavior change), not green-by-luck.
+      //   • The new test/localToadRuntime.authPreflight.test.js
+      //     constructs WITH projectCwd (and injects the fake preflight
+      //     deps) to exercise block/proceed/skip/concurrent.
       // Serialize all Claude preflights in-process: concurrent team
       // launches must not race `claude --print` on the single
       // ~/.claude/.credentials.json (partial read / duplicate refresh).
@@ -740,7 +766,7 @@ Expected: PASS (block, proceed, non-claude-skip, concurrent-once).
 - [ ] **Step 5: Existing LocalToadRuntime suite stays green**
 
 Run: `cd /c/Project-TOAD/toad-local && node --no-warnings --test test/localToadRuntime.test.js 2>&1 | grep -E "^# (pass|fail)"`
-Expected: `# fail 0` (non-claude / no-command launches must be unaffected — the preflight is strictly gated on `isClaudeCommand`). Fix code on regression, never weaken a test.
+Expected: `# fail 0`. **CONTROLLER-RATIFIED rationale (the original "non-claude / no-command launches must be unaffected" was factually wrong):** `test/localToadRuntime.test.js` launches `command:'claude'` on **all 12** of its launches and constructs **without** `projectCwd`. The existing suite stays green precisely because the preflight is gated on `#authPreflightEnabled` (projectCwd non-empty) — with no projectCwd the preflight branch is never entered, so it is a strict no-op with **zero** behavior change and **no** dependency on machine creds state or any real `claude --print`. Independently confirm hermeticity: this run must NOT read `~/.claude/.credentials.json` and must NOT spawn `claude` (the existing harness uses a fake `spawnProcess`; the preflight must not bypass it). Fix code on regression, never weaken a test.
 
 ---
 
