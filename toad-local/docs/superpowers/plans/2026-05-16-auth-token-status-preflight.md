@@ -598,8 +598,16 @@ export function defaultRefreshOnce({
     let settled = false;
     const done = (v) => { if (!settled) { settled = true; clearTimeout(timer); resolve(v); } };
     const timer = setTimeout(() => {
-      try { child && child.kill('SIGKILL'); } catch { /* ignore */ }
+      // CONTROLLER-RATIFIED (T6 verification): the timeout verdict must be
+      // recorded BEFORE killing the child. `done()` sets `settled`, so the
+      // exit listener that `kill('SIGKILL')` synchronously fires (a killed
+      // turn did NOT complete) becomes a no-op and cannot overwrite
+      // {timedOut:true} with a spurious {ok:false,timedOut:false}. The
+      // original plan template had these two lines reversed — a latent
+      // race (deterministic loss under a synchronous fake spawn). Order is
+      // load-bearing: timeout is the final verdict; kill is cleanup.
       done({ ok: false, authRejected: false, timedOut: true });
+      try { child && child.kill('SIGKILL'); } catch { /* ignore */ }
     }, timeoutMs);
     try {
       child = spawnImpl(command, ['--model', 'haiku', '--print', ...(isolationFlags || []), REFRESH_PROMPT], { windowsHide: true });
