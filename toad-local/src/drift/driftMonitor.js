@@ -27,8 +27,11 @@
  */
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 
+// Submission statuses only (design §3.2). `testing` dropped — L3
+// adjudicates at the submission boundary (review / merge_ready / done),
+// not at intermediate work states.
 const TRIGGER_TRANSITIONS = new Set([
-  'review', 'testing', 'merge_ready', 'done',
+  'review', 'merge_ready', 'done',
 ]);
 
 export class DriftMonitor {
@@ -74,13 +77,18 @@ export class DriftMonitor {
     }));
   }
 
-  async notifyTaskEvent({ teamId, eventType, payload } = {}) {
+  async notifyTaskEvent({ teamId, eventType, payload, taskId } = {}) {
     if (eventType !== 'task.status_changed') return;
     const to = payload?.to;
     if (typeof to !== 'string' || !TRIGGER_TRANSITIONS.has(to)) return;
     if (typeof teamId !== 'string' || teamId.length === 0) return;
     try {
-      await this.engine.runDrift({ teamId, trigger: 'task_event' });
+      await this.engine.runDrift({
+        teamId,
+        trigger: 'task_event',
+        boundaryTaskId: taskId ?? payload?.taskId ?? null,
+        boundaryTo: payload?.to,
+      });
     } catch (err) {
       this.logger.warn(`[drift] team=${teamId} task_event runDrift failed:`, err);
     }

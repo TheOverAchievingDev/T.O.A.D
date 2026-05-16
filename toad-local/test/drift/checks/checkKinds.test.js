@@ -34,8 +34,7 @@ const DRIFT = [
   'check_structural_undeclared_present',
   'check_constitution',
   'check_contract_drift',
-  'check_llm_semantic_t1',
-  'check_llm_semantic_t2',
+  'check_llm_semantic',
 ];
 
 test('the 7 pre-L1 process checks classify as conformance', () => {
@@ -45,7 +44,7 @@ test('the 7 pre-L1 process checks classify as conformance', () => {
   assert.deepEqual([...CONFORMANCE_CHECK_NAMES].sort(), [...CONFORMANCE_7].sort());
 });
 
-test('the L1 code-vs-spec checks + LLM semantic tiers classify as drift', () => {
+test('the L1 code-vs-spec checks + L3 LLM semantic classify as drift', () => {
   for (const name of DRIFT) {
     assert.equal(kindForCheck(name), 'drift', name);
   }

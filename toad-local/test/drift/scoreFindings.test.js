@@ -13,7 +13,40 @@ function f({ id = 'x', taskId = null, category = 'architecture',
 
 test('SEVERITY_WEIGHT matches the spec', () => {
   assert.deepEqual(SEVERITY_WEIGHT,
-    { info: 1, low: 3, medium: 8, high: 15, critical: 25 });
+    { observer: 0, info: 1, low: 3, medium: 8, high: 15, critical: 25 });
+});
+
+test('observer severity is explicit-zero-weight: surfaced but never scored (design §3.4 lockstep)', () => {
+  // The L3 circuit-breaker trip emits severity:'observer'. It must be
+  // an explicit member of the severity taxonomy (not an unknown that
+  // happens to default to 0) AND must contribute 0 to the team score
+  // while still being retained/categorized in the output (surfaced to
+  // the operator, never scored or blocking).
+  assert.equal(SEVERITY_WEIGHT.observer, 0,
+    'observer must be an explicit zero-weight member of the taxonomy');
+
+  const withoutObserver = [f({ id: 'a', severity: 'medium' })]; // 8
+  const withObserver = [
+    f({ id: 'a', severity: 'medium' }),                                  // 8
+    f({ id: 'obs', severity: 'observer', category: 'risk', checkName: 'check_llm_semantic' }), // +0
+  ];
+  const base = scoreFindings(withoutObserver);
+  const withObs = scoreFindings(withObserver);
+
+  // Score-neutral: adding the observer finding does not change the score.
+  assert.equal(withObs.teamScore, base.teamScore,
+    'an observer finding must contribute 0 to teamScore');
+  assert.equal(withObs.teamScore, 8);
+
+  // Still surfaced: the observer finding is retained in categorized output
+  // (its risk category bar reflects presence, not a dropped finding).
+  // categoryScores are filled-bar (100 = no drift); an observer in 'risk'
+  // leaves risk at 100 because weight 0, but the finding itself is not
+  // dropped from scoring traversal (no throw, score stable, categories
+  // computed over the full list including the observer entry).
+  assert.equal(withObs.categoryScores.risk, 100,
+    'observer is zero-weight so its category bar stays healthy');
+  assert.equal(withObs.status, base.status, 'status unchanged by an observer finding');
 });
 
 test('statusForScore maps to thresholds correctly', () => {

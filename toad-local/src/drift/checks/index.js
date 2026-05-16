@@ -10,13 +10,14 @@ import { checkStructuralDeclaredAbsent } from './checkStructuralDeclaredAbsent.j
 import { checkStructuralUndeclaredPresent } from './checkStructuralUndeclaredPresent.js';
 import { checkConstitution } from './checkConstitution.js';
 import { checkContractDrift } from './checkContractDrift.js';
-import { checkLlmSemantic } from './checkLlmSemantic.js';
 import { kindForCheck } from './checkKinds.js';
 
 /**
- * Check registry. The engine runs all `tier: 1` checks first, scores
- * the result, and decides whether to run any `tier: 2` checks via
- * escalationGate.
+ * Check registry. One collapsed deterministic set — every entry is
+ * `tier: 1` and the engine runs them all, then scores the result.
+ * There is no tier-2 escalation here anymore: L3 semantic
+ * adjudication is gate-invoked by the engine at submission task
+ * boundaries (l3Gate → buildL3Packet → l3Judge), not a registry tier.
  *
  * Every entry carries `kind: 'conformance' | 'drift'` (PROJECT.md §8),
  * attached from checkKinds.js — the single source of truth for the
@@ -82,16 +83,17 @@ export const ALL_CHECKS = Object.freeze([
   // correctness NEVER (the compiler/validation_run owns types).
   // mode:'observe' — flags, never blocks delivery.
   { name: 'check_contract_drift', tier: 1, mode: 'observe', fn: checkContractDrift },
-  // LLM tier 1 — Haiku/Mini/Flash, always runs
-  { name: 'check_llm_semantic_t1', tier: 1, fn: (args) => checkLlmSemantic({ ...args, tier: 1 }) },
-  // LLM tier 2 — Opus/GPT-5/Gemini-Pro, escalation only
-  { name: 'check_llm_semantic_t2', tier: 2, fn: (args) => checkLlmSemantic({ ...args, tier: 2 }) },
+  // L3 LLM adjudication (check_llm_semantic) is NOT a registry check.
+  // It is gate-invoked by the engine directly (DriftEngine.#runDriftInner)
+  // at task boundaries via l3Gate → buildL3Packet → l3Judge. The name
+  // is registered in checkKinds (kind:'drift') so engine-stamped L3
+  // findings carry the correct kind; there is no check fn here.
 ].map(withKind));
 
-/** Back-compat: existing engine code reads DETERMINISTIC_CHECKS. */
-export const DETERMINISTIC_CHECKS = Object.freeze(
-  ALL_CHECKS.filter((c) => c.tier === 1 && !c.name.startsWith('check_llm_'))
-);
+// One check set: L3 is gate-invoked by the engine, NOT a registry
+// tier entry (design §4.4/§8). Both names retained as aliases so
+// existing import sites keep working without churn.
+export const DETERMINISTIC_CHECKS = ALL_CHECKS;
 
 // Conformance-vs-drift taxonomy (PROJECT.md §8). Re-exported from the
 // registry so consumers have one import site; the source of truth is

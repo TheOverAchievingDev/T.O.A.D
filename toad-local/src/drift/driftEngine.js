@@ -1,14 +1,20 @@
 import { randomUUID } from 'node:crypto';
+import os from 'node:os';
+import fs from 'node:fs';
+import path from 'node:path';
 import { buildSnapshot } from './buildSnapshot.js';
 import { scoreFindings } from './scoreFindings.js';
 import { DETERMINISTIC_CHECKS } from './checks/index.js';
 import { kindForCheck } from './checks/checkKinds.js';
-import { escalationGate } from './llm/escalationGate.js';
+import { l3Gate, l3CacheKey } from './llm/l3Gate.js';
+import { buildL3Packet } from './llm/buildL3Packet.js';
+import { l3Judge as defaultL3Judge } from './llm/l3Judge.js';
+import { resolveProvider } from './llm/providerResolver.js';
+import { L3_PROMPT_TEMPLATE } from './llm/prompts/l3.js';
 
 const DEFAULT_SETTINGS = Object.freeze({
   drift: Object.freeze({
     llmTierEnabled: true,
-    escalationThreshold: 41,
     // Periodic-trigger cooldown. The backend monitor (5min) AND the UI
     // poll (60s) both issue trigger:'periodic'. Without this, every
     // periodic call does a full whole-tree re-scan (buildSnapshot walks
@@ -16,43 +22,54 @@ const DEFAULT_SETTINGS = Object.freeze({
     // 5min matches DriftMonitor's DEFAULT_INTERVAL_MS so the slowest
     // periodic caller sets the real cadence; manual + task_event bypass.
     periodicCooldownMs: 300_000,
-    tier2CooldownMs: 300_000,
-    tier2ScoreDelta: 10,
     tier1ModelOverride: null,
     tier2ModelOverride: null,
+    // L3 circuit breaker (design §3.4): max L3 spawns per team per
+    // rolling hour. On trip the engine emits an observer-severity meta
+    // and skips WITHOUT polluting the verdict cache.
+    l3RateCapPerHour: 30,
+    // L3 packet budget (design §4.1): assembled packet bytes over this
+    // → buildL3Packet returns overBudget; engine emits meta + skips.
+    l3PacketBudgetBytes: 32 * 1024,
   }),
 });
 
 /**
- * Slice-2 orchestrator for drift evaluation.
+ * Slice-A L3 orchestrator for drift evaluation.
  *
  *   1. buildSnapshot(teamId)
- *   2. Run tier-1 checks (deterministic + LLM tier 1 if enabled)
- *   3. Score tier-1 findings
- *   4. escalationGate decides whether to run tier 2
- *      - Skip if score below threshold OR cooldown active OR no material change
- *      - Escalate otherwise
- *   5. If escalate: run tier-2 checks; on failure record the failure but
- *      still update cooldown so we don't hammer a failing CLI
- *   6. Combine, score, persist, return DriftRunResult with `llm: {tier1, tier2}`
+ *   2. Run tier-1 deterministic checks (all tier: 1 — the registry is
+ *      one set now; L3 is NOT a registry entry)
+ *   3. L3 gate (scoped, task-boundary, ambiguity-gated): l3Gate decides
+ *      skip | serve_cached(non-manual) | invoke. On invoke:
+ *      buildL3Packet → temp-brief + HOME-isolated l3Judge (Haiku→Sonnet
+ *      one self-escalation). Verdict cached per (team, ETag-key).
+ *      Config observer-severity rate cap; over-budget → meta+skip;
+ *      failure → meta-not-cached.
+ *   4. Combine, score, persist, return DriftRunResult with `l3:{status}`
  *
  * Per-team mutex: only one runDrift({teamId}) is in flight at a time.
- * In-memory cooldown state: lost on sidecar restart (acceptable per spec
- * §4.3 — heuristic re-warms in <60s).
+ * In-memory verdict cache + rate window: lost on sidecar restart
+ * (acceptable per design — re-warms at the next boundary).
  *
- * Default `checks` is the slice-1 deterministic registry. Production
- * wiring (scripts/dev-api-server.mjs) opts into the slice-2 LLM tier
- * by passing `checks: ALL_CHECKS` from `./checks/index.js`. Tests that
- * want the LLM tier active inject their own check list.
+ * Default `checks` is the deterministic registry (DETERMINISTIC_CHECKS,
+ * an alias of ALL_CHECKS). Production wiring (scripts/dev-api-server.mjs)
+ * passes ALL_CHECKS explicitly. Tests inject their own check list and
+ * an `l3JudgeImpl` so no provider subprocess spawns.
  */
 export class DriftEngine {
   #inflight = new Map();
-  #tier2Cooldown = new Map(); // teamId -> { lastRunAt, lastScore }
   // teamId -> this.now() of the last COMPUTED+persisted run. In-memory
-  // (lost on sidecar restart — acceptable, same as #tier2Cooldown:
-  // first periodic after a restart simply recomputes). Drives the
-  // periodic-trigger cooldown.
+  // (lost on sidecar restart — acceptable; first periodic after a
+  // restart simply recomputes). Drives the periodic-trigger cooldown.
   #lastRunAt = new Map();
+  // teamId -> Map(l3CacheKey -> { findings, tier }). In-memory verdict
+  // cache (ETag-style; key includes l3PromptHash so a prompt edit busts
+  // it). Lost on restart — acceptable.
+  #l3VerdictCache = new Map();
+  // teamId -> number[] (this.now() timestamps of L3 spawns). Rolling
+  // hour window for the §3.4 circuit breaker.
+  #l3RateWindow = new Map();
 
   constructor({
     deps,
@@ -60,6 +77,7 @@ export class DriftEngine {
     checks = DETERMINISTIC_CHECKS,
     settings = DEFAULT_SETTINGS,
     now = Date.now,
+    l3JudgeImpl = defaultL3Judge,
   } = {}) {
     if (!deps) throw new TypeError('DriftEngine: deps required');
     if (!store || typeof store.recordRun !== 'function') {
@@ -70,22 +88,30 @@ export class DriftEngine {
     this.checks = checks;
     this.settings = settings;
     this.now = now;
+    // Injectable for tests; defaults to the real l3Judge. Threaded into
+    // the L3 invoke path so no subprocess spawns under test.
+    this.l3JudgeImpl = l3JudgeImpl || defaultL3Judge;
   }
 
-  async runDrift({ teamId, trigger = 'manual' } = {}) {
+  /**
+   * boundaryTaskId/boundaryTo are populated iff the run is task-event-
+   * or-manual-scoped; their absence signals "not a transition event"
+   * (the gate treats a null boundaryTaskId as no_boundary_task → skip).
+   */
+  async runDrift({ teamId, trigger = 'manual', boundaryTaskId = null, boundaryTo = null } = {}) {
     if (typeof teamId !== 'string' || teamId.length === 0) {
       throw new TypeError('runDrift: teamId required');
     }
     const existing = this.#inflight.get(teamId);
     if (existing) return existing;
 
-    const promise = this.#runDriftInner({ teamId, trigger })
+    const promise = this.#runDriftInner({ teamId, trigger, boundaryTaskId, boundaryTo })
       .finally(() => this.#inflight.delete(teamId));
     this.#inflight.set(teamId, promise);
     return promise;
   }
 
-  async #runDriftInner({ teamId, trigger }) {
+  async #runDriftInner({ teamId, trigger, boundaryTaskId, boundaryTo }) {
     const runId = `run_${randomUUID()}`;
 
     // Early bail: if no team config exists for this teamId, drift has
@@ -110,8 +136,7 @@ export class DriftEngine {
         findings: [],
         reason: 'no_team_config',
         message: `Drift skipped: team "${teamId}" has no config (deleted, never created, or stale UI state after project switch).`,
-        tier1Status: 'skipped:no_team_config',
-        tier2Status: 'skipped:no_team_config',
+        l3: { status: 'skipped:no_team_config' },
       };
     }
 
@@ -148,18 +173,18 @@ export class DriftEngine {
       deps: this.deps,
       compareAgainst,
     });
+    // Thread the boundary onto the snapshot so the packet builder /
+    // gate have it alongside diffsByTask etc. (set before checks run).
+    snapshot.boundaryTaskId = boundaryTaskId;
+    snapshot.boundaryTo = boundaryTo;
     const llmEnabled = driftSettings.llmTierEnabled !== false;
 
-    // Partition checks by tier.
+    // Run tier-1 deterministic checks (the registry is one set now).
     const tier1Checks = this.checks.filter((c) => c.tier === 1);
-    const tier2Checks = this.checks.filter((c) => c.tier === 2);
 
-    // Run tier 1 (deterministic + LLM tier 1 if enabled).
     const tier1Findings = [];
-    let tier1Status = 'completed';
+    const tier1Status = 'completed';
     for (const check of tier1Checks) {
-      // Skip LLM checks if the tier is disabled in settings.
-      if (!llmEnabled && check.name.startsWith('check_llm_')) continue;
       try {
         const out = (await check.fn({ snapshot, settings: this.settings })) || [];
         for (const f of out) {
@@ -171,73 +196,136 @@ export class DriftEngine {
         tier1Findings.push(this.#metaFinding(check.name, runId, teamId, err));
       }
     }
+    void tier1Status;
 
-    // Score tier 1 to decide on escalation (filter out findings already being corrected).
-    const tier1Score = scoreFindings(tier1Findings.filter(f => !f.correctionTaskId)).teamScore;
-
-    // Decide tier 2.
-    let tier2Findings = [];
-    let tier2Status = 'skipped:below_threshold';
-
-    if (!llmEnabled) {
-      tier1Status = 'skipped:disabled';
-      tier2Status = 'skipped:disabled';
-    } else if (tier2Checks.length > 0) {
-      const cooldown = this.#tier2Cooldown.get(teamId) ?? null;
-      const verdict = escalationGate({
-        tier1Score,
-        threshold: driftSettings.escalationThreshold,
-        cooldownMs: driftSettings.tier2CooldownMs,
-        scoreDelta: driftSettings.tier2ScoreDelta,
-        lastT2RunAt: cooldown?.lastRunAt ?? null,
-        lastT2Score: cooldown?.lastScore ?? null,
-        now: this.now(),
+    // ── L3: scoped, task-boundary, ambiguity-gated adjudication ──────
+    let l3Findings = [];
+    let l3Status = 'skipped:not_invoked';
+    if (llmEnabled) {
+      const taskFindings = tier1Findings.filter(
+        (f) => f.taskId === boundaryTaskId
+          || (f.taskId === null && f.needsSemanticReview === true),
+      );
+      // Phase-1 gate (cacheHasKey:false): cheap steps 1–4 + manual.
+      // Periodic/non-submission/not-ambiguous skip here WITHOUT paying
+      // the cache-key hash (design §3 gate-ordering discipline).
+      const gate1 = l3Gate({
+        trigger, boundaryTo, boundaryTaskId,
+        l1FindingsForTask: taskFindings,
+        cacheHasKey: false,
+        silentSignificant: false, // Slice B fills this
       });
-      if (verdict.escalate) {
-        try {
-          for (const check of tier2Checks) {
-            const out = (await check.fn({
-              snapshot,
-              settings: this.settings,
-              tier1Findings,
-            })) || [];
-            for (const f of out) {
-              const stamped = { ...f, runId, teamId, kind: kindForCheck(f.checkName) };
-              if (linkages.has(stamped.id)) stamped.correctionTaskId = linkages.get(stamped.id);
-              tier2Findings.push(stamped);
+      if (gate1.action === 'skip') {
+        l3Status = `skipped:${gate1.reason}`;
+      } else {
+        const spec = snapshot.spec ?? null;
+        const d = snapshot.diffsByTask?.[boundaryTaskId] || null;
+        const diffFiles = d && Array.isArray(d.changedFiles)
+          ? d.changedFiles.map((file) => ({ file, content: typeof d.diff === 'string' ? d.diff : '' }))
+          : [];
+        const key = l3CacheKey({ diffFiles, spec, l1Findings: taskFindings, promptTemplate: L3_PROMPT_TEMPLATE });
+        const teamCache = this.#l3VerdictCache.get(teamId) || new Map();
+        // Phase-2: authoritative serve_cached vs invoke. manual already
+        // short-circuited to invoke/manual_bypass in gate1 (its
+        // cacheHasKey is irrelevant) — reuse gate1, don't re-call.
+        const decision = gate1.reason === 'manual_bypass'
+          ? gate1
+          : l3Gate({
+              trigger, boundaryTo, boundaryTaskId,
+              l1FindingsForTask: taskFindings,
+              cacheHasKey: teamCache.has(key),
+              silentSignificant: false,
+            });
+        if (decision.action === 'serve_cached') {
+          const cached = teamCache.get(key);
+          l3Findings = cached.findings;
+          l3Status = `served_cached:${cached.tier}`;
+        } else {
+          // Circuit breaker (config-tunable; observer-severity on trip).
+          const capPerHour = typeof driftSettings.l3RateCapPerHour === 'number' ? driftSettings.l3RateCapPerHour : 30;
+          const windowMs = 60 * 60 * 1000;
+          const nowTs = this.now();
+          const win = (this.#l3RateWindow.get(teamId) || []).filter((t) => nowTs - t < windowMs);
+          if (win.length >= capPerHour) {
+            this.#l3RateWindow.set(teamId, win);
+            l3Findings = [this.#l3Meta(runId, teamId, 'observer', 'rate_cap',
+              `L3 rate cap hit (${capPerHour}/h) — investigate the drift system; deterministic L1 findings still apply`)];
+            l3Status = 'skipped:rate_cap';
+          } else {
+            const built = buildL3Packet({
+              snapshot, boundaryTaskId,
+              l1Signal: { kind: 'flagged', findings: taskFindings.filter((f) => f.needsSemanticReview === true) },
+              budgetBytes: driftSettings.l3PacketBudgetBytes,
+            });
+            if (built.overBudget) {
+              l3Findings = [this.#l3Meta(runId, teamId, 'info', 'over_budget',
+                `L3 packet over budget for task ${boundaryTaskId} (${built.bytes}B, ${built.fileCount} files) — semantic adjudication skipped; deterministic L1 findings still apply`)];
+              l3Status = 'skipped:over_budget';
+            } else {
+              // Temp brief + HOME-isolated spawn — reuse the proven
+              // mechanics from the deleted checkLlmSemantic verbatim.
+              const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'symphony-l3-'));
+              const briefPath = path.join(dir, 'brief.md');
+              let isolateHome = false;
+              try {
+                fs.writeFileSync(briefPath, built.packet, 'utf-8');
+                const realCreds = path.join(os.homedir(), '.claude', '.credentials.json');
+                if (fs.existsSync(realCreds)) {
+                  const cdir = path.join(dir, '.claude');
+                  fs.mkdirSync(cdir, { recursive: true });
+                  fs.copyFileSync(realCreds, path.join(cdir, '.credentials.json'));
+                  isolateHome = true;
+                }
+              } catch { /* fall back to inline */ }
+              try {
+                const provider = resolveProvider({ teamConfig: snapshot.teamConfig, settings: this.settings, tier: 1 });
+                const verdict = await this.l3JudgeImpl({
+                  packet: built.packet,
+                  provider: { cli: provider.cli, tier1: provider.model,
+                    tier2: resolveProvider({ teamConfig: snapshot.teamConfig, settings: this.settings, tier: 2 }).model },
+                  briefPath, cwd: dir, isolateHome, timeoutMs: 30_000,
+                });
+                l3Findings = verdict.findings.map((f) => ({
+                  id: `f_l3_${teamId}_${boundaryTaskId}_${f.title}`.slice(0, 200),
+                  runId, teamId, taskId: boundaryTaskId,
+                  category: f.category, severity: f.severity,
+                  checkName: 'check_llm_semantic',
+                  kind: kindForCheck('check_llm_semantic'),
+                  title: f.title, evidence: f.evidence,
+                  expected: f.expected, actual: f.actual,
+                  recommendedCorrection: f.recommendedCorrection,
+                  autoFixable: false,
+                }));
+                teamCache.set(key, { findings: l3Findings, tier: verdict.tier });
+                this.#l3VerdictCache.set(teamId, teamCache);
+                this.#l3RateWindow.set(teamId, [...win, nowTs]);
+                l3Status = `completed:${verdict.tier}`;
+              } catch (err) {
+                // Failure → non-blocking meta, NOT cached (transient → retry next boundary).
+                l3Findings = [this.#l3Meta(runId, teamId, 'medium', 'judge_failed',
+                  err && err.message ? err.message : String(err))];
+                l3Status = 'failed';
+                this.#l3RateWindow.set(teamId, [...win, nowTs]);
+              } finally {
+                try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+              }
             }
           }
-          tier2Status = 'completed';
-          this.#tier2Cooldown.set(teamId, {
-            lastRunAt: this.now(),
-            lastScore: tier1Score,
-          });
-        } catch (err) {
-          tier2Status = { failed: err && err.message ? err.message : String(err) };
-          // Still update cooldown so we don't hammer a failing CLI.
-          this.#tier2Cooldown.set(teamId, {
-            lastRunAt: this.now(),
-            lastScore: tier1Score,
-          });
         }
-      } else if (verdict.reason === 'cooldown' || verdict.reason === 'no_material_change') {
-        tier2Status = 'skipped:cooldown';
-      } else {
-        // verdict.reason === 'below_threshold' (or invalid_score, etc)
-        tier2Status = 'skipped:below_threshold';
       }
+    } else {
+      l3Status = 'skipped:disabled';
     }
 
     // Combine all findings (unfiltered, so UI can render correction-in-progress badges).
     // Dedupe by finding id — last-write-wins. The LLM judge sometimes
-    // returns multiple findings that hash to the same stableFindingId
-    // (same checkName + category + taskId + title), and the underlying
-    // SqliteDriftStore uses finding_id as primary key, so duplicates
-    // would crash the whole run with UNIQUE constraint failed. Dedup
-    // here keeps the run atomic; tier-2 findings (which run later) win
-    // over tier-1 dups because they're appended after.
+    // returns multiple findings that hash to the same id (same title),
+    // and the underlying SqliteDriftStore uses finding_id as primary
+    // key, so duplicates would crash the whole run with UNIQUE
+    // constraint failed. Dedup here keeps the run atomic; L3 findings
+    // (which run later) win over L1 dups because they're appended after.
     const findingsById = new Map();
-    for (const f of [...tier1Findings, ...tier2Findings]) {
+    for (const f of [...tier1Findings, ...l3Findings]) {
       if (f && typeof f.id === 'string') findingsById.set(f.id, f);
     }
     const allFindings = Array.from(findingsById.values());
@@ -281,10 +369,7 @@ export class DriftEngine {
       perTaskScores,
       history,
       trigger,
-      llm: {
-        tier1: tier1Status,
-        tier2: tier2Status,
-      },
+      l3: { status: l3Status },
     };
   }
 
@@ -294,7 +379,7 @@ export class DriftEngine {
    * if nothing is persisted yet (→ caller falls through and computes).
    * Shape mirrors #runDriftInner's return so the UI/caller can't tell
    * a cached periodic tick from a fresh one beyond the `cached` flag
-   * and the LLM tiers being honestly reported as skipped:cooldown.
+   * and L3 being honestly reported as skipped:cooldown.
    */
   #cachedResult({ teamId }) {
     if (typeof this.store.listScoreHistory !== 'function'
@@ -315,7 +400,22 @@ export class DriftEngine {
       })),
       trigger: latest.trigger,
       cached: true,
-      llm: { tier1: 'skipped:cooldown', tier2: 'skipped:cooldown' },
+      l3: { status: 'skipped:cooldown' },
+    };
+  }
+
+  #l3Meta(runId, teamId, severity, code, detail) {
+    return {
+      id: `f_l3_${code}_${teamId}`, runId, teamId, taskId: null,
+      category: 'risk', severity,
+      checkName: 'check_llm_semantic', kind: 'drift',
+      title: `L3 ${code.replace(/_/g, ' ')}`,
+      evidence: [detail], expected: 'L3 adjudication available',
+      actual: detail,
+      recommendedCorrection: code === 'rate_cap'
+        ? 'Investigate the drift trigger/cache/ambiguity predicate for a loop.'
+        : 'Transient/infrastructure — usually clears next boundary.',
+      autoFixable: false,
     };
   }
 

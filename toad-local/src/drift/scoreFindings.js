@@ -12,7 +12,7 @@
  */
 
 export const SEVERITY_WEIGHT = Object.freeze({
-  info: 1, low: 3, medium: 8, high: 15, critical: 25,
+  observer: 0, info: 1, low: 3, medium: 8, high: 15, critical: 25,
 });
 
 export const STATUS_THRESHOLDS = Object.freeze([

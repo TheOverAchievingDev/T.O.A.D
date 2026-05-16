@@ -19,7 +19,7 @@ interface DriftScreenProps {
 }
 
 const SEVERITY_ORDER: Record<DriftFinding['severity'], number> = {
-  critical: 4, high: 3, medium: 2, low: 1, info: 0,
+  critical: 4, high: 3, medium: 2, low: 1, info: 0, observer: -1,
 };
 const SEVERITY_COLOR: Record<DriftFinding['severity'], string> = {
   critical: 'var(--err, #f87171)',
@@ -27,6 +27,7 @@ const SEVERITY_COLOR: Record<DriftFinding['severity'], string> = {
   medium:   'var(--warn, #ffcd66)',
   low:      'var(--ok, #4ade80)',
   info:     'var(--fg-dim)',
+  observer: 'var(--accent, #7aa2f7)',
 };
 const STATUS_COLOR: Record<string, string> = {
   healthy:  'var(--ok, #4ade80)',
@@ -173,7 +174,7 @@ export function DriftScreen({ teamId, data, loading, error, refresh, onOpenTask 
             </select>
             <select value={filterSeverity} onChange={(e) => setFilterSeverity(e.target.value)} className="field-input mono" style={{ fontSize: 11, padding: '4px 6px' }}>
               <option value="all">All severities</option>
-              {(['critical', 'high', 'medium', 'low', 'info'] as const).map((s) => <option key={s} value={s}>{s}</option>)}
+              {(['critical', 'high', 'medium', 'low', 'info', 'observer'] as const).map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
         </div>

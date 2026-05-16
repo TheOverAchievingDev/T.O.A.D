@@ -4,9 +4,10 @@ import { LocalToadRuntime } from '../src/app/LocalToadRuntime.js';
 import { FoundryRuntime } from '../src/foundry/foundryRuntime.js';
 import { SqliteDriftStore } from '../src/drift/driftStore.js';
 import { DriftEngine } from '../src/drift/driftEngine.js';
-// 2026-05-15: importing DETERMINISTIC_CHECKS only — LLM judge is paused.
-// Swap back to ALL_CHECKS (also exported from this file) to re-enable.
-import { DETERMINISTIC_CHECKS } from '../src/drift/checks/index.js';
+// L3 is gate-invoked by the engine (design 2026-05-15-l3-reform);
+// ALL_CHECKS is the single deterministic set + L3 fires only at task
+// boundaries on L1 ambiguity.
+import { ALL_CHECKS } from '../src/drift/checks/index.js';
 import { SqlitePluginJobs } from '../src/plugins/pluginJobs.js';
 import { SqlitePluginResources } from '../src/plugins/pluginResources.js';
 import { DriftMonitor } from '../src/drift/driftMonitor.js';
@@ -91,21 +92,10 @@ if (driftDb) {
       // tolerates missing optional deps.
     },
     store: driftStore,
-    // 2026-05-15: LLM judge paused while we decide on the architectural
-    // path forward (L1/L2/L3 layered drift vs Planu/Spec Kit adoption).
-    // The previous setup (checks: ALL_CHECKS) ran check_llm_semantic_t1
-    // on every 60s periodic tick + every manual Run-Drift click and
-    // produced the bulk of the noise + failures in drift findings.
-    //
-    // The deterministic checks (lifecycle / scope / role / merge
-    // invariants) keep running and continue to populate
-    // process-compliance findings — those are useful even though
-    // they're not "code-vs-spec drift" in the SDD sense.
-    //
-    // To re-enable: replace DETERMINISTIC_CHECKS with ALL_CHECKS here
-    // and update the import on line 7. The LLM judge code itself is
-    // unchanged and ready to run.
-    checks: DETERMINISTIC_CHECKS,
+    // L3 is gate-invoked by the engine (design 2026-05-15-l3-reform);
+    // ALL_CHECKS is the single deterministic set + L3 fires only at task
+    // boundaries on L1 ambiguity.
+    checks: ALL_CHECKS,
     settings: driftSettings,
   });
   if (runtime.toolFacade) {
@@ -150,6 +140,7 @@ if (driftDb) {
         teamId: event.teamId,
         eventType: event.eventType,
         payload: event.payload,
+        taskId: event.taskId,
       }).catch((err) => {
         // eslint-disable-next-line no-console
         console.warn('[drift] notifyTaskEvent failed', err && err.message ? err.message : err);

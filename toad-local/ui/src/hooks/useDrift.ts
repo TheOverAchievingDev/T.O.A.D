@@ -7,7 +7,7 @@ export interface DriftFinding {
   teamId: string;
   taskId: string | null;
   category: 'architecture' | 'checklist' | 'slice_scope' | 'test_truth' | 'risk';
-  severity: 'info' | 'low' | 'medium' | 'high' | 'critical';
+  severity: 'observer' | 'info' | 'low' | 'medium' | 'high' | 'critical';
   checkName: string;
   /**
    * PROJECT.md §8 taxonomy, server-derived from checkName:

@@ -42,8 +42,7 @@ export const CHECK_KIND = Object.freeze({
   check_structural_undeclared_present: 'drift',
   check_constitution: 'drift',
   check_contract_drift: 'drift',
-  check_llm_semantic_t1: 'drift',
-  check_llm_semantic_t2: 'drift',
+  check_llm_semantic: 'drift',
 });
 
 export const CONFORMANCE_CHECK_NAMES = Object.freeze(
