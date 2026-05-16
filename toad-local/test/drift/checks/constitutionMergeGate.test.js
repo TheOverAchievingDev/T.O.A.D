@@ -13,7 +13,7 @@ function fakeRunGit(table) {
 
 const REVIEWED = { reviewed: true, extracted_by: 'hand', source_docs: ['docs/foundry/steering.md'] };
 function spec({ rules, reviewed = true }) {
-  return { version: 1, provenance: reviewed ? REVIEWED : { ...REVIEWED, reviewed: false }, constitution: { rules } };
+  return { version: 1, provenance: reviewed ? { ...REVIEWED } : { ...REVIEWED, reviewed: false }, constitution: { rules } };
 }
 const GATE_RULE = {
   id: 'no-sedebug', description: 'Never request SeDebugPrivilege',
