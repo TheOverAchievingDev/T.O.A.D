@@ -24,10 +24,30 @@
 A single provider-agnostic accessor:
 
 ```
-getContextUsage(agentId) →
+getContextUsage(agentId, { teamId, … }) →
   { used, total, percentage, model, provider,
     lastUpdatedAt, stale, source }
 ```
+
+> **Ratified-amendment note (T3 code-quality review) — `teamId` is a
+> REQUIRED scoping input.** The original signature took `agentId`
+> alone. Verified against the codebase: `agentId` is a **bare,
+> team-scoped role label** (`teamConfig` defaults the lead to `'lead'`
+> and teammates to `'worker-N'`; the membership table's key is
+> `PRIMARY KEY (team_id, agent_id)` — `agentId` is unique only *within*
+> a team). `runtimeRegistry.listRuntimes({})` returns runtimes across
+> **all teams**. Filtering those by bare `agentId` collides across
+> every team (they all have a `'lead'`), so the original interface
+> could serve Team A's context as Team B's — a correctness *and*
+> agent-isolation defect (PROJECT.md §4/§5). Resolution: `teamId` is a
+> required scoping argument; the resolver uses
+> `listRuntimes({ teamId })` and filters by `agentId` within that team.
+> Consistent with this design's honest-degradation discipline: a
+> missing/empty `teamId` (or no current runtime for `(teamId,
+> agentId)`) returns the **degraded** shape (`source:'unknown'`) —
+> it MUST NOT cross-team-guess. Threaded through §4 (empty-slot
+> safety) and the §6 tests (which now pass `teamId` + a cross-team
+> collision regression test).
 
 **Success criterion (measurable, demoable, testable):** for every
 running runtime team agent, the supervisor exposes a `{used, total,

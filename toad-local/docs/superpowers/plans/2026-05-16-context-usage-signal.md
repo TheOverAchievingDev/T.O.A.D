@@ -479,6 +479,94 @@ export { MODEL_CONTEXT_WINDOW, resolveContextWindow } from './modelContextWindow
 Run: `cd /c/Project-TOAD/toad-local && node --no-warnings --test test/contextUsage.getContextUsage.test.js`
 Expected: PASS (all, incl. empty-slot safety + settings staleness).
 
+> **Controller ratification (T3 code-quality review) — SUPERSEDES the
+> Task-3 code/tests above. Two fixes; spec §1 ratified note is
+> authoritative.**
+>
+> **Fix C1 (Critical): `teamId` is a required scoping input.** `agentId`
+> is a bare team-scoped role (`'lead'`/`'worker-N'`; membership key is
+> `PRIMARY KEY (team_id, agent_id)`); `listRuntimes({})` spans all
+> teams → cross-team collision. The resolver MUST scope by `teamId`.
+> Replace `getContextUsage`'s body so the signature is
+> `getContextUsage(agentId, { teamId, runtimeRegistry, eventLog,
+> settings, now } = {})` and resolution is team-scoped, degrading
+> honestly (never cross-team-guess) on a missing/empty `teamId`:
+>
+> ```javascript
+> export function getContextUsage(agentId, { teamId, runtimeRegistry, eventLog, settings, now } = {}) {
+>   try {
+>     if (typeof agentId !== 'string' || agentId.length === 0) return degraded();
+>     if (typeof teamId !== 'string' || teamId.length === 0) return degraded();
+>     if (!runtimeRegistry || typeof runtimeRegistry.listRuntimes !== 'function') return degraded();
+>     const rows = runtimeRegistry.listRuntimes({ teamId }) || [];
+>     const mine = rows.filter((r) => r && r.agentId === agentId);
+>     if (mine.length === 0) return degraded();
+>     // Current runtime: prefer a non-stopped one, else the latest started.
+>     // Plain string compare on ISO-8601 (Fix I1 — not locale-sensitive
+>     // localeCompare; ISO timestamps order correctly by code point).
+>     mine.sort((a, b) => {
+>       const sb = String(b.startedAt || '');
+>       const sa = String(a.startedAt || '');
+>       return sb < sa ? -1 : sb > sa ? 1 : 0;
+>     });
+>     const current = mine.find((r) => r.status && r.status !== 'stopped') || mine[0];
+>     const providerId = current.providerId || 'unknown';
+>     if (!IMPLEMENTED.has(providerId)) return degraded(providerId);
+>     if (!eventLog || typeof eventLog.listEvents !== 'function') return degraded(providerId);
+>     const events = eventLog.listEvents({ runtimeId: current.runtimeId }) || [];
+>     const stalenessMs = Number.isFinite(settings?.runtime?.contextStaleness)
+>       ? settings.runtime.contextStaleness
+>       : DEFAULT_STALENESS_MS;
+>     return computeContextUsage({ events, now: typeof now === 'number' ? now : Date.now(), stalenessMs, providerId });
+>   } catch {
+>     return degraded();
+>   }
+> }
+> ```
+> (`degraded`, `DEFAULT_STALENESS_MS`, `IMPLEMENTED`, the import, and
+> `index.js` are unchanged from the Step-3 code above.)
+>
+> **Fix I1 (Important): plain-string ISO comparator** — folded into the
+> sort above (no `localeCompare`; ISO-8601 is code-point ordered, so a
+> documented `< / >` comparison is correct and locale-independent).
+>
+> **Test updates (Step-1 file):** every existing test that calls
+> `getContextUsage('…', { runtimeRegistry, … })` now also passes
+> `teamId: 'team-a'` in the deps (the fakeRegistry rows already carry
+> no teamId — the fake `listRuntimes` ignores its arg, so adding
+> `teamId` keeps them green while exercising the new contract). Update
+> the "missing deps" test to also assert
+> `getContextUsage('a', { teamId: 't' }).source === 'unknown'` and add:
+>
+> ```javascript
+> test('REQUIRED teamId: missing/empty teamId → degraded (never cross-team-guess)', () => {
+>   const reg = fakeRegistry([{ runtimeId: 'rt', agentId: 'lead', teamId: 'A', providerId: 'claude', status: 'running', startedAt: '2026-05-16T00:00:00Z' }]);
+>   const log = fakeEventLog({ rt: [rf('2026-05-16T00:00:01Z', { input_tokens: 1, output_tokens: 1 })] });
+>   assert.equal(getContextUsage('lead', { runtimeRegistry: reg, eventLog: log, settings: {}, now: Date.now() }).source, 'unknown', 'no teamId → degraded');
+>   assert.equal(getContextUsage('lead', { teamId: '', runtimeRegistry: reg, eventLog: log, settings: {}, now: Date.now() }).source, 'unknown', 'empty teamId → degraded');
+> });
+> test('cross-team agentId collision: scoping by teamId picks the RIGHT team’s runtime', () => {
+>   // A real registry would filter by teamId; emulate that in the fake.
+>   const rowsByTeam = {
+>     A: [{ runtimeId: 'rtA', agentId: 'lead', teamId: 'A', providerId: 'claude', status: 'running', startedAt: '2026-05-16T00:00:00Z' }],
+>     B: [{ runtimeId: 'rtB', agentId: 'lead', teamId: 'B', providerId: 'claude', status: 'running', startedAt: '2026-05-16T02:00:00Z' }],
+>   };
+>   const reg = { listRuntimes: ({ teamId }) => rowsByTeam[teamId] || [] };
+>   const log = fakeEventLog({
+>     rtA: [rf('2026-05-16T00:00:01Z', { input_tokens: 100, output_tokens: 0 })],
+>     rtB: [rf('2026-05-16T02:00:01Z', { input_tokens: 999, output_tokens: 0 })],
+>   });
+>   const a = getContextUsage('lead', { teamId: 'A', runtimeRegistry: reg, eventLog: log, settings: {}, now: Date.parse('2026-05-16T00:00:05Z') });
+>   const b = getContextUsage('lead', { teamId: 'B', runtimeRegistry: reg, eventLog: log, settings: {}, now: Date.parse('2026-05-16T02:00:05Z') });
+>   assert.equal(a.used, 100, 'team A lead resolves team A runtime');
+>   assert.equal(b.used, 999, 'team B lead resolves team B runtime — no cross-team bleed');
+> });
+> ```
+> The existing fakeRegistry/fakeEventLog helpers stay; the
+> cross-team test uses a teamId-scoping fake (mirrors the real
+> `listRuntimes({teamId})`). All other Step-1 tests keep their
+> assertions, just add `teamId: 'team-a'` to their deps object.
+
 ---
 
 ## Task 4: Facade `runtime_list` emits per-runtime `contextUsage`
