@@ -6,6 +6,7 @@ export class InMemoryBroker {
   #idempotency = new Map();
   #readReceipts = new Map();
   #deliveryAttempts = new Map();
+  #subscribers = new Set();
 
   appendMessage(input) {
     const envelope = createMessageEnvelope(input);
@@ -20,7 +21,36 @@ export class InMemoryBroker {
       this.#idempotency.set(envelope.idempotencyKey, envelope.messageId);
     }
     this.#messages.set(envelope.messageId, envelope);
+    this.#fireSubscribers(envelope);
     return { inserted: true, message: envelope };
+  }
+
+  /**
+   * Register a subscriber that fires AFTER each successfully-inserted
+   * message. Mirrors SqliteTaskBoard.subscribe's contract verbatim:
+   * does NOT fire on idempotent dedup hits; subscriber exceptions are
+   * caught + logged so they cannot break the broker write path.
+   *
+   * Durability contract: fires synchronously after the message is
+   * recorded; the message is queryable via this broker on the same
+   * connection from within the handler. No stronger cross-process
+   * disk-durability guarantee is made.
+   */
+  subscribe(fn) {
+    if (typeof fn !== 'function') {
+      throw new TypeError('InMemoryBroker.subscribe: fn must be a function');
+    }
+    this.#subscribers.add(fn);
+    return () => { this.#subscribers.delete(fn); };
+  }
+
+  #fireSubscribers(message) {
+    for (const fn of this.#subscribers) {
+      try { fn(message); } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[broker] subscriber threw:', err && err.message ? err.message : err);
+      }
+    }
   }
 
   getMessage(messageId) {
