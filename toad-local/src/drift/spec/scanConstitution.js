@@ -4,6 +4,7 @@ import {
   readFileSync as realReadFileSync,
 } from 'node:fs';
 import { evalConstitutionRule } from './evalConstitutionRule.js';
+import { isTextFile } from './isTextFile.js';
 
 /**
  * Apply spec.constitution.rules[] against the project tree.
@@ -56,10 +57,6 @@ function isExcludedPath(rel) {
   return false;
 }
 
-// Heuristic: only grep files that are plausibly text. Anything else
-// (images, compiled binaries) is skipped — a forbidden token can't
-// meaningfully live there and scanning them wastes time.
-const TEXT_EXT = /\.(rs|toml|js|jsx|ts|tsx|mjs|cjs|json|md|txt|py|go|java|kt|rb|c|h|cpp|hpp|cs|swift|sh|bat|ps1|yaml|yml|toml|cfg|ini|env|manifest|xml|html|css|sql|gradle|properties|lock)$/i;
 
 export function scanConstitution({
   projectCwd,
@@ -136,7 +133,7 @@ export function scanConstitution({
       }
 
       if (grepRules.length === 0) continue;
-      if (!TEXT_EXT.test(name)) continue;
+      if (!isTextFile(rel)) continue;
       if (typeof st.size === 'number' && st.size > MAX_FILE_BYTES) continue;
       let content;
       try { content = readFileSyncImpl(childAbs, 'utf-8'); } catch { continue; }
