@@ -302,8 +302,13 @@ whenever the topic touches an existing surface. Captured design prose
 (appendices, deferred notes) is the *plan*, not *current state*;
 reality moves. Repeatedly material (Slice-B contracts/evidence
 reality; Sub-project-B's Claude-only-runtime reality + the
-existing-meter wrongness). Every Appendix-A sub-project (and similar)
-opens with a grounding pass against the code, not the doc.
+existing-meter wrongness; the readability layer's "Layer 1" being two
+divergent existing implementations, not greenfield). Every Appendix-A
+sub-project (and similar) opens with a grounding pass against the code,
+not the doc. Grounding has now materially changed the answer in four
+consecutive cycles — treat **"is this actually greenfield, or an
+existing-divergence consolidation?"** as the FIRST question of every
+brainstorm round.
 
 **Settings namespace is governed by what the setting controls, not by
 chronological proximity to prior settings.** `settings.drift.*` =
