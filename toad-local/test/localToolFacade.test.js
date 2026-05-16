@@ -7568,3 +7568,108 @@ test('project_state_describe.lastCommit is undefined when git fails', async () =
   assert.equal(result.reopenContext.lastCommit, undefined);
   db.close();
 });
+
+// --- §8b constitution merge gate (4th gate in merge_ready → done chain) ---
+
+test('merge_ready → done BLOCKED by constitution gate on an introduced violation', async () => {
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  const facade = buildMergeFacade({ checkForConflicts: () => ({ status: 'clean' }) });
+  facade.constitutionGate = () => ({
+    blocked: true,
+    introduced: [{ ruleId: 'no-sedebug', file: 'src/p.rs', line: 2, snippet: 'enable(SeDebugPrivilege)', description: 'Never request SeDebugPrivilege' }],
+    preexisting: [], unsupported: [], scanError: null,
+  });
+  facade.teamConfigRegistry.registerTeam(new TeamConfig({ teamId: 'team-a', validation: { testCommand: 'npm test' } }));
+  setupMergeReadyTask(facade, { taskId: 'cg-blk' });
+  await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN, idempotencyKey: 'cg-blk-val',
+    actor: { teamId: 'team-a', agentId: 'tester-1', role: 'tester' },
+    args: { taskId: 'cg-blk', kind: 'test' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE, idempotencyKey: 'cg-blk-mr',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'cg-blk', status: 'merge_ready' },
+  });
+  let threw = null;
+  try {
+    facade.execute({
+      commandName: COMMANDS.TASK_UPDATE, idempotencyKey: 'cg-blk-done',
+      actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+      args: { taskId: 'cg-blk', status: 'done' },
+    });
+  } catch (e) { threw = e; }
+  assert.ok(threw, 'merge must be blocked');
+  assert.match(threw.message, /blocked by constitution gate/);
+  assert.match(threw.message, /no-sedebug/);
+  assert.ok(Array.isArray(threw.constitutionGate), 'structured payload present');
+  assert.equal(threw.constitutionGate[0].ruleId, 'no-sedebug');
+  assert.notEqual(
+    facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'cg-blk' }).status, 'done',
+    'task did not transition; integrate() never reached',
+  );
+});
+
+test('merge_ready → done PROCEEDS when gate reports only preexisting + emits observer finding', async () => {
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  const facade = buildMergeFacade({ checkForConflicts: () => ({ status: 'clean' }) });
+  const observed = [];
+  facade.constitutionGate = () => ({
+    blocked: false, introduced: [],
+    preexisting: [{ ruleId: 'no-sedebug', file: 'src/p.rs', line: 9, snippet: 'old', description: 'd' }],
+    unsupported: [], scanError: null,
+  });
+  facade.onObserverFinding = (f) => observed.push(f);
+  facade.teamConfigRegistry.registerTeam(new TeamConfig({ teamId: 'team-a', validation: { testCommand: 'npm test' } }));
+  setupMergeReadyTask(facade, { taskId: 'cg-pre' });
+  await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN, idempotencyKey: 'cg-pre-val',
+    actor: { teamId: 'team-a', agentId: 'tester-1', role: 'tester' },
+    args: { taskId: 'cg-pre', kind: 'test' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE, idempotencyKey: 'cg-pre-mr',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'cg-pre', status: 'merge_ready' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE, idempotencyKey: 'cg-pre-done',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'cg-pre', status: 'done' },
+  });
+  assert.equal(facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'cg-pre' }).status, 'done');
+  assert.ok(observed.some((f) => f.kind === 'observer' && f.ruleId === 'no-sedebug'));
+});
+
+test('gate scanError → fail-open: merge PROCEEDS, loud observer finding carries error detail', async () => {
+  const { TeamConfig } = await import('../src/team/teamConfig.js');
+  const facade = buildMergeFacade({ checkForConflicts: () => ({ status: 'clean' }) });
+  const observed = [];
+  facade.constitutionGate = () => ({
+    blocked: false, introduced: [], preexisting: [], unsupported: [],
+    scanError: { command: 'git diff --name-status main..HEAD', file: null, message: 'fatal: bad revision' },
+  });
+  facade.onObserverFinding = (f) => observed.push(f);
+  facade.teamConfigRegistry.registerTeam(new TeamConfig({ teamId: 'team-a', validation: { testCommand: 'npm test' } }));
+  setupMergeReadyTask(facade, { taskId: 'cg-err' });
+  await facade.execute({
+    commandName: COMMANDS.VALIDATION_RUN, idempotencyKey: 'cg-err-val',
+    actor: { teamId: 'team-a', agentId: 'tester-1', role: 'tester' },
+    args: { taskId: 'cg-err', kind: 'test' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE, idempotencyKey: 'cg-err-mr',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'cg-err', status: 'merge_ready' },
+  });
+  facade.execute({
+    commandName: COMMANDS.TASK_UPDATE, idempotencyKey: 'cg-err-done',
+    actor: { teamId: 'team-a', agentId: 'lead', role: 'lead' },
+    args: { taskId: 'cg-err', status: 'done' },
+  });
+  assert.equal(facade.taskBoard.getTask({ teamId: 'team-a', taskId: 'cg-err' }).status, 'done');
+  const errFinding = observed.find((f) => f.scanError);
+  assert.ok(errFinding, 'loud observer finding emitted on scan error');
+  assert.match(errFinding.scanError.message, /bad revision/);
+  assert.equal(errFinding.severity, 'high');
+});

@@ -69,6 +69,8 @@ import {
 export const REVIEW_FEEDBACK_SEVERITIES = Object.freeze(['nit', 'minor', 'major', 'blocking']);
 import { computeDiff as defaultComputeDiff } from '../task/diffComputer.js';
 import { createDriftCorrection } from '../drift/driftCorrection.js';
+import { constitutionMergeGate as defaultConstitutionGate } from '../drift/checks/constitutionMergeGate.js';
+import { loadProjectSpec } from '../drift/spec/loadProjectSpec.js';
 import { listIdeTree, readIdeFile, writeIdeFile } from '../ide/ideFileTools.js';
 import {
   getIdeStatus,
@@ -85,7 +87,7 @@ export class LocalToolFacade {
   #claudeQuotaCache = null;
   #claudeQuotaInflight = null;
 
-  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, installDir = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, foundryStore = null, foundryRuntime = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null, mergeIntegrator = null, remoteMergePolicy = null, riskPolicy = null, settingsStore = null, riskPolicyStore = null, githubFetch = null, githubClientId = null, providerAuthSpawn = null, providerAuthSpawnSync = null, providerAuthReadFile = null, providerAuthStat = null, claudeUsageProbe = null, driftEngine = null, runGit = null, deliveryWorker = null, pluginAuthReadFile = null, pluginAuthStat = null, pluginAuthSpawn = null, pluginAuthSpawnSync = null, pluginResources = null, pluginJobs = null, railwayToolImpls = null, easToolImpls = null, vercelToolImpls = null }) {
+  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, installDir = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, foundryStore = null, foundryRuntime = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null, mergeIntegrator = null, remoteMergePolicy = null, riskPolicy = null, settingsStore = null, riskPolicyStore = null, githubFetch = null, githubClientId = null, providerAuthSpawn = null, providerAuthSpawnSync = null, providerAuthReadFile = null, providerAuthStat = null, claudeUsageProbe = null, driftEngine = null, runGit = null, deliveryWorker = null, pluginAuthReadFile = null, pluginAuthStat = null, pluginAuthSpawn = null, pluginAuthSpawnSync = null, pluginResources = null, pluginJobs = null, railwayToolImpls = null, easToolImpls = null, vercelToolImpls = null, constitutionGate = null, onObserverFinding = null }) {
     if (!broker) throw new TypeError('broker is required');
     if (!taskBoard) throw new TypeError('taskBoard is required');
     this.broker = broker;
@@ -125,6 +127,16 @@ export class LocalToolFacade {
     this.mergeChecker = mergeChecker && typeof mergeChecker.checkForConflicts === 'function' ? mergeChecker : null;
     // §19 slice 2: integration step. Null = no actual merge (back-compat).
     this.mergeIntegrator = mergeIntegrator && typeof mergeIntegrator.integrate === 'function' ? mergeIntegrator : null;
+    // §8b constitution merge gate (Slice 1). Injectable for tests.
+    // onObserverFinding: optional sink for non-blocking (preexisting /
+    // fail-open) findings; defaults to console.warn so a missing sink is
+    // never silent.
+    this.constitutionGate = typeof constitutionGate === 'function'
+      ? constitutionGate
+      : defaultConstitutionGate;
+    this.onObserverFinding = typeof onObserverFinding === 'function'
+      ? onObserverFinding
+      : ((f) => console.warn('[drift][observer]', f.ruleId || (f.scanError && f.scanError.command) || 'finding', f.file || ''));
     // §19 follow-up: remote merge policy (branch protection check). Null =
     // no remote check (back-compat). When set, the merge_ready → done
     // transition awaits `evaluate({ baseBranch, taskBranch })` and refuses
@@ -179,6 +191,15 @@ export class LocalToolFacade {
       riskPolicy && (Array.isArray(riskPolicy.rules) || Array.isArray(riskPolicy.commandRules))
         ? riskPolicy
         : null;
+  }
+
+  // §8b constitution merge gate: load the project spec for the gate check.
+  // Returns the parsed spec object or null (no spec / unreviewed / error).
+  // Not cached — merges are infrequent and loadProjectSpec is cheap.
+  #loadGateSpec() {
+    if (typeof this.projectCwd !== 'string' || this.projectCwd.length === 0) return null;
+    const { spec } = loadProjectSpec({ projectCwd: this.projectCwd });
+    return spec || null;
   }
 
   execute(command) {
@@ -717,6 +738,51 @@ export class LocalToolFacade {
           throw new Error(
             `task_update: merge_ready → done blocked by human-approval gate (riskLevel: ${current.riskLevel || 'unspecified'}). Run task_human_approve before transitioning.`,
           );
+        }
+      }
+      // §8b constitution merge gate: the 4th gate in this chain (after
+      // conflict + human-approval, before the actual integrate). Blocks
+      // ONLY violations THIS branch introduces vs trunk; preexisting and
+      // fail-open both flow to the observer sink and DO NOT block.
+      if (fromStatus === 'merge_ready' && args.status === 'done') {
+        const wt = current?.worktree;
+        if (wt && wt.status === 'created' && typeof wt.branch === 'string'
+            && wt.branch.length > 0 && typeof wt.baseRef === 'string'
+            && wt.baseRef.length > 0) {
+          const gateSpec = this.#loadGateSpec();
+          let gv;
+          try {
+            gv = this.constitutionGate({
+              projectCwd: this.projectCwd,
+              worktreePath: wt.path,
+              baseRef: wt.baseRef,
+              spec: gateSpec,
+            });
+          } catch (err) {
+            gv = { blocked: false, introduced: [], preexisting: [], unsupported: [],
+              scanError: { command: 'constitutionMergeGate', file: null, message: String(err && err.message ? err.message : err) } };
+          }
+          for (const p of gv.preexisting) {
+            this.onObserverFinding({ kind: 'observer', severity: 'medium', ...p });
+          }
+          if (gv.scanError) {
+            this.onObserverFinding({ kind: 'observer', severity: 'high', scanError: gv.scanError });
+          }
+          if (gv.blocked) {
+            const lines = gv.introduced
+              .map((i) => `  [constitution.${i.ruleId}] ${i.file}:${i.line} — ${i.description || i.snippet}`)
+              .join('\n');
+            const err = new Error(
+              `task_update: merge_ready → done blocked by constitution gate:\n${lines}\n`
+              + 'Address these and retry the merge. See docs/foundry/spec.json '
+              + `constitution rule "${gv.introduced[0].ruleId}".`,
+            );
+            err.constitutionGate = gv.introduced.map((i) => ({
+              ruleId: i.ruleId, file: i.file, line: i.line,
+              specRef: `constitution.${i.ruleId}`, description: i.description || '',
+            }));
+            throw err;
+          }
         }
       }
       // Integration step (§19 slice 2): after the conflict gate (slice 1) and
