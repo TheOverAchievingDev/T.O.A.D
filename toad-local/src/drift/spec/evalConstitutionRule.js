@@ -61,7 +61,6 @@ export function evalConstitutionRule(rule, { path, content }) {
     for (let i = 0; i < lines.length; i += 1) {
       const code = stripComments(lines[i], path);
       if (code.length === 0) continue;
-      re.lastIndex = 0;
       if (re.test(code)) hits.push({ line: i + 1, snippet: lines[i].trim().slice(0, 200) });
     }
     return hits;

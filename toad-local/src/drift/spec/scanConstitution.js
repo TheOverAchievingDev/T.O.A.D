@@ -80,14 +80,13 @@ export function scanConstitution({
   for (const r of ruleList) {
     const t = r && r.detector && r.detector.type;
     if (t === 'grep') {
-      let re;
       try {
-        re = new RegExp(r.detector.pattern);
+        new RegExp(r.detector.pattern); // validate pattern; evalConstitutionRule re-compiles per call
       } catch {
         out.unsupportedRules.push(r.id ?? '(unnamed)');
         continue;
       }
-      grepRules.push({ rule: r, re, exclude: r.detector.exclude_paths });
+      grepRules.push(r);
     } else if (t === 'path_presence') {
       pathRules.push(r);
     } else {
@@ -144,13 +143,13 @@ export function scanConstitution({
       if (typeof content !== 'string' || content.length === 0) continue;
 
       for (const g of grepRules) {
-        const hits = evalConstitutionRule(g.rule, { path: rel, content });
+        const hits = evalConstitutionRule(g, { path: rel, content });
         if (hits === null) {
           // Bad regex or unsupported — already recorded in unsupportedRules at compile time;
           // skip silently here to avoid double-recording.
         } else {
           for (const h of hits) {
-            out.hits.push({ ruleId: g.rule.id ?? '(unnamed)', file: rel, line: h.line, snippet: h.snippet });
+            out.hits.push({ ruleId: g.id ?? '(unnamed)', file: rel, line: h.line, snippet: h.snippet });
           }
         }
       }
