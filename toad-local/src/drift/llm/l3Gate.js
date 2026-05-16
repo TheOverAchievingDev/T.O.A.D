@@ -55,19 +55,37 @@ export function l1FindingSetHash(findings) {
 
 export function l3PromptHash(promptTemplate) { return sha1(promptTemplate ?? ''); }
 
-export function l3CacheKey({ diffFiles, spec, l1Findings, promptTemplate } = {}) {
+export function l3CacheKey({ diffFiles, spec, l1Findings, promptTemplate, l1SignalKind } = {}) {
   return sha1([
     diffHash(diffFiles), specProvenanceHash(spec),
     l1FindingSetHash(l1Findings), l3PromptHash(promptTemplate),
+    String(l1SignalKind ?? 'flagged'),
   ].join('|'));
 }
 
-/** Slice-B stub. Slice B replaces ONLY this body (design §2). */
-export function silentButSignificant(/* { snapshot, boundaryTaskId } */) {
-  return false;
+// Slice B predicate body lives in silentSignificance.js (focused
+// file); l3Gate keeps the export surface stable for existing imports.
+export { silentButSignificant } from './silentSignificance.js';
+
+export const SUBMISSION = new Set(['review', 'merge_ready', 'done']);
+
+export function isSubmissionStatus(s) {
+  return typeof s === 'string' && SUBMISSION.has(s);
 }
 
-const SUBMISSION = new Set(['review', 'merge_ready', 'done']);
+/**
+ * Cheap pre-gate eligibility (no diff/spec/hash work). The engine
+ * computes the expensive silentButSignificant ONLY when this is true,
+ * so periodic/non-submission ticks pay nothing (design §6 — the gate
+ * defines the rules; the engine respects them).
+ */
+export function l3CheapEligible({ trigger, boundaryTo, boundaryTaskId } = {}) {
+  if (trigger === 'periodic') return false;
+  if (trigger !== 'manual' && trigger !== 'task_event') return false;
+  if (typeof boundaryTaskId !== 'string' || boundaryTaskId.length === 0) return false;
+  if (trigger === 'manual') return true;
+  return isSubmissionStatus(boundaryTo);
+}
 
 /**
  * Pure decision. The engine owns the verdict cache + rate window

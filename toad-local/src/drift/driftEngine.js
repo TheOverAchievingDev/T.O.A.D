@@ -6,8 +6,10 @@ import { buildSnapshot } from './buildSnapshot.js';
 import { scoreFindings } from './scoreFindings.js';
 import { DETERMINISTIC_CHECKS } from './checks/index.js';
 import { kindForCheck } from './checks/checkKinds.js';
-import { l3Gate, l3CacheKey } from './llm/l3Gate.js';
+import { l3Gate, l3CacheKey, silentButSignificant, l3CheapEligible } from './llm/l3Gate.js';
 import { buildL3Packet } from './llm/buildL3Packet.js';
+import { isFileDeclaredByModule } from './spec/isFileDeclaredByModule.js';
+import { countDeclaredChangedLines } from './llm/silentSignificance.js';
 import { l3Judge as defaultL3Judge } from './llm/l3Judge.js';
 import { resolveProvider } from './llm/providerResolver.js';
 import { L3_PROMPT_TEMPLATE } from './llm/prompts/l3.js';
@@ -31,6 +33,10 @@ const DEFAULT_SETTINGS = Object.freeze({
     // L3 packet budget (design §4.1): assembled packet bytes over this
     // → buildL3Packet returns overBudget; engine emits meta + skips.
     l3PacketBudgetBytes: 32 * 1024,
+    // L3 Slice B (design 2026-05-16 §5): silent-significance magnitude
+    // floor. Always enforced (load-bearing, never disabled); a
+    // configured value < 1 is clamped to 1 by meetsMagnitudeFloor.
+    l3SilentMagnitudeFloor: 10,
   }),
 });
 
@@ -177,6 +183,10 @@ export class DriftEngine {
     // gate have it alongside diffsByTask etc. (set before checks run).
     snapshot.boundaryTaskId = boundaryTaskId;
     snapshot.boundaryTo = boundaryTo;
+    snapshot.l3SilentMagnitudeFloor =
+      typeof driftSettings.l3SilentMagnitudeFloor === 'number'
+        ? driftSettings.l3SilentMagnitudeFloor
+        : DEFAULT_SETTINGS.drift.l3SilentMagnitudeFloor;
     const llmEnabled = driftSettings.llmTierEnabled !== false;
 
     // Run tier-1 deterministic checks (the registry is one set now).
@@ -206,6 +216,11 @@ export class DriftEngine {
         (f) => f.taskId === boundaryTaskId
           || (f.taskId === null && f.needsSemanticReview === true),
       );
+      const silentSignificant = l3CheapEligible({ trigger, boundaryTo, boundaryTaskId })
+        ? silentButSignificant({ snapshot, boundaryTaskId })
+        : false;
+      const flaggedFindings = taskFindings.filter((f) => f.needsSemanticReview === true);
+      const l1SignalKind = flaggedFindings.length > 0 ? 'flagged' : 'silent_significant';
       // Phase-1 gate (cacheHasKey:false): cheap steps 1–4 + manual.
       // Periodic/non-submission/not-ambiguous skip here WITHOUT paying
       // the cache-key hash (design §3 gate-ordering discipline).
@@ -213,7 +228,7 @@ export class DriftEngine {
         trigger, boundaryTo, boundaryTaskId,
         l1FindingsForTask: taskFindings,
         cacheHasKey: false,
-        silentSignificant: false, // Slice B fills this
+        silentSignificant,
       });
       if (gate1.action === 'skip') {
         l3Status = `skipped:${gate1.reason}`;
@@ -223,7 +238,7 @@ export class DriftEngine {
         const diffFiles = d && Array.isArray(d.changedFiles)
           ? d.changedFiles.map((file) => ({ file, content: typeof d.diff === 'string' ? d.diff : '' }))
           : [];
-        const key = l3CacheKey({ diffFiles, spec, l1Findings: taskFindings, promptTemplate: L3_PROMPT_TEMPLATE });
+        const key = l3CacheKey({ diffFiles, spec, l1Findings: taskFindings, promptTemplate: L3_PROMPT_TEMPLATE, l1SignalKind });
         const teamCache = this.#l3VerdictCache.get(teamId) || new Map();
         // Phase-2: authoritative serve_cached vs invoke. manual already
         // short-circuited to invoke/manual_bypass in gate1 (its
@@ -234,7 +249,7 @@ export class DriftEngine {
               trigger, boundaryTo, boundaryTaskId,
               l1FindingsForTask: taskFindings,
               cacheHasKey: teamCache.has(key),
-              silentSignificant: false,
+              silentSignificant,
             });
         if (decision.action === 'serve_cached') {
           const cached = teamCache.get(key);
@@ -252,9 +267,39 @@ export class DriftEngine {
               `L3 rate cap hit (${capPerHour}/h) — investigate the drift system; deterministic L1 findings still apply`)];
             l3Status = 'skipped:rate_cap';
           } else {
+            let l1Signal;
+            if (l1SignalKind === 'flagged') {
+              l1Signal = { kind: 'flagged', findings: flaggedFindings };
+            } else {
+              const dEntry = snapshot.diffsByTask?.[boundaryTaskId] ?? null;
+              const required = snapshot.spec?.structure?.required;
+              const moduleEntries = Array.isArray(required)
+                ? required.filter((e) => e && e.kind === 'module' && typeof e.evidence === 'string')
+                : [];
+              const isDeclared = (p) => moduleEntries.some((m) => isFileDeclaredByModule(p, m).declared);
+              const matched = (Array.isArray(dEntry?.changedFiles) ? dEntry.changedFiles : [])
+                .filter((cf) => isDeclared(cf));
+              const CAP = 20;
+              const truncated = matched.length > CAP;
+              const changedLines = countDeclaredChangedLines(
+                typeof dEntry?.diff === 'string' ? dEntry.diff : '', isDeclared,
+              );
+              l1Signal = {
+                kind: 'silent_significant',
+                declaredFiles: matched.slice(0, CAP),
+                declaredFilesTotal: matched.length,
+                declaredFilesTruncated: truncated,
+                changedLines,
+                note: 'L1 raised no semantic-review flag. This diff modifies '
+                  + `spec-declared module surface (listed) by ${changedLines} lines. `
+                  + 'Adjudicate whether the change semantically drifts from spec.json '
+                  + '— L1 is structurally blind to behavior change within declared '
+                  + 'structure.'
+                  + (truncated ? ` (showing ${CAP} of ${matched.length} modified declared files)` : ''),
+              };
+            }
             const built = buildL3Packet({
-              snapshot, boundaryTaskId,
-              l1Signal: { kind: 'flagged', findings: taskFindings.filter((f) => f.needsSemanticReview === true) },
+              snapshot, boundaryTaskId, l1Signal,
               budgetBytes: driftSettings.l3PacketBudgetBytes,
             });
             if (built.overBudget) {
@@ -296,10 +341,18 @@ export class DriftEngine {
                   recommendedCorrection: f.recommendedCorrection,
                   autoFixable: false,
                 }));
+                const emit = [...l3Findings];
+                if (l1SignalKind === 'silent_significant' && l3Findings.length === 0) {
+                  emit.push(this.#l3Meta(runId, teamId, 'observer', 'silent_clean',
+                    `Silent-significance check ran on task ${boundaryTaskId} `
+                    + `(modified ${l1Signal.declaredFilesTotal} declared file(s) `
+                    + `by ${l1Signal.changedLines} lines): clean.`));
+                }
                 teamCache.set(key, { findings: l3Findings, tier: verdict.tier });
                 this.#l3VerdictCache.set(teamId, teamCache);
                 this.#l3RateWindow.set(teamId, [...win, nowTs]);
                 l3Status = `completed:${verdict.tier}`;
+                l3Findings = emit;
               } catch (err) {
                 // Failure → non-blocking meta, NOT cached (transient → retry next boundary).
                 l3Findings = [this.#l3Meta(runId, teamId, 'medium', 'judge_failed',
@@ -414,7 +467,9 @@ export class DriftEngine {
       actual: detail,
       recommendedCorrection: code === 'rate_cap'
         ? 'Investigate the drift trigger/cache/ambiguity predicate for a loop.'
-        : 'Transient/infrastructure — usually clears next boundary.',
+        : code === 'silent_clean'
+          ? 'Informational — the silent-significance net inspected this task and found no drift; no action required.'
+          : 'Transient/infrastructure — usually clears next boundary.',
       autoFixable: false,
     };
   }

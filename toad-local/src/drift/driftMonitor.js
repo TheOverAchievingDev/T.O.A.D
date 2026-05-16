@@ -6,7 +6,7 @@
  *   tickOnce() → call engine.runDrift for every live team, in parallel
  *   notifyTaskEvent({teamId, eventType, payload})
  *            → fire an off-cycle runDrift({trigger:'task_event'}) when the
- *              transition is in TRIGGER_TRANSITIONS
+ *              transition is in SUBMISSION (shared l3Gate export)
  *
  * Errors from any one runDrift are swallowed (and logged) so a single
  * misbehaving team can't take the whole monitor down.
@@ -25,14 +25,9 @@
  * fetch (see useDrift.ts), so the periodic isn't the only source of
  * fresh data when someone is actively watching.
  */
-const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
+import { SUBMISSION } from './llm/l3Gate.js';
 
-// Submission statuses only (design §3.2). `testing` dropped — L3
-// adjudicates at the submission boundary (review / merge_ready / done),
-// not at intermediate work states.
-const TRIGGER_TRANSITIONS = new Set([
-  'review', 'merge_ready', 'done',
-]);
+const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 
 export class DriftMonitor {
   #timer = null;
@@ -80,7 +75,8 @@ export class DriftMonitor {
   async notifyTaskEvent({ teamId, eventType, payload, taskId } = {}) {
     if (eventType !== 'task.status_changed') return;
     const to = payload?.to;
-    if (typeof to !== 'string' || !TRIGGER_TRANSITIONS.has(to)) return;
+    // SUBMISSION is the shared l3Gate export — single source of truth (lockstep with the predicate).
+    if (typeof to !== 'string' || !SUBMISSION.has(to)) return;
     if (typeof teamId !== 'string' || teamId.length === 0) return;
     try {
       await this.engine.runDrift({

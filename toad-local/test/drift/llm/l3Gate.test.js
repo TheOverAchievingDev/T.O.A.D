@@ -38,8 +38,9 @@ test('manual + NO ambiguity → skip (manual honors ambiguity gate)', () => {
 test('task_event + ambiguity + cache HIT → serve_cached', () => {
   assert.deepEqual(l3Gate({ ...BASE, cacheHasKey: true }), { action: 'serve_cached', reason: 'cache_hit' });
 });
-test('silentButSignificant is a Slice-B stub returning false', () => {
+test('silentButSignificant: malformed/empty input → false (conservative)', () => {
   assert.equal(silentButSignificant({}), false);
+  assert.equal(silentButSignificant({ snapshot: null, boundaryTaskId: 'x' }), false);
 });
 test('ambiguity also true when an L1 finding is needsSemanticReview even with cache miss', () => {
   assert.equal(l3Gate(BASE).action, 'invoke');
@@ -96,4 +97,34 @@ test('diffHash: leading-whitespace-only changes collapse to same hash (documente
   const indented = diffHash([{ file: 'x.py', content: '    return x\n' }]);
   const flat     = diffHash([{ file: 'x.py', content: 'return x\n' }]);
   assert.equal(indented, flat, 'indentation-only change is cache-stable by design — see norm() comment + design §3.3');
+});
+
+import { isSubmissionStatus, l3CheapEligible, SUBMISSION } from '../../../src/drift/llm/l3Gate.js';
+
+test('SUBMISSION is exactly {review, merge_ready, done}', () => {
+  assert.deepEqual([...SUBMISSION].sort(), ['done', 'merge_ready', 'review']);
+  assert.equal(isSubmissionStatus('review'), true);
+  assert.equal(isSubmissionStatus('testing'), false);
+  assert.equal(isSubmissionStatus(null), false);
+});
+test('l3CheapEligible: periodic never; manual needs only a boundary task; task_event needs submission status', () => {
+  assert.equal(l3CheapEligible({ trigger: 'periodic', boundaryTo: 'review', boundaryTaskId: 'T' }), false);
+  assert.equal(l3CheapEligible({ trigger: 'manual', boundaryTo: null, boundaryTaskId: 'T' }), true);
+  assert.equal(l3CheapEligible({ trigger: 'manual', boundaryTo: null, boundaryTaskId: '' }), false);
+  assert.equal(l3CheapEligible({ trigger: 'task_event', boundaryTo: 'testing', boundaryTaskId: 'T' }), false);
+  assert.equal(l3CheapEligible({ trigger: 'task_event', boundaryTo: 'done', boundaryTaskId: 'T' }), true);
+});
+
+test('l3CacheKey folds l1SignalKind: flagged vs silent_significant never collide', () => {
+  const base = {
+    diffFiles: [{ file: 'x', content: 'y' }],
+    spec: { version: 1, provenance: { reviewed: true } },
+    l1Findings: [], promptTemplate: 'P',
+  };
+  const flagged = l3CacheKey({ ...base, l1SignalKind: 'flagged' });
+  const silent = l3CacheKey({ ...base, l1SignalKind: 'silent_significant' });
+  assert.notEqual(flagged, silent, 'kind must partition the cache');
+  assert.equal(flagged, l3CacheKey({ ...base, l1SignalKind: 'flagged' }), 'deterministic');
+  // Back-compat default: absent kind hashes as 'flagged'.
+  assert.equal(l3CacheKey(base), flagged, 'absent l1SignalKind defaults to flagged');
 });

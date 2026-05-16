@@ -117,3 +117,15 @@ test('DriftMonitor.notifyTaskEvent fires for merge_ready and done (still submiss
     assert.equal(engine.calls[0].boundaryTaskId, `task-${to}`);
   }
 });
+
+import { SUBMISSION } from '../../src/drift/llm/l3Gate.js';
+test('driftMonitor honors EXACTLY the gate SUBMISSION set (lockstep, no local copy)', async () => {
+  const seen = [];
+  const engine = { runDrift: async (a) => { seen.push(a.boundaryTo); } };
+  const mon = new DriftMonitor({ engine, listLiveTeams: () => [] });
+  for (const s of ['review', 'merge_ready', 'done', 'testing', 'in_progress']) {
+    await mon.notifyTaskEvent({ teamId: 't', eventType: 'task.status_changed', taskId: 'T', payload: { to: s } });
+  }
+  assert.deepEqual(seen.sort(), [...SUBMISSION].sort(),
+    'monitor fired runDrift for exactly the shared submission set');
+});

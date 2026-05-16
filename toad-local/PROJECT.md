@@ -280,6 +280,21 @@ does not gate anything — that remains the merge gate's job. The
 doctrine stands regardless: **do not route agent communication around
 the broker. The broker's universality is the drift system's power.**
 
+### 8c. Shared-helper-over-reimplementation — INVARIANT
+
+When a check (or any drift layer) needs to ask the same logical
+question another check already answers, the answer is a **single
+shared helper**, never a parallel reimplementation. Established
+instances: `evalConstitutionRule` (merge-gate), `judgeSpawn` (L3
+reform), `isFileDeclaredByModule` (L3 Slice B — "is this file part of
+this declared module?", consumed by both L1.2b and L3's
+`touchesDeclaredSurface`). Every such extraction ships with a
+**lockstep-agreement test** that fails if a future edit re-inlines or
+diverges either consumer. Cost of the invariant: one extraction
+commit per case. Cost of violating it: silent layer-divergence bugs
+that are near-undiagnosable. Reviewers must reject a second
+implementation of an existing cross-layer decision.
+
 ## 9. Provider architecture
 
 Symphony supports three CLI providers, each with its own adapter:
