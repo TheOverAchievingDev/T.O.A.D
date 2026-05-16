@@ -788,10 +788,19 @@ export function locForEvent(event) {
 `src/runtime/locCount/index.js`:
 
 ```javascript
-export { lineCount, locForEvent, isIgnored, accumulateLoc } from './locCount.js';
+export { lineCount, locForEvent } from './locCount.js';
 ```
 
-- [ ] **Step 4: Run — verify pass** — Run: `cd /c/Project-TOAD/toad-local && node --no-warnings --test test/locCount.test.js` — Expected: the implemented cases PASS (the `isIgnored`/`accumulateLoc` export will error until Task 11/12 — proceed; those are added next).
+> **Controller ratification (T10):** `index.js` re-exports ONLY what
+> exists at each task — `export { isIgnored } …` for a not-yet-defined
+> binding is an ESM **load-time SyntaxError** (the whole `index.js`
+> fails to import, so the T10 test can't import `lineCount` either —
+> not a deferred runtime error). T10 exports `lineCount, locForEvent`;
+> Task 11 extends the re-export to add `isIgnored`; Task 12 adds
+> `accumulateLoc`. Tests import from `index.js` (public surface) and
+> each step's `index.js` only names bindings that already exist.
+
+- [ ] **Step 4: Run — verify pass** — Run: `cd /c/Project-TOAD/toad-local && node --no-warnings --test test/locCount.test.js` — Expected: PASS (the `lineCount`/`locForEvent` cases). The `isIgnored`/`accumulateLoc` test imports are added in Task 11/12 alongside their `index.js` re-export — not referenced in the T10 test.
 
 ---
 
@@ -846,7 +855,13 @@ export function isIgnored(path, gitRules, locIgnorePaths) {
 }
 ```
 
-- [ ] **Step 4: Run — verify pass** — Run: `cd /c/Project-TOAD/toad-local && node --no-warnings --test test/locCount.test.js` — Expected: `isIgnored` cases PASS.
+- [ ] **Step 3b (T10 ratification):** extend `src/runtime/locCount/index.js` to re-export the now-existing `isIgnored`:
+
+```javascript
+export { lineCount, locForEvent, isIgnored } from './locCount.js';
+```
+
+- [ ] **Step 4: Run — verify pass** — Run: `cd /c/Project-TOAD/toad-local && node --no-warnings --test test/locCount.test.js` — Expected: `isIgnored` cases PASS (T10's `lineCount`/`locForEvent` cases still green).
 
 ---
 
@@ -897,6 +912,12 @@ export function accumulateLoc(events, { gitRules = [], locIgnorePaths = [] } = {
   }
   return acc;
 }
+```
+
+- [ ] **Step 3b (T10 ratification):** extend `src/runtime/locCount/index.js` to its final form:
+
+```javascript
+export { lineCount, locForEvent, isIgnored, accumulateLoc } from './locCount.js';
 ```
 
 - [ ] **Step 4: Run — verify pass** — Run: `cd /c/Project-TOAD/toad-local && node --no-warnings --test test/locCount.test.js` — Expected: PASS (all locCount cases). Then full root suite (`npm test … fail 0`).
