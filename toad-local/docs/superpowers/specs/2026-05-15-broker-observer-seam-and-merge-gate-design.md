@@ -150,10 +150,20 @@ never mutates working state:
        finding, **does not block** (needs its own remediation task).
      - hit in worktree **only** → **introduced by this merge** →
        **gate → block**.
-3. **Binary skip:** detectors skip binaries — `git check-attr binary`
-   and an extension/MIME binary set, beyond scanConstitution's
-   existing `TEXT_EXT`. Prevents a rule like "no API keys in source"
-   spuriously matching a base64 chunk inside a PNG.
+3. **Binary skip — one shared `isTextFile` helper (no asymmetry).**
+   Binary detection is extracted into a shared pure helper
+   `isTextFile(path, { content?, runGit?, projectCwd? })` → boolean,
+   the same one-source-of-truth extraction pattern as
+   `evalConstitutionRule` (§4.2). It combines the stricter signals
+   (`git check-attr binary` + an extension/MIME binary set) and
+   subsumes scanConstitution's existing ad-hoc `TEXT_EXT` regex —
+   **both** the whole-tree scanner and the gate route binary
+   decisions through `isTextFile`, so the stricter check is used
+   everywhere and the two paths cannot drift. (The earlier draft made
+   the gate deliberately stricter than scanConstitution; consolidation
+   is preferred over a defended asymmetry — the stricter check is the
+   one you want in both places.) Prevents a rule like "no API keys in
+   source" spuriously matching a base64 chunk inside a PNG.
 
 ### 4.4 Reviewed-spec clamp
 
@@ -338,6 +348,37 @@ only-preexisting → merges normally.
   the highest order. Preexisting violations are observer-mode findings
   with their own remediation path, full stop.
 - **L3 reform / L2 embeddings:** unchanged by this design.
+
+## 8a. Implementation-time verification (carried into the plan)
+
+Three items the implementation plan MUST verify against the real code
+before the dependent task is written (flagged in spec review; not
+design changes, but they gate correctness):
+
+1. **`computeDiff` change type.** §4.3 step 1 assumes `computeDiff`
+   returns per-file change type (added vs modified) — the added-file
+   "skip trunk scan, any hit is introduced" correctness path depends
+   on it. Exploration confirmed `files[]`; change type is **not**
+   confirmed. The plan's first gate task verifies `computeDiff`'s
+   return shape and, if change type is absent, extends `computeDiff`
+   (or has `constitutionMergeGate` issue `git diff --name-status
+   <baseRef>..HEAD` itself) before any added-file logic is written.
+2. **Broker read method name.** §6's durability-lock test calls
+   `broker.getMessage(id)` from within a subscriber. Confirmed:
+   `SqliteBroker.getMessage(messageId)` exists (src/broker/
+   sqliteBroker.js) and `InMemoryBroker` must expose the same. The
+   plan still re-verifies both signatures before writing the test so
+   it is correct first time.
+3. **Per-file hit matching semantics.** The gate emits **all** hits
+   per file (better operator messages: "forbidden pattern at lines
+   12, 47, 89"), not first-hit. Preexisting classification is
+   therefore *per-hit*: a worktree hit is preexisting iff the trunk
+   blob has a matching hit, matched by **normalized line content**
+   (not line number — line numbers shift when the branch adds code
+   above). The plan specifies this matching explicitly in the gate
+   unit's design and tests it directly (worktree adds an unrelated
+   line above a preexisting violation → still classified preexisting,
+   not introduced).
 
 ## 9. Slice ordering & independence
 
