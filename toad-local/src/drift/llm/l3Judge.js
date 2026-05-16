@@ -4,7 +4,7 @@ import { buildL3SystemPrompt } from './prompts/l3.js';
 function defaultConfidenceOf(_i, result) {
   try {
     const parsed = JSON.parse(String(result?.rawText ?? '').trim().replace(/^```(?:json)?\s*|\s*```$/g, ''));
-    return parsed && parsed.confidence === 'low' ? 'low' : 'high';
+    return parsed && String(parsed.confidence ?? '').toLowerCase().trim() === 'low' ? 'low' : 'high';
   } catch { return 'high'; }
 }
 

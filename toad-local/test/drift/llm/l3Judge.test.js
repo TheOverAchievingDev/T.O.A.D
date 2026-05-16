@@ -60,3 +60,27 @@ test('judge spawn failure → throws (engine turns it into a meta, not cached)',
     /spawn_failed/,
   );
 });
+
+test('Sonnet throws on escalation → l3Judge rejects (escalation failure is not swallowed)', async () => {
+  const judge = fakeJudge([
+    { findings: [], rawText: '{}' },   // Haiku: succeeds, returns low
+    new Error('spawn_failed: exit 1'), // Sonnet: throws
+  ]);
+  await assert.rejects(
+    () => l3Judge({ packet: 'P', provider: PROVIDER, confidenceOf: (i) => (i === 0 ? 'low' : 'high'), llmJudgeImpl: judge }),
+    /spawn_failed/,
+  );
+  assert.equal(judge.calls.length, 2); // both calls were made
+});
+
+test('Haiku confidence "LOW"/" low " (case+whitespace) still triggers escalation (default confidenceOf normalizes)', async () => {
+  for (const raw of ['{"confidence":"LOW","findings":[]}', '{"confidence":" low ","findings":[]}', '{"confidence":"Low","findings":[]}']) {
+    const judge = fakeJudge([
+      { findings: [], rawText: raw },                                                            // Haiku: confidence variant → must normalize to low → escalate
+      { findings: [{ category: 'risk', severity: 'high', title: 't', expected: 'e', actual: 'a', recommendedCorrection: 'c', evidence: [] }], rawText: '{"confidence":"high"}' }, // Sonnet
+    ]);
+    const r = await l3Judge({ packet: 'P', provider: PROVIDER, llmJudgeImpl: judge });
+    assert.deepEqual(judge.calls, ['haiku', 'sonnet'], `variant ${raw} must escalate`);
+    assert.equal(r.tier, 'sonnet-escalated');
+  }
+});
