@@ -672,6 +672,101 @@ Keep `tokensIn`/`tokensOut`/`costUsd` exactly as-is (now explicitly spend-only).
 Run: `cd /c/Project-TOAD/toad-local && node --no-warnings --test test/contextUsage.facade.test.js`
 Expected: PASS.
 
+> **Controller ratification (T4 implementation review — staleness
+> honoring) — SUPERSEDES the Step-3 `stalenessMs` resolution above.
+> The spec already mandates the facade honor
+> `settings.runtime.contextStaleness` (design §3/§4); this pins the
+> async mechanics + test lockstep the plan under-specified. Plan-only
+> ratification (no spec change).**
+>
+> **Defect:** `#runtimeList` (`src/tools/localToolFacade.js` L2004) is
+> **synchronous**; `SettingsStore.readEffective()` is **async** with
+> no sync variant and no cache. The Step-3 snippet's
+> `await this.settingsStore.readEffective()` is therefore impossible in
+> a sync method. Dropping the read and hardcoding `60_000` (the first
+> implementer's deviation) makes `settings.runtime.contextStaleness`
+> **inert on the facade path — the actual UI consumer** (runtime_list →
+> `useToadData`), an inert-feature regression of the kind the L3 Slice-A
+> review caught. Rejected.
+>
+> **Corrected contract (apply exactly):**
+>
+> 1. **`#runtimeList` becomes `async`.** Change `#runtimeList(actor, args) {`
+>    → `async #runtimeList(actor, args) {`. The dispatcher line
+>    `case COMMANDS.RUNTIME_LIST: return this.#runtimeList(actor, args);`
+>    is unchanged (sync `execute()` already returns handler Promises for
+>    other commands; both production callers —
+>    `src/transport/apiServer.js:263`, `src/mcp/localToolDefinitions.js:994`
+>    — already `await this.#toolFacade.execute(...)`).
+> 2. **Resolve `stalenessMs` via the Step-3 settings code** (the
+>    `let stalenessMs = 60_000; try { const eff = … await
+>    this.settingsStore.readEffective(); … } catch { /* default 60s */ }`
+>    block) — `await` is now legal. `this.settingsStore` is `null`
+>    when no store was injected (constructor guard L152) → keep the
+>    `typeof …readEffective === 'function'` check; default `60_000` on
+>    null/absent/non-finite/throw.
+> 3. **Blessed lockstep (NOT test-weakening — adaptation to a
+>    spec-mandated sync→async signature change; assertions
+>    byte-identical):** the **4 pre-existing synchronous `runtime_list`
+>    tests** in `test/localToolFacade.test.js` — the `test(` callbacks
+>    at **L2211, L2251, L2306, L2376** and their respective
+>    `const result = facade.execute({` calls at **L2231, L2290, L2353,
+>    L2391** — become `async () => {` + `const result = await
+>    facade.execute({`. Change ONLY the callback `async` keyword and add
+>    `await` at those 4 execute calls. Do not alter any assertion,
+>    fixture, or fakeRegistry/fakeEventLog. (Rationale recorded so the
+>    spec-compliance reviewer does not flag this as a scope/instruction
+>    violation and a future reader does not revert it — same
+>    ratification convention as Task 3's C1/I1.)
+> 4. **Anti-inert liveness proof (mandatory new case in
+>    `test/contextUsage.facade.test.js`).** The existing case uses no
+>    `settingsStore` (default 60s) and does NOT prove the setting is
+>    honored. Add a second test proving a configured value actually
+>    changes behavior — a runtime whose only result frame is ~90s
+>    before `now`:
+>
+>    ```javascript
+>    test('runtime_list: settings.runtime.contextStaleness is honored (provably live, not inert)', async () => {
+>      const fakeRegistry = {
+>        listRuntimes({ teamId }) {
+>          return [{ runtimeId: 'rt1', teamId, agentId: 'dev', providerId: 'claude', status: 'running', startedAt: '2026-05-16T00:00:00.000Z' }];
+>        },
+>        getRuntime() { return null; },
+>      };
+>      const ev = {
+>        runtimeId: 'rt1', teamId: 'team-a', agentId: 'dev', eventType: 'turn_completed',
+>        createdAt: '2026-05-16T00:00:00.000Z',
+>        payload: { raw: { type: 'result', subtype: 'success', model: 'claude-sonnet-4-20250514', usage: { input_tokens: 1, output_tokens: 1 }, total_cost_usd: 0 } },
+>      };
+>      const fakeEventLog = { appendEvent() {}, listEvents() { return [ev]; } };
+>      const NOW = Date.parse('2026-05-16T00:01:30.000Z'); // 90s after the only result frame
+>      const origNow = Date.now;
+>      Date.now = () => NOW;
+>      try {
+>        // Default 60s window → 90s idle is STALE.
+>        const f1 = new LocalToolFacade({ broker: new InMemoryBroker(), taskBoard: new InMemoryTaskBoard(), runtimeRegistry: fakeRegistry, eventLog: fakeEventLog });
+>        const r1 = await f1.execute({ commandName: COMMANDS.RUNTIME_LIST, idempotencyKey: 'cs-default', actor: { teamId: 'team-a', agentId: 'op', role: 'human' }, args: { teamId: 'team-a' } });
+>        assert.equal(r1.runtimes.find((r) => r.runtimeId === 'rt1').contextUsage.stale, true, 'default 60s → 90s idle is stale');
+>        // Configured 120s window via settings.runtime.contextStaleness → NOT stale.
+>        const f2 = new LocalToolFacade({ broker: new InMemoryBroker(), taskBoard: new InMemoryTaskBoard(), runtimeRegistry: fakeRegistry, eventLog: fakeEventLog, settingsStore: { readEffective: async () => ({ runtime: { contextStaleness: 120_000 } }) } });
+>        const r2 = await f2.execute({ commandName: COMMANDS.RUNTIME_LIST, idempotencyKey: 'cs-cfg', actor: { teamId: 'team-a', agentId: 'op', role: 'human' }, args: { teamId: 'team-a' } });
+>        assert.equal(r2.runtimes.find((r) => r.runtimeId === 'rt1').contextUsage.stale, false, 'configured 120s window → 90s idle NOT stale (setting is live, not inert)');
+>      } finally {
+>        Date.now = origNow;
+>      }
+>    });
+>    ```
+>
+>    The first (existing) facade test's callback also becomes
+>    `async () => {` + `await facade.execute(...)` (it currently calls
+>    `facade.execute` synchronously — same async adaptation).
+>
+> **Step 4 (revised) expected:** both `test/contextUsage.facade.test.js`
+> cases PASS, and the full root suite stays `# fail 0` **with the 4
+> adapted `localToolFacade.test.js` runtime_list tests still green**
+> (their assertions unchanged — proving the async change is
+> behavior-preserving for spend/model/rows).
+
 ---
 
 ## Task 5: UI lockstep — repoint the mapper + RuntimeDrawer
