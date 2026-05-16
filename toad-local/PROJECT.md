@@ -236,33 +236,45 @@ flows through the SQLite broker (`src/broker/sqliteBroker.js`), code
 Symphony fully controls.** Most multi-agent systems have agents talk
 to each other through opaque channels (direct API calls, shared
 memory, framework message buses) and can only audit *after* the fact
-by reading artifacts. Symphony can observe — and optionally *gate* —
-the actual instruction *as it is sent, before the recipient acts on
-it*.
+by reading artifacts. Symphony can observe every inter-agent action
+continuously — and at the right boundary, block a merge that
+introduces a spec violation.
 
 Concrete consequence: when the lead tells a worker "implement OAuth,"
-the broker sees that message. A Layer-1 check can verify OAuth is in
-the authorized scope per `spec.json` *before delivery* — drift
-detection **before** the work happens, not post-hoc cleanup.
+the broker sees that message. Drift is observed continuously
+(post-`appendMessage`, cheap, never blocks delivery). Enforcement
+happens at the merge boundary — the `merge_ready → done` constitution
+gate refuses to land code that introduces a `mode:'gate'` constitution
+rule violation. The work was visible the whole time; the gate closes
+the exit.
 
-Two enforcement modes, declared per-check:
+Three enforcement tiers, declared per-rule:
 
-- **observe** (default, ~90%): check runs after `appendMessage`;
-  violation produces a finding, delivery is not blocked. Zero latency
-  added to agent throughput.
-- **gate** (`severity: critical` constitution rules only): check runs
-  at the `appendMessage → DeliveryWorker.deliverMessage` seam; a
-  violation blocks the message and returns a rejection the lead's
-  system prompt is told to respect.
+- **info**: unreviewed spec or low confidence (ruling #4 clamp). Logged
+  for human review; never sent to the lead.
+- **observer**: real drift, reviewed spec. Lead notified via broker;
+  shapes coordination. Does **not** block delivery or merge.
+- **gate**: `mode:'gate'` constitution rule, reviewed spec, **and** the
+  violation is introduced by this merge (diff-scoped vs trunk).
+  Blocks `merge_ready → done` until resolved.
 
-Prerequisite, tracked as its own slice: `SqliteBroker` has no observer
-seam today (`SqliteTaskBoard` has `subscribe(fn)`; the broker's
-`appendMessage` just writes). The hook must be added at the
-append→deliver boundary. It is not a free property — but the
-*architecture that makes it possible* is, and that is what's worth
-preserving here as doctrine: **do not route agent communication
-around the broker. The broker's universality is the drift system's
-power.**
+Gate properties worth keeping in mind:
+
+- **Diff-scoped.** Only violations *this* merge introduces are
+  gate-eligible. Pre-existing trunk violations are observer-mode and
+  never block.
+- **Two-key.** A merge is blocked only if the rule has `mode:'gate'`
+  **and** `spec.provenance.reviewed === true`. An unreviewed spec
+  clamps to info and never blocks.
+- **Fail-open.** A scan or git error never wedges a merge — it emits
+  a loud high-severity observer finding and the merge proceeds.
+
+The broker observer seam (`subscribe()` on `SqliteBroker`) is a
+separate, later slice that ships the seam substrate for observe-mode
+message-level drift findings. It is not yet wired to a consumer and
+does not gate anything — that remains the merge gate's job. The
+doctrine stands regardless: **do not route agent communication around
+the broker. The broker's universality is the drift system's power.**
 
 ## 9. Provider architecture
 

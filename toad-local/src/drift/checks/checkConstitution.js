@@ -22,11 +22,11 @@ const CHECK_NAME = 'check_constitution';
  *
  * `constitutionMode` is carried onto every finding (the rule's
  * observe|gate). L1.3 itself only OBSERVES — it produces the finding.
- * The gate enforcement (block the message/commit at the broker's
- * append→deliver seam) is a separate slice; carrying the mode now
- * means that slice needs zero changes here. Gating policy is
- * independent of review state, so the mode is carried even when
- * severity is clamped to info.
+ * The gate enforcement (block the merge at the merge_ready→done
+ * constitution gate, shipped) consumes `constitutionMode:'gate'`
+ * findings; carrying the mode here means the gate needs zero changes
+ * to this check. Gating policy is independent of review state, so the
+ * mode is carried even when severity is clamped to info.
  *
  * Honest degradation, consistent with L1.1/L1.2:
  *   - no spec / no constitution.rules        → []
@@ -125,9 +125,9 @@ export function checkConstitution({ snapshot } = {}) {
       autoFixable: false,
       specReviewed: reviewed === true,
       specProvenance: provenance,
-      // Carried for the future broker-seam gate path. observe = flag
-      // only (today's behavior for ALL findings until the seam lands);
-      // gate = block at append→deliver once the seam exists.
+      // Carried for the merge-gate consumer. observe = flag only
+      // (lead notified, no block); gate = block at merge_ready→done
+      // constitution gate when this violation is diff-introduced.
       constitutionMode: mode,
     });
   }
