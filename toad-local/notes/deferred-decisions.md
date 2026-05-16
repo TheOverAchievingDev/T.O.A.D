@@ -94,3 +94,37 @@ this entry is the starting point (replaces the earlier local-Qwen and
 cloud-Gemini-Flash sketches). Origin: operator caught a meaningfully
 better architecture than the advisor proposed (the "operator catches the
 reviewer" pattern).
+
+---
+
+## Composition extraction (narration↔composition boundary half-life)
+
+**Status:** Deferred decision, forced by Layer-2's design.
+
+The readability Slice-1 spec
+(`docs/superpowers/specs/2026-05-16-readability-slice1-eventnarration-design.md`
+§4.2) pins a sharp boundary: the shared `eventNarration` module owns
+**per-event** narration only; **composition** (interleaving
+drift-score-change / task-lifecycle rows with runtime-event rows,
+grouping, span detection, candidate-capping, drop policy) stays
+single-site in `timelineProjection`. That §8c cut is correct **today**
+because composition is genuinely single-site and not duplicated.
+
+**Known half-life:** the post-C Layer-2 spawned-CLI summarizer reads the
+persisted narrated-line stream and will almost certainly need
+composition of its own (group consecutive `tool_use` into spans, fold
+drift/task rows into the span context it feeds the summarizer CLI). At
+that point the choice is forced:
+- extract `timelineProjection`'s composition into a *shared* module (a
+  second §8c consolidation cycle — the clean answer, parallels the
+  `eventNarration` extraction), **or**
+- let Layer-2 reinvent composition server-side (the §8c smell —
+  rejected by the same discipline that motivated Slice 1).
+
+**Decision when the summarizer brainstorm opens:** default to extracting
+composition into a shared module alongside wiring Layer-2, exactly as
+`eventNarration` was extracted for Slice 1 — same pattern, same
+reconciliation discipline (§8e). Do NOT read Slice-1 §4.2 as a permanent
+boundary; it is a *correct-for-now* cut with this explicit half-life.
+Origin: fresh-eyes spec review (Finding #5) — surfaced rather than
+smoothed so a future reader doesn't assume the boundary holds forever.
