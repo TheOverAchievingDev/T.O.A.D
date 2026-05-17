@@ -61,9 +61,14 @@ zombie sweep, SIGINT/SIGTERM, logging all byte-identical).
 2. **`scripts/dev-api-server.mjs` lifecycle** — the drift block lives at
    lines ~62–156 inside `if (driftDb) { … }` (`driftDb =
    runtime.runtimeRegistry?.db || runtime.eventLog?.db ||
-   runtime.taskBoard?.db`). Settings are read once at startup
-   (`const all = await runtime.settingsStore.readEffective()` ~line 71,
-   try/catch → undefined). `listLiveTeams` is derived (~lines 119–128) from
+   runtime.taskBoard?.db`). Settings are read once at startup: `const all =
+   await runtime.settingsStore.readEffective()` is **block-scoped to an inner
+   `try`** (~line 71); the value usable at the `if (driftDb)` scope is
+   `let driftSettings;` (~line 68), assigned `all && typeof all === 'object'
+   ? all : undefined` — i.e. the full effective snapshot **or `undefined`**
+   (store absent / read threw / non-object). The drift engine itself consumes
+   `settings: driftSettings` (~line 99). P3b-2 reuses **`driftSettings`** (NOT
+   the out-of-scope `all`). `listLiveTeams` is derived (~lines 119–128) from
    `runtime.runtimeRegistry.listRuntimes()` filtered to status
    `running|live|starting` → unique non-empty `teamId`s. `shutdown()`
    (~lines 212–218) calls `driftMonitor.stop()` then `await runtime.close()`;
@@ -76,8 +81,10 @@ zombie sweep, SIGINT/SIGTERM, logging all byte-identical).
    **async**, returns the merged namespaced sections (+ `_sources`). `summarizer`
    is a forward-compatible unknown section preserved as-is. Drift passes the
    **whole** `readEffective()` result as `settings`; the engine sub-reads
-   `settings.drift`. P3b-2 mirrors exactly: pass the whole `all` snapshot as
-   `settings`; the orchestrator/route sub-read `settings.summarizer`.
+   `settings.drift`. P3b-2 mirrors exactly: pass the outer-scoped
+   `driftSettings` snapshot as `settings` (the same value drift's engine
+   receives; `undefined` if the store was unavailable/threw); the
+   orchestrator/route sub-read `settings.summarizer` and tolerate `undefined`.
 4. **P3a contract** — `runtime.listSpansAwaitingSummary({ teamId,
    runtimeId = null })` (delegates to `LocalReadModel.listSpansAwaitingSummary`
    → `decideSpansToSummarize`; **requires** a non-empty `teamId`).
@@ -119,7 +126,7 @@ dev-api-server.mjs (composition root, inside the existing `if (driftDb)`)
             appendSummary: s => runtime.spanSummaryStore.appendSummary(s),
             runImpl:       runSpanSummary,
             limiter:       summaryLimiter,   // one shared SummaryRateLimiter
-            settings:      all,              // whole readEffective() snapshot
+            settings:      driftSettings,    // outer-scoped snapshot drift's engine also gets (or undefined)
             cwd:           projectCwd || undefined,
             isolateHome:   false,
           }),
@@ -213,8 +220,11 @@ the last tick (members of the sealed run set plus the orchestrator-only
 ## 6. The wiring block — `scripts/dev-api-server.mjs`
 
 Placed immediately after the existing drift block, **inside the same
-`if (driftDb) { … }`**, reusing the `all` settings snapshot already read for
-drift (no second `readEffective()`):
+`if (driftDb) { … }`**, reusing the outer-scoped **`driftSettings`** snapshot
+(the value drift's engine receives — the full effective settings, or
+`undefined` if the store was unavailable / `readEffective()` threw / returned a
+non-object). Never a second `readEffective()`. The monitor handle is hoisted to
+module scope alongside `let driftMonitor = null;` so `shutdown()` can reach it:
 
 ```js
 // top of file, with the other imports
@@ -223,8 +233,12 @@ import { summarizePendingSpans } from '../src/runtime/spanSummary/summarizePendi
 import { runSpanSummary } from '../src/runtime/spanSummary/runSpanSummary.js';
 import { SummaryRateLimiter } from '../src/runtime/spanSummary/summaryRateLimiter.js';
 
-// inside `if (driftDb) { … }`, after the drift-monitor block:
-const sumCfg = (all && typeof all === 'object' && all.summarizer) || {};
+// at module scope, right after `let driftMonitor = null;`:
+let summaryMonitor = null;
+
+// inside `if (driftDb) { … }`, after the drift-monitor block (driftSettings
+// is the same outer-scoped snapshot drift's engine consumes; may be undefined):
+const sumCfg = (driftSettings && typeof driftSettings === 'object' && driftSettings.summarizer) || {};
 const sumIntervalMs =
   Number.isFinite(sumCfg.intervalMs) && sumCfg.intervalMs > 0
     ? sumCfg.intervalMs
@@ -235,7 +249,7 @@ const summaryLimiter = new SummaryRateLimiter({
       ? sumCfg.maxPerHour
       : 20,
 });
-const summaryMonitor = new SummaryMonitor({
+summaryMonitor = new SummaryMonitor({
   intervalMs: sumIntervalMs,
   listLiveTeams: () => {
     const runtimes = runtime.runtimeRegistry?.listRuntimes?.() ?? [];
@@ -257,7 +271,7 @@ const summaryMonitor = new SummaryMonitor({
       appendSummary: (s) => runtime.spanSummaryStore.appendSummary(s),
       runImpl: runSpanSummary,
       limiter: summaryLimiter,
-      settings: all,
+      settings: driftSettings,
       cwd: projectCwd || undefined,
       isolateHome: false,
     }),
@@ -278,7 +292,10 @@ if (summaryMonitor && typeof summaryMonitor.stop === 'function') {
 drift threads `projectCwd`; `isolateHome: false` because the summarizer must use
 the operator's normal provider-CLI auth (`isolateHome` scrubs `CLAUDE_*` — it
 exists only for drift's credential-isolated judge and would break summary auth);
-`settings: all` is the whole effective snapshot, the orchestrator sub-reads
+`settings: driftSettings` is the same outer-scoped effective snapshot drift's
+engine receives (or `undefined` if the store was unavailable/threw — the
+orchestrator and `resolveSummaryRoute` tolerate `undefined`/empty, falling back
+to defaults exactly as the drift engine does); the orchestrator sub-reads
 `.summarizer` (exact drift mirror); the `if (driftDb)` guard means no project /
 `:memory:` with no sqlite handle → no monitor (no false "running" state).
 

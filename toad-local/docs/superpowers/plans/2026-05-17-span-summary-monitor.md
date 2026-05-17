@@ -691,15 +691,16 @@ In `scripts/dev-api-server.mjs`, find the end of the drift-monitor wiring inside
 let summaryMonitor = null;
 ```
 
-Then, inside `if (driftDb) {`, AFTER the entire drift `taskBoard.subscribe` `if/else` and BEFORE the `} else {` that handles no-sqlite, insert this block (it reuses the `all` snapshot already read at ~line 71 for drift — do NOT call `readEffective()` again):
+Then, inside `if (driftDb) {`, AFTER the entire drift `taskBoard.subscribe` `if/else` and BEFORE the `} else {` that handles no-sqlite, insert this block. **Critical scoping note:** the drift block's `const all = await runtime.settingsStore.readEffective()` is **block-scoped to an inner `try`** (~line 71) and is NOT in scope here — the in-scope reused snapshot is `let driftSettings;` (~line 68, `if(driftDb)`-scoped), which holds the full effective settings object **or `undefined`** (store absent / read threw / non-object). The drift engine itself consumes `settings: driftSettings` (~line 99). Use `driftSettings` (NOT `all` — `all` here would `ReferenceError` and crash the server on boot). Do NOT call `readEffective()` again. Insert this block:
 
 ```js
   // §-span-summary wiring (Readability Layer-2 P3b-2). First production
   // caller of the P3b-1 engine. Mirrors the drift-monitor block above:
   // periodic SummaryMonitor over live teams, honest degradation, the
-  // engine internals untouched. `all` is the settings snapshot already
-  // read above for drift (no second readEffective()).
-  const sumCfg = (all && typeof all === 'object' && all.summarizer) || {};
+  // engine internals untouched. driftSettings is the same outer-scoped
+  // snapshot drift's engine consumes (the full effective settings, or
+  // undefined if the store was unavailable/threw); no second readEffective().
+  const sumCfg = (driftSettings && typeof driftSettings === 'object' && driftSettings.summarizer) || {};
   const sumIntervalMs =
     Number.isFinite(sumCfg.intervalMs) && sumCfg.intervalMs > 0
       ? sumCfg.intervalMs
@@ -732,7 +733,7 @@ Then, inside `if (driftDb) {`, AFTER the entire drift `taskBoard.subscribe` `if/
         appendSummary: (s) => runtime.spanSummaryStore.appendSummary(s),
         runImpl: runSpanSummary,
         limiter: summaryLimiter,
-        settings: all,
+        settings: driftSettings,
         cwd: projectCwd || undefined,
         isolateHome: false,
       }),
@@ -828,7 +829,7 @@ Expected: HEAD stat exactly the 5 files; the out-of-scope `diff --stat` EMPTY; t
 ## Self-Review
 
 **1. Spec coverage:**
-- §3 grounded pins → Task 3/4 (`DriftMonitor` mirror, totality), Task 6 (dev-api-server lifecycle, SettingsStore `all` reuse, P3a contract, lead-provider). ✓
+- §3 grounded pins → Task 3/4 (`DriftMonitor` mirror, totality), Task 6 (dev-api-server lifecycle, outer-scoped `driftSettings` reuse — NOT block-scoped `all`, P3a contract, lead-provider). ✓
 - §5 `SummaryMonitor` (ctor guards, `start/stop/tickOnce/getStatus`, single-source state) → Tasks 1–4. ✓
 - §6 wiring block (4 imports, additive block, `shutdown()` line, grounded fixed choices) → Task 6 Steps 1–3. ✓
 - §8 honest degradation/totality → Task 4 tests. ✓
