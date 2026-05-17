@@ -141,6 +141,27 @@ CREATE TABLE IF NOT EXISTS narrated_lines (
 CREATE INDEX IF NOT EXISTS idx_narrated_lines_runtime ON narrated_lines(runtime_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_narrated_lines_team ON narrated_lines(team_id, created_at);
 
+CREATE TABLE IF NOT EXISTS span_summaries (
+  summary_id      TEXT PRIMARY KEY,
+  span_id         TEXT NOT NULL UNIQUE,
+  team_id         TEXT NOT NULL,
+  runtime_id      TEXT NOT NULL,
+  agent_id        TEXT NOT NULL,
+  session_id      TEXT,
+  summary_text    TEXT NOT NULL,
+  model           TEXT,
+  cli             TEXT,
+  span_started_at TEXT NOT NULL,
+  span_ended_at   TEXT NOT NULL,
+  row_count       INTEGER NOT NULL,
+  tokens          INTEGER,
+  created_at      TEXT NOT NULL,
+  FOREIGN KEY (team_id) REFERENCES teams(team_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_span_summaries_team ON span_summaries(team_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_span_summaries_runtime ON span_summaries(runtime_id, created_at);
+
 CREATE TABLE IF NOT EXISTS task_events (
   event_id TEXT PRIMARY KEY,
   idempotency_key TEXT UNIQUE,
