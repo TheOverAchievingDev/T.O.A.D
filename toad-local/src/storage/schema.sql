@@ -122,6 +122,25 @@ CREATE TABLE IF NOT EXISTS runtime_events (
 CREATE INDEX IF NOT EXISTS idx_runtime_events_runtime
   ON runtime_events(runtime_id, created_at);
 
+CREATE TABLE IF NOT EXISTS narrated_lines (
+  narration_id    TEXT PRIMARY KEY,
+  idempotency_key TEXT UNIQUE,
+  event_id        TEXT,
+  runtime_id      TEXT NOT NULL,
+  team_id         TEXT NOT NULL,
+  agent_id        TEXT NOT NULL,
+  session_id      TEXT,
+  event_type      TEXT NOT NULL,
+  created_at      TEXT NOT NULL,
+  line            TEXT NOT NULL,
+  kind            TEXT NOT NULL,
+  tokens          INTEGER,
+  FOREIGN KEY (team_id) REFERENCES teams(team_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_narrated_lines_runtime ON narrated_lines(runtime_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_narrated_lines_team ON narrated_lines(team_id, created_at);
+
 CREATE TABLE IF NOT EXISTS task_events (
   event_id TEXT PRIMARY KEY,
   idempotency_key TEXT UNIQUE,
