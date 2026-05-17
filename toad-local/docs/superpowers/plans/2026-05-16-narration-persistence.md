@@ -558,9 +558,17 @@ const NARRATED_TYPES = Object.freeze(new Set(['tool_use', 'assistant_text', 'tur
         kind: n.kind,
         tokens: n.tokens,
       });
-    } catch {
-      // Non-fatal: narration is a durable projection; a write failure
-      // must never lose or block the raw event / ingest. (Spec §4.)
+    } catch (err) {
+      // CONTROLLER-RATIFIED (T5 code-quality review): spec §3.1/§4
+      // mandate "log + swallow" / "logged and swallowed" — the original
+      // plan code block dropped the log, which would make a misconfigured
+      // narrationStore a SILENT inert-feature failure (the session's #1
+      // recurring trap). Log (matching the LocalToadRuntime:580
+      // adapter-events-loop swallow precedent the spec §3.3 cites) but
+      // NEVER rethrow: a narration write failure must never lose or block
+      // the raw event / ingest. (Spec §4.)
+      // eslint-disable-next-line no-console
+      console.error('[RuntimeEventIngestor] #persistNarration failed (non-fatal):', err?.message || err);
     }
   }
 ```
