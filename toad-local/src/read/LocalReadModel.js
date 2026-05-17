@@ -4,6 +4,7 @@ import {
   parseCrossTeamPrefix,
   stripCrossTeamPrefix,
 } from '../protocol/crossTeam.js';
+import { detectSpans, DEFAULT_SPAN_CONFIG } from '../runtime/spanDetection/index.js';
 
 export class LocalReadModel {
   constructor({
@@ -103,6 +104,13 @@ export class LocalReadModel {
   listNarratedTimeline({ teamId, runtimeId = null }) {
     if (!this.narrationStore || typeof this.narrationStore.listNarration !== 'function') return [];
     return this.narrationStore.listNarration({ teamId: requireString(teamId, 'teamId'), runtimeId });
+  }
+
+  listSpans({ teamId, runtimeId = null }) {
+    return detectSpans(
+      this.listNarratedTimeline({ teamId, runtimeId }),
+      DEFAULT_SPAN_CONFIG,
+    );
   }
 
   listApprovals({ teamId }) {

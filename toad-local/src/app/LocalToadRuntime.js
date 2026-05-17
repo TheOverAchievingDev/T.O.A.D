@@ -793,6 +793,10 @@ export class LocalToadRuntime {
     return this.readModel.listNarratedTimeline(input);
   }
 
+  listSpans(input) {
+    return this.readModel.listSpans(input);
+  }
+
   listToolCalls(input) {
     return this.readModel.listToolCalls(input);
   }
