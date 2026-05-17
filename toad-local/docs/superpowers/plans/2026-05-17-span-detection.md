@@ -718,6 +718,25 @@ git -C /c/Project-TOAD log --oneline -1
 
 ## Task 5: Compute-on-read `listSpans` (read model + runtime delegation)
 
+> **§8d ratification (test 4 corrected — do not revert):** the original
+> test 4 ingested `type:'tool_use'` with an unregistered `runtimeId`
+> directly into `new LocalToadRuntime()`. Grounding `RuntimeEventIngestor`
+> showed `tool_use`/`assistant_text`/`approval_request` all hit
+> `RuntimeIdentityValidator.assertCanWrite` (throws for an unregistered
+> runtime), while the only NARRATED types that bypass identity validation
+> (`turn_completed` etc.) narrate to `kind:'system'` → **zero spans**. So
+> NO non-empty span is reachable e2e through an unregistered runtime, and
+> registering a runtime is out of scope / fragile. But `#persistNarration`
+> runs (line 70) **before** the `tool_use` identity check (line 73), so
+> the tool narration is durably written before the throw. The ratified
+> test 4 therefore ingests `tool_use`, tolerates *only* the known
+> `unknown runtime identity` rejection (`assert.match`), asserts the
+> narration genuinely persisted (`listNarratedTimeline().length===1`,
+> anti-vacuous), then asserts `rt.listSpans()` projects it to one open
+> tool span — a faithful, in-scope, non-inert e2e. Same pre-emptive
+> controller-ratification discipline as the auth/compaction/narration/P2a
+> cycles.
+
 **Files:**
 - Modify: `src/read/LocalReadModel.js` (add import after line 6; add `listSpans` after line 106)
 - Modify: `src/app/LocalToadRuntime.js` (add `listSpans(input)` adjacent to `listNarratedTimeline`, ~line 794)
@@ -767,13 +786,29 @@ test('LocalReadModel.listSpans validates teamId (mirrors listNarratedTimeline)',
 
 test('LocalToadRuntime.listSpans delegates to the read model end-to-end', async () => {
   const rt = new LocalToadRuntime();
-  await rt.eventIngestor.ingest({
-    type: 'tool_use', runtimeId: 'rt-s', teamId: 'team-s', agentId: 'lead',
-    toolName: 'Read', input: { file_path: '/x/a.js' },
-    createdAt: '2026-05-16T00:00:00.000Z', raw: {},
-  });
+  // §8d-ratified: a tool_use for an UNREGISTERED runtime is rejected by
+  // RuntimeIdentityValidator.assertCanWrite — but RuntimeEventIngestor
+  // runs #persistNarration (line 70) BEFORE the tool_use identity check
+  // (line 73), so the narration row is durably written before the throw.
+  // The identity rejection is expected and orthogonal to what we assert
+  // (the rt -> readModel -> narrationStore -> detectSpans delegation).
+  // assert.match keeps the catch honest: only the KNOWN identity error
+  // is tolerated; any other ingest failure fails the test.
+  try {
+    await rt.eventIngestor.ingest({
+      type: 'tool_use', runtimeId: 'rt-s', teamId: 'team-s', agentId: 'lead',
+      toolName: 'Read', input: { file_path: '/x/a.js' },
+      createdAt: '2026-05-16T00:00:00.000Z', raw: {},
+    });
+  } catch (err) {
+    assert.match(String((err && err.message) || err), /unknown runtime identity/);
+  }
+  assert.equal(
+    rt.listNarratedTimeline({ teamId: 'team-s' }).length, 1,
+    'tool narration durably persisted via the real runtime (anti-vacuous)',
+  );
   const spans = rt.listSpans({ teamId: 'team-s' });
-  assert.equal(spans.length, 1, 'one span over the single persisted tool narration');
+  assert.equal(spans.length, 1, 'one span over the single persisted tool narration (rt -> readModel -> store -> detectSpans)');
   assert.equal(spans[0].closed, false, 'trailing span open (no terminating boundary yet)');
   assert.equal(spans[0].rows[0].kind, 'tool');
 });
