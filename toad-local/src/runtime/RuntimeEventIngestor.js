@@ -1,6 +1,12 @@
 import { createHash } from 'node:crypto';
 import { MESSAGE_KINDS } from '../protocol/envelopes.js';
 import { RuntimeIdentityValidator } from './RuntimeIdentityValidator.js';
+import { narrate } from './eventNarration/index.js';
+
+// The wired-consumer-sourced event types (readability Slice-1 §4.4
+// scope). Test-local in the agreement test; redefined here by the same
+// §4.4 rationale (not a code dependency on a test internal).
+const NARRATED_TYPES = Object.freeze(new Set(['tool_use', 'assistant_text', 'turn_completed', 'approval_request']));
 
 const DEFAULT_ALLOWED_TOOL_NAMES = Object.freeze([
   'message_send',
@@ -21,6 +27,7 @@ export class RuntimeEventIngestor {
     identityValidator = null,
     compactionHandler = null,
     compactionTrigger = null,
+    narrationStore = null,
     eventBus = null,
     sideEffectLog = null,
   }) {
@@ -35,6 +42,7 @@ export class RuntimeEventIngestor {
     this.adapters = adapters;
     this.compactionHandler = compactionHandler;
     this.compactionTrigger = compactionTrigger;
+    this.narrationStore = narrationStore;
     this.eventBus = eventBus;
     this.sideEffectLog = sideEffectLog;
     this.identityValidator =
@@ -59,6 +67,7 @@ export class RuntimeEventIngestor {
 
     // Publish to event bus for live streaming
     this.#publishEvent(normalized);
+    this.#persistNarration(normalized, eventHash, eventResult);
 
     if (normalized.type === 'tool_use') {
       this.identityValidator.assertCanWrite(normalized);
@@ -217,6 +226,36 @@ export class RuntimeEventIngestor {
     this.eventBus.emit('runtime_event', normalized);
     if (normalized.type) {
       this.eventBus.emit(normalized.type, normalized);
+    }
+  }
+
+  #persistNarration(normalized, eventHash, eventResult) {
+    if (!this.narrationStore) return;
+    if (!NARRATED_TYPES.has(normalized.type)) return;
+    try {
+      const n = narrate(normalized);
+      this.narrationStore.appendNarration({
+        idempotencyKey: `narration:${eventHash}`,
+        eventId: eventResult && eventResult.event ? eventResult.event.eventId : null,
+        runtimeId: normalized.runtimeId,
+        teamId: normalized.teamId,
+        agentId: normalized.agentId,
+        sessionId: normalized.sessionId,
+        eventType: normalized.type,
+        createdAt: normalized.createdAt,
+        line: n.line,
+        kind: n.kind,
+        tokens: n.tokens,
+      });
+    } catch (err) {
+      // CONTROLLER-RATIFIED (T5 code-quality review): spec §3.1/§4
+      // mandate "log + swallow" — a misconfigured narrationStore must
+      // not be a SILENT inert-feature failure. Log (matching the
+      // LocalToadRuntime:580 adapter-events-loop swallow precedent the
+      // spec §3.3 cites) but NEVER rethrow: a narration write failure
+      // must never lose or block the raw event / ingest. (Spec §4.)
+      // eslint-disable-next-line no-console
+      console.error('[RuntimeEventIngestor] #persistNarration failed (non-fatal):', err?.message || err);
     }
   }
 }

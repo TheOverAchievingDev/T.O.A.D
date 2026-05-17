@@ -10,6 +10,7 @@ import { RuntimeEventBus } from '../runtime/RuntimeEventBus.js';
 import { RuntimeEventIngestor } from '../runtime/RuntimeEventIngestor.js';
 import { RuntimeSupervisor, resolveWindowsCommand } from '../runtime/RuntimeSupervisor.js';
 import { SqliteRuntimeEventLog } from '../runtime/sqliteRuntimeEventLog.js';
+import { SqliteNarrationStore } from '../runtime/sqliteNarrationStore.js';
 import { SqliteRuntimeRegistry } from '../runtime/sqliteRuntimeRegistry.js';
 import { SqliteTaskBoard } from '../task/sqliteTaskBoard.js';
 import { SqliteTeamConfigRegistry } from '../team/sqliteTeamConfigRegistry.js';
@@ -70,6 +71,7 @@ export class LocalToadRuntime {
     runtimeDirectory = new RuntimeDirectory(),
     runtimeRegistry = null,
     eventLog = null,
+    narrationStore = null,
     teamConfigRegistry = null,
     foundryStore = null,
     adapters = new Map(),
@@ -127,6 +129,7 @@ export class LocalToadRuntime {
     this.runtimeDirectory = runtimeDirectory;
     this.runtimeRegistry = runtimeRegistry || new SqliteRuntimeRegistry({ filePath: dbPath });
     this.eventLog = eventLog || new SqliteRuntimeEventLog({ filePath: dbPath });
+    this.narrationStore = narrationStore || new SqliteNarrationStore({ filePath: dbPath });
     this.teamConfigRegistry = teamConfigRegistry || new SqliteTeamConfigRegistry({ filePath: dbPath });
     this.pluginJobs = new SqlitePluginJobs({ filePath: dbPath });
     // Foundry sessions are global (live in ~/.symphony/foundry.db) so they
@@ -189,6 +192,7 @@ export class LocalToadRuntime {
         taskBoard: this.taskBoard,
         runtimeRegistry: this.runtimeRegistry,
         eventLog: this.eventLog,
+        narrationStore: this.narrationStore,
         approvalBroker: this.approvalBroker,
       });
     // Worktree manager: only enabled when projectCwd is set so tests with
@@ -310,6 +314,7 @@ export class LocalToadRuntime {
       new RuntimeEventIngestor({
         broker: this.broker,
         eventLog: this.eventLog,
+        narrationStore: this.narrationStore,
         toolFacade: this.toolFacade,
         approvalBroker: this.approvalBroker,
         adapters,
@@ -784,6 +789,10 @@ export class LocalToadRuntime {
     return this.readModel.listRuntimeAudit(input);
   }
 
+  listNarratedTimeline(input) {
+    return this.readModel.listNarratedTimeline(input);
+  }
+
   listToolCalls(input) {
     return this.readModel.listToolCalls(input);
   }
@@ -805,6 +814,7 @@ export class LocalToadRuntime {
     this.adapters.clear();
     if (this.eventBus) this.eventBus.dispose();
     closeIfSupported(this.eventLog);
+    closeIfSupported(this.narrationStore);
     closeIfSupported(this.pluginJobs);
     closeIfSupported(this.runtimeRegistry);
 

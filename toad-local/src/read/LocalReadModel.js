@@ -12,6 +12,7 @@ export class LocalReadModel {
     runtimeRegistry = null,
     eventLog = null,
     approvalBroker = null,
+    narrationStore = null,
   }) {
     if (!broker || typeof broker.listMessages !== 'function') {
       throw new TypeError('broker with listMessages() is required');
@@ -21,6 +22,7 @@ export class LocalReadModel {
     this.runtimeRegistry = runtimeRegistry;
     this.eventLog = eventLog;
     this.approvalBroker = approvalBroker;
+    this.narrationStore = narrationStore;
   }
 
   listTeamChat({ teamId, limit = null }) {
@@ -96,6 +98,11 @@ export class LocalReadModel {
   listRuntimeAudit({ teamId, runtimeId = null }) {
     if (!this.eventLog || typeof this.eventLog.listEvents !== 'function') return [];
     return this.eventLog.listEvents({ teamId: requireString(teamId, 'teamId'), runtimeId });
+  }
+
+  listNarratedTimeline({ teamId, runtimeId = null }) {
+    if (!this.narrationStore || typeof this.narrationStore.listNarration !== 'function') return [];
+    return this.narrationStore.listNarration({ teamId: requireString(teamId, 'teamId'), runtimeId });
   }
 
   listApprovals({ teamId }) {
