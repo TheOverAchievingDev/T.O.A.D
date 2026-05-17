@@ -1,0 +1,52 @@
+[
+  {
+    "name": "system-agentchange-gap-open",
+    "rows": [
+      { "narrationId": "m1", "eventId": "e1", "runtimeId": "rt-1", "teamId": "team-1", "agentId": "dev-1", "sessionId": "s1", "eventType": "tool_use", "createdAt": "2026-05-16T00:00:00.000Z", "line": "Reading a.js", "kind": "tool", "tokens": 10 },
+      { "narrationId": "m2", "eventId": "e2", "runtimeId": "rt-1", "teamId": "team-1", "agentId": "dev-1", "sessionId": "s1", "eventType": "assistant_text", "createdAt": "2026-05-16T00:00:05.000Z", "line": "planning", "kind": "text", "tokens": null },
+      { "narrationId": "m3", "eventId": "e3", "runtimeId": "rt-1", "teamId": "team-1", "agentId": "dev-1", "sessionId": "s1", "eventType": "turn_completed", "createdAt": "2026-05-16T00:00:10.000Z", "line": "Turn complete (1s)", "kind": "system", "tokens": null },
+      { "narrationId": "m4", "eventId": "e4", "runtimeId": "rt-1", "teamId": "team-1", "agentId": "dev-1", "sessionId": "s1", "eventType": "tool_use", "createdAt": "2026-05-16T00:00:15.000Z", "line": "Edit b.tsx", "kind": "tool", "tokens": 4 },
+      { "narrationId": "m5", "eventId": "e5", "runtimeId": "rt-1", "teamId": "team-1", "agentId": "dev-2", "sessionId": "s2", "eventType": "tool_use", "createdAt": "2026-05-16T00:00:20.000Z", "line": "Bash: npm test", "kind": "tool", "tokens": 6 },
+      { "narrationId": "m6", "eventId": "e6", "runtimeId": "rt-1", "teamId": "team-1", "agentId": "dev-2", "sessionId": "s2", "eventType": "tool_use", "createdAt": "2026-05-16T00:11:00.000Z", "line": "Reading c.js", "kind": "tool", "tokens": 2 }
+    ]
+  },
+  {
+    "name": "runtime-change-open",
+    "rows": [
+      { "narrationId": "q1", "eventId": null, "runtimeId": "rt-1", "teamId": "team-1", "agentId": "a9", "sessionId": null, "eventType": "tool_use", "createdAt": "2026-05-16T00:00:00.000Z", "line": "tool one", "kind": "tool", "tokens": 1 },
+      { "narrationId": "q2", "eventId": null, "runtimeId": "rt-2", "teamId": "team-1", "agentId": "a9", "sessionId": null, "eventType": "tool_use", "createdAt": "2026-05-16T00:00:03.000Z", "line": "tool two", "kind": "tool", "tokens": 1 }
+    ]
+  },
+  {
+    "name": "size-cap-rows",
+    "config": { "gapMs": 300000, "maxRows": 3, "maxTokens": 1000000000 },
+    "rows": [
+      { "narrationId": "s1", "eventId": null, "runtimeId": "rt-1", "teamId": "team-1", "agentId": "a1", "sessionId": null, "eventType": "tool_use", "createdAt": "2026-05-16T00:00:00.000Z", "line": "1", "kind": "tool", "tokens": 1 },
+      { "narrationId": "s2", "eventId": null, "runtimeId": "rt-1", "teamId": "team-1", "agentId": "a1", "sessionId": null, "eventType": "tool_use", "createdAt": "2026-05-16T00:00:01.000Z", "line": "2", "kind": "tool", "tokens": 1 },
+      { "narrationId": "s3", "eventId": null, "runtimeId": "rt-1", "teamId": "team-1", "agentId": "a1", "sessionId": null, "eventType": "tool_use", "createdAt": "2026-05-16T00:00:02.000Z", "line": "3", "kind": "tool", "tokens": 1 },
+      { "narrationId": "s4", "eventId": null, "runtimeId": "rt-1", "teamId": "team-1", "agentId": "a1", "sessionId": null, "eventType": "tool_use", "createdAt": "2026-05-16T00:00:03.000Z", "line": "4", "kind": "tool", "tokens": 1 }
+    ]
+  },
+  {
+    "name": "single-oversized-row",
+    "config": { "gapMs": 300000, "maxRows": 40, "maxTokens": 6000 },
+    "rows": [
+      { "narrationId": "o1", "eventId": null, "runtimeId": "rt-1", "teamId": "team-1", "agentId": "a1", "sessionId": null, "eventType": "tool_use", "createdAt": "2026-05-16T00:00:00.000Z", "line": "huge", "kind": "tool", "tokens": 9999 }
+    ]
+  },
+  {
+    "name": "text-only-open",
+    "rows": [
+      { "narrationId": "t1", "eventId": null, "runtimeId": "rt-1", "teamId": "team-1", "agentId": "a1", "sessionId": null, "eventType": "assistant_text", "createdAt": "2026-05-16T00:00:00.000Z", "line": "thinking", "kind": "text", "tokens": null },
+      { "narrationId": "t2", "eventId": null, "runtimeId": "rt-1", "teamId": "team-1", "agentId": "a1", "sessionId": null, "eventType": "assistant_text", "createdAt": "2026-05-16T00:00:05.000Z", "line": "more thinking", "kind": "text", "tokens": null }
+    ]
+  },
+  { "name": "empty", "rows": [] },
+  {
+    "name": "all-system",
+    "rows": [
+      { "narrationId": "y1", "eventId": null, "runtimeId": "rt-1", "teamId": "team-1", "agentId": "a1", "sessionId": null, "eventType": "turn_completed", "createdAt": "2026-05-16T00:00:00.000Z", "line": "Turn complete", "kind": "system", "tokens": null },
+      { "narrationId": "y2", "eventId": null, "runtimeId": "rt-1", "teamId": "team-1", "agentId": "a1", "sessionId": null, "eventType": "compact_boundary", "createdAt": "2026-05-16T00:00:01.000Z", "line": "Context compacted", "kind": "system", "tokens": null }
+    ]
+  }
+]
