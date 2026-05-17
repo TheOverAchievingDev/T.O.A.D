@@ -44,12 +44,18 @@ useSpanSummaries(activeTeamId)            [NEW sibling hook — Approach A]
 App.tsx  ── summaryStatus.state/lastReasons ─▶ <Statusbar>  (NEW non-clickable segment)
          └─ spanSummaries ─▶ <CockpitForMe> ─▶ timelineProjection.projectTimeline
               └─ projectSpanSummaryEvents(rows, now)  [NEW pure helper]
-                 → TimelineEvent[] merged BY TIMESTAMP with composeTimeline rows
+                 → TimelineEvent[] (most-recent-first) PREPENDED as a
+                   contiguous block before the composeTimeline rows
                  → <FlowTimeline events=…> (distinct 'violet' dot)
 ```
 
-`composeTimeline` (P2a) is **not** modified — summaries are merged in the UI
-`timelineProjection` layer. `useToadData.ts` is **not** modified (Approach A:
+`composeTimeline` (P2a) is **not** modified — and its returned rows expose
+only a lossy relative `when` string (no numeric ts), so a true chronological
+interleave is impossible without perturbing the frozen P2a boundary.
+**Ratified 2026-05-17 (controller pre-flight):** the summary events are
+PREPENDED as a deterministic, most-recent-first contiguous block ahead of the
+composeTimeline-derived rows in the UI `timelineProjection` layer — NO ts-merge,
+NO reordering of composed rows. `useToadData.ts` is **not** modified (Approach A:
 a sibling hook, minimizing contention with the hottest shared file and the
 operator's concurrent grid-view track).
 
@@ -88,24 +94,35 @@ rows: SpanSummaryRow[], now: number) → TimelineEvent[]`, in the NEW file
 `SpanSummaryRow`/`TimelineEvent`-compatible types rather than importing
 `FlowTimeline`/`@/`).
 
-- Each `SpanSummaryRow` → one `TimelineEvent`
-  (`ui/src/components/cockpit/FlowTimeline.tsx`'s exported shape:
-  `{ time:string, dot:TimelineDot, …body…, meta?:TimelineMeta[] }`):
-  `dot:'violet'` (distinct from stream/drift/lifecycle); `time` = relative
-  string derived from `spanEndedAt` (fallback `createdAt`, then `now`, if
-  unparseable — NEVER throw); body = `summaryText`; optional `meta` chip =
-  `model`/`cli` when present.
-- A stable, internal sortable `ts` per event (epoch ms from `spanEndedAt`
-  else `createdAt` else `now`) so `projectTimeline` can merge.
-- Total: non-array / empty / malformed-row input → `[]` or well-formed
-  events; missing/empty `summaryText` → the row is skipped (never a blank
-  ghost row); never throws.
+- **Grounded `TimelineEvent` shape (ratified 2026-05-17):** the REAL exported
+  shape `timelineProjection` produces and `FlowTimeline` renders is
+  `{ id: string, when: string, dot: TimelineDot, expanded?: true,
+  body: ReactNode }` (NOT the earlier draft's `{time, meta?}`). The pure
+  helper has NO React, so it emits `body` as a plain **string** (a valid
+  `ReactNode`): each `SpanSummaryRow` → `{ id: \`summary-${spanId}\`, when:
+  <relative string from spanEndedAt, fallback createdAt then now if
+  unparseable — NEVER throw>, dot: 'violet', body: summaryText }`. A `model`/
+  `cli` annotation, if any, is appended into the `body` string (e.g.
+  `"<summaryText> · <model>"`) — NO JSX/meta object (the helper stays pure &
+  standalone-`tsc`-compilable; declares its own local `SpanSummaryRow` + a
+  `{id,when,dot,body}` event type, NO `@/`/`FlowTimeline` import).
+- Each event also carries an internal numeric `ts` (epoch ms from
+  `spanEndedAt` else `createdAt` else `now`) used ONLY to order the summary
+  block among ITSELF (most-recent-first); the helper returns events already
+  sorted most-recent-first and strips/keeps `ts` as an internal field that
+  `projectTimeline` does NOT use for cross-merging.
+- Total: non-array / empty / malformed-row input → `[]`; missing/empty/
+  non-string `summaryText` → that row is SKIPPED (never a blank ghost row);
+  stable order for equal `ts`; never throws.
 - `timelineProjection.tsx`'s `projectTimeline(input)` gains an optional
-  `spanSummaries: SpanSummaryRow[]` input; it calls
-  `projectSpanSummaryEvents`, concatenates the result with the existing
-  `composeTimeline`-derived `TimelineEvent[]`, and sorts the combined list by
-  `ts` so summaries interleave chronologically. `composeTimeline`/P2a output
-  and the existing stream/drift/lifecycle mapping are untouched.
+  `spanSummaries?: SpanSummaryRow[]` input; it calls
+  `projectSpanSummaryEvents(input.spanSummaries ?? [], now)` and returns
+  **`[...summaryEvents, ...composedEvents]`** — the summary block PREPENDED
+  (most-recent-first) ahead of the existing `composeTimeline`-derived events.
+  There is **NO sort of the combined list and NO reordering of the composed
+  events**; `composeTimeline`/P2a output and the existing stream/drift/
+  lifecycle mapping are byte-unchanged (the existing `.map(...)` block is
+  untouched; only an additive prepend is introduced).
 
 ## 6. Render surfaces
 
@@ -121,9 +138,11 @@ a dot + `summaries` label + the state text; `title` tooltip = `Span summaries:
 when `summaryState == null` (mirrors "null hides the segment").
 
 **FlowTimeline** (`ui/src/components/cockpit/FlowTimeline.tsx`): it already
-renders a generic `TimelineEvent[]` keyed on `dot`. The only change is
-ensuring the `'violet'` dot has a visual treatment (a minimal dot/CSS addition
-if not already styled; otherwise zero change). No structural/markup rework.
+renders a generic `TimelineEvent[]` keyed on `dot`, and the `'violet'` dot is
+**already styled** (`cockpit.css` `.tl-event .dot.violet { background:
+var(--signal-violet); }`). Therefore `FlowTimeline.tsx` and the CSS need
+**ZERO change** — confirmed at grounding time. (Ratified 2026-05-17: removed
+from the Commit-2 changed set.)
 
 **Wiring (additive only):** `App.tsx` calls `useSpanSummaries(activeTeamId)`
 alongside `useToadData`; threads `summaryStatus?.state`/`lastReasons` →
@@ -143,9 +162,14 @@ renders the honest empty/unavailable, not a fabricated value).
 
 - **TDD** `ui/test/spanSummaryProjection.test.mjs` for `projectSpanSummaryEvents`
   (the `flowCanvasModel` `tsc`-compile-then-`import` `node:test` harness): row→
-  event mapping, `'violet'` dot, relative-time from `spanEndedAt` +
-  unparseable fallback, blank-`summaryText` skipped, stable order, empty/
-  non-array/malformed → well-formed empties, never throws.
+  `{id:'summary-<spanId>', when, dot:'violet', body:summaryText(+·model)}`
+  mapping, **most-recent-first order** (newest `spanEndedAt` first), relative-
+  `when` from `spanEndedAt` + `createdAt`/`now` unparseable fallback, blank/
+  missing/non-string `summaryText` row SKIPPED, stable order for equal `ts`,
+  empty/non-array/malformed → `[]`, never throws. Plus a `projectTimeline`
+  unit assertion that the result is exactly `[...summaryEvents,
+  ...composedEvents]` (summaries prepended; composed events present, in their
+  original composeTimeline order, unmodified).
 - The hook + Statusbar + FlowTimeline + `App`/`CockpitForMe` wiring are
   view/IO-layer (no GUI e2e harness, consistent with the flow redesign):
   `cd ui && npm run typecheck` **clean (zero TS errors)** + `npm run build`
@@ -163,8 +187,9 @@ renders the honest empty/unavailable, not a fabricated value).
   `projectSpanSummaryEvents` helper) + `ui/test/spanSummaryProjection.test.mjs`
   (new, TDD).
 - **Commit 2 (render + wiring):** `ui/src/components/cockpit/timelineProjection.tsx`
-  (merge), `ui/src/components/Statusbar.tsx` (segment + props),
-  `ui/src/components/cockpit/FlowTimeline.tsx` (the `'violet'` dot, if needed),
+  (additive PREPEND — `[...summaryEvents, ...composedEvents]`),
+  `ui/src/components/Statusbar.tsx` (segment + props).
+  **`FlowTimeline.tsx` is NOT changed** (`'violet'` already styled — ratified).
   `ui/src/App.tsx` + `ui/src/components/cockpit/CockpitForMe.tsx` (additive
   threading). `typecheck` + `build` green.
 
@@ -180,14 +205,27 @@ Mandatory whole-implementation subagent review before Commit 2.
 
 ## 10. §8d grounding pins (controller re-verifies at impl time)
 
-- `callTool` signature/return-envelope handling (`ui/src/api/client.ts`); the
-  `actor` shape `useToadData` constructs for the active team (the team-scoped
-  read actor P3c-2 mirrors).
-- `useToadData`'s `loadOnce`/`AbortController`/`refresh`-nonce/error pattern
-  (the discipline `useSpanSummaries` mirrors; `useToadData` itself NOT edited).
-- The exported `TimelineEvent`/`TimelineMeta`/`TimelineDot` shape
-  (`FlowTimeline.tsx`) and `projectTimeline`'s signature/merge point
-  (`timelineProjection.tsx`); `composeTimeline` (P2a) consumed unchanged.
+- `callTool<T>` (`ui/src/api/client.ts`) returns `envelope.result` and
+  **throws `ToadApiError`** on !ok/empty → `useSpanSummaries` MUST try/catch
+  and never rethrow. `Actor = {teamId,agentId,agentName?,role?}`; `useToadData`
+  uses a module const `POLL_ACTOR = {teamId:'default',agentId:'ui-client',
+  agentName:'ui'}` and `{...POLL_ACTOR, teamId}` — `useSpanSummaries` declares
+  its OWN equivalent actor const `{teamId: activeTeamId ?? 'default',
+  agentId:'ui-client', agentName:'ui'}` (does NOT import POLL_ACTOR — sibling,
+  not coupled).
+- `useToadData`'s `loadOnce`/`AbortController`/`cancelled`-flag/`refresh`-nonce
+  `useEffect(deps:[teamId,refreshNonce])` pattern (the discipline
+  `useSpanSummaries` mirrors; `useToadData` itself byte-unchanged).
+- **The REAL exported `TimelineEvent` is `{ id:string, when:string,
+  dot:TimelineDot('clay'|'green'|'blue'|'amber'|'violet'), expanded?:true,
+  body:ReactNode }`** (`FlowTimeline.tsx`) — NOT `{time,meta?}`.
+  `'violet'` is already styled (`cockpit.css` `.tl-event .dot.violet`) — so
+  FlowTimeline needs **no** change. `projectTimeline(input):TimelineEvent[]`
+  ends with `(rows as ComposedRow[]).map(...)`; `ComposedRow`/`TimelineEvent`
+  expose NO numeric ts (`when` is a lossy relative string), and
+  `composeTimeline` (P2a) is byte-frozen → the ratified design **PREPENDS**
+  `[...summaryEvents, ...composedEvents]` (NO ts-sort, composed `.map`
+  byte-unchanged), not a chronological merge.
 - `Statusbar`'s `status-seg` markup + `statusbarTone` + the "null hides the
   segment" precedent (`Statusbar.tsx`).
 - The P3c-1 command return shapes (§2) consumed verbatim — P3c-1 NOT changed.
