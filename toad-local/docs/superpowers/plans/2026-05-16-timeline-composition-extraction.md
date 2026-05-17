@@ -497,7 +497,14 @@ test('timelineComposition module imports no node:/fs/path/os/child_process/react
     assert.ok(!/from\s+['"]node:/.test(src), `${f} imports node:`);
     assert.ok(!/from\s+['"](fs|path|os|child_process|react|react-dom)['"]/.test(src), `${f} imports a forbidden module`);
     assert.ok(!/\bprocess\.(env|cwd|platform)\b/.test(src), `${f} touches process`);
-    assert.ok(!/<[A-Za-z]/.test(src) || f === 'index.js', `${f} contains JSX-like markup`);
+    // CONTROLLER-RATIFIED (T4 verification, §8d): a raw /<[A-Za-z]/
+    // scan FALSE-POSITIVES on the legitimate JSDoc generic
+    // `Record<string,…>` in composeTimeline.js. Mirror the actual
+    // eventNarration purity precedent (import-based, no brittle bare-`<`
+    // scan): forbid JSX *element* syntax specifically — `return <`,
+    // `=> <`, or a JSX-closing `</X>` — which a pure data module never
+    // has, while `Record<string>`/`Array<{…}>` JSDoc generics are fine.
+    assert.ok(!/(return|=>)\s*<[A-Za-z]/.test(src) && !/<\/[A-Za-z]/.test(src), `${f} contains JSX element syntax`);
   }
 });
 
