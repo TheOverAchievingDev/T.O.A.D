@@ -1,0 +1,39 @@
+[
+  {
+    "name": "multi-agent + window + cap + drift>=3 + drift<3 + lifecycle create/done/move + empty",
+    "input": {
+      "now": 1747353600000,
+      "limit": 8,
+      "agents": [{ "id": "a1", "name": "dev-1" }, { "id": "a2", "name": "lead" }],
+      "agentStreams": {
+        "a1": [
+          { "id": "e1", "time": "09:00:00", "kind": "tool", "tool": "Read",  "body": "foo.ts" },
+          { "id": "e2", "time": "09:00:05", "kind": "tool", "tool": "Edit",  "body": "foo.ts" },
+          { "id": "e3", "time": "09:00:10", "kind": "tool", "tool": "Bash",  "body": "npm test" },
+          { "id": "e4", "time": "09:00:15", "kind": "output", "body": "done" },
+          { "id": "e5", "time": "09:00:20", "kind": "tool", "tool": "Grep",  "body": "TODO" }
+        ],
+        "a2": [
+          { "id": "e6", "time": "09:00:02", "kind": "thought", "body": "planning" },
+          { "id": "e7", "time": "09:00:08", "kind": "system",  "body": "compacted" }
+        ],
+        "a3-unknown": [
+          { "id": "e8", "time": "09:00:30", "kind": "tool", "tool": "Glob", "body": "*.ts" }
+        ]
+      },
+      "driftHistory": [
+        { "runId": "d1", "teamScore": 50, "createdAt": "2026-05-16T09:00:00.000Z" },
+        { "runId": "d2", "teamScore": 51, "createdAt": "2026-05-16T09:01:00.000Z" },
+        { "runId": "d3", "teamScore": 60, "createdAt": "2026-05-16T09:02:00.000Z" }
+      ],
+      "taskTransitions": [
+        { "taskId": "t1", "title": "first task", "fromStatus": null,         "toStatus": "in_progress", "agentId": "a1", "at": 1747353500000 },
+        { "taskId": "t2", "title": "second",     "fromStatus": "review",     "toStatus": "done",        "agentId": "a2", "at": 1747353550000 },
+        { "taskId": "t3", "title": "third",      "fromStatus": "in_progress","toStatus": "review",      "agentId": null, "at": 1747353560000 }
+      ]
+    }
+  },
+  { "name": "empty streams + no drift + no transitions", "input": { "now": 1747353600000, "agents": [], "agentStreams": {}, "driftHistory": [], "taskTransitions": [] } },
+  { "name": "limit smaller than candidates", "input": { "now": 1747353600000, "limit": 2, "agents": [{ "id": "a1", "name": "dev-1" }], "agentStreams": { "a1": [ { "id": "x1", "time": "09:00:00", "kind": "tool", "tool": "Read", "body": "a" }, { "id": "x2", "time": "09:00:01", "kind": "tool", "tool": "Read", "body": "b" }, { "id": "x3", "time": "09:00:02", "kind": "tool", "tool": "Read", "body": "c" } ] }, "driftHistory": [], "taskTransitions": [] } },
+  { "name": "drift-only: surfaces drift rows in the golden (>=3 emit, <3 skip, cap-2)", "input": { "now": 1747353600000, "agents": [], "agentStreams": {}, "taskTransitions": [], "driftHistory": [ { "runId": "dz1", "teamScore": 40, "createdAt": "2026-05-16T09:00:00.000Z" }, { "runId": "dz2", "teamScore": 41, "createdAt": "2026-05-16T09:01:00.000Z" }, { "runId": "dz3", "teamScore": 55, "createdAt": "2026-05-16T09:02:00.000Z" }, { "runId": "dz4", "teamScore": 70, "createdAt": "2026-05-16T09:03:00.000Z" } ] } }
+]

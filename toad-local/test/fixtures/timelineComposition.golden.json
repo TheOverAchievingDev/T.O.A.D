@@ -1,0 +1,95 @@
+[
+  {
+    "name": "multi-agent + window + cap + drift>=3 + drift<3 + lifecycle create/done/move + empty",
+    "rows": [
+      {
+        "id": "task-t3-1747353560000",
+        "when": "40s",
+        "dot": "violet",
+        "bodyText": "<span.file>t3</span> moved <b>in_progress</b> → <b>review</b>."
+      },
+      {
+        "id": "task-t2-1747353550000",
+        "when": "50s",
+        "dot": "green",
+        "bodyText": "<span.file>t2</span> done · finished by <span.agent>lead</span>."
+      },
+      {
+        "id": "task-t1-1747353500000",
+        "when": "1 min",
+        "dot": "blue",
+        "bodyText": "<span.agent>dev-1</span> created task <span.file>t1</span> — first task."
+      },
+      {
+        "id": "stream-e8-0",
+        "when": "8h ago",
+        "dot": "clay",
+        "expanded": true,
+        "bodyText": "<span.agent>a3-unknown</span> searched for <span.file>Glob</span> — *.ts"
+      },
+      {
+        "id": "stream-e5-1",
+        "when": "8h ago",
+        "dot": "clay",
+        "bodyText": "<span.agent>dev-1</span> searched for <span.file>Grep</span> — TODO"
+      },
+      {
+        "id": "stream-e4-2",
+        "when": "8h ago",
+        "dot": "green",
+        "bodyText": "<span.agent>dev-1</span> reported  — done"
+      },
+      {
+        "id": "stream-e3-3",
+        "when": "8h ago",
+        "dot": "clay",
+        "bodyText": "<span.agent>dev-1</span> ran <span.file>Bash</span> — npm test"
+      },
+      {
+        "id": "stream-e7-4",
+        "when": "8h ago",
+        "dot": "amber",
+        "bodyText": "<span.agent>lead</span> system:  — compacted"
+      }
+    ]
+  },
+  {
+    "name": "empty streams + no drift + no transitions",
+    "rows": []
+  },
+  {
+    "name": "limit smaller than candidates",
+    "rows": [
+      {
+        "id": "stream-x3-0",
+        "when": "8h ago",
+        "dot": "clay",
+        "expanded": true,
+        "bodyText": "<span.agent>dev-1</span> opened <span.file>Read</span> — c"
+      },
+      {
+        "id": "stream-x2-1",
+        "when": "8h ago",
+        "dot": "clay",
+        "bodyText": "<span.agent>dev-1</span> opened <span.file>Read</span> — b"
+      }
+    ]
+  },
+  {
+    "name": "drift-only: surfaces drift rows in the golden (>=3 emit, <3 skip, cap-2)",
+    "rows": [
+      {
+        "id": "drift-dz3",
+        "when": "just now",
+        "dot": "amber",
+        "bodyText": "Drift run completed — score moved from <b>41%</b> → <b>55%</b>."
+      },
+      {
+        "id": "drift-dz4",
+        "when": "just now",
+        "dot": "amber",
+        "bodyText": "Drift run completed — score moved from <b>55%</b> → <b>70%</b>."
+      }
+    ]
+  }
+]
