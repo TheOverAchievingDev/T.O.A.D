@@ -574,12 +574,32 @@ function ser(node) {
   if (t === FRAG) return c;
   return cls ? `<${t}.${cls}>${c}</${t}>` : `<${t}>${c}</${t}>`;
 }
-// bodyForStreamEl/driftEl/lifecycleEl: byte-copied from the capture script.
-// (Implementer pastes the exact same three functions used there.)
+// bodyForStreamEl/driftEl/lifecycleEl: byte-copied from the capture
+// script — CHARACTER-IDENTICAL (controller diffs the two embedded
+// blocks). They keep the capture script's 2-arg signatures:
+// bodyForStreamEl(agentName, entry) reading entry.kind/.tool/.body;
+// driftEl(prev, curr); lifecycleEl(t, agentLabel) reading
+// t.fromStatus/.toStatus/.taskId/.title. (Implementer pastes the exact
+// same three functions used there — no signature change.)
+//
+// renderBodyText is the transparent ComposedRow→builder-args rename
+// shim — the .js analog of the .tsx renderer's renderBody. composeTimeline
+// emits stream:{agentName,entryKind,tool,body}, drift:{prevScore,nextScore},
+// lifecycle:{taskId,title,fromStatus,toStatus,agentLabel}; the shim only
+// renames/destructures those back into the byte-identical builders'
+// original arg shapes. NO logic, NO defaulting — so it cannot mask a
+// composeTimeline divergence; the strict deepEqual still fails on any
+// field / ordering / id / when / dot / expanded drift.
 function renderBodyText(row) {
-  if (row.kind === 'stream') return ser(bodyForStreamEl(row.stream));
-  if (row.kind === 'drift') return ser(driftEl(row.drift));
-  return ser(lifecycleEl(row.lifecycle));
+  if (row.kind === 'stream') {
+    const s = row.stream;
+    return ser(bodyForStreamEl(s.agentName, { kind: s.entryKind, tool: s.tool, body: s.body }));
+  }
+  if (row.kind === 'drift') return ser(driftEl(row.drift.prevScore, row.drift.nextScore));
+  return ser(lifecycleEl(
+    { fromStatus: row.lifecycle.fromStatus, toStatus: row.lifecycle.toStatus, taskId: row.lifecycle.taskId, title: row.lifecycle.title },
+    row.lifecycle.agentLabel,
+  ));
 }
 // =================================================================
 
@@ -623,7 +643,7 @@ test('agreement: post-refactor composeTimeline path is BYTE-IDENTICAL to the fro
 });
 ```
 
-> The `bodyForStreamEl`/`driftEl`/`lifecycleEl` pasted here MUST be byte-identical to the capture script's (which were transcribed verbatim from the pristine `.tsx`). The golden was produced by `verbatim projectTimeline → these element builders → ser`; this test produces `composeTimeline → these element builders → ser`. Byte-equality ⟺ `composeTimeline` reproduced the pristine composition exactly. (`parseStreamTimestamp` is reproduced in `adaptInput` to mirror the client adapter; it is the SAME function the capture script's verbatim `projectTimeline` used internally, so `ts` is identical on both sides.)
+> The `bodyForStreamEl`/`driftEl`/`lifecycleEl` pasted here MUST be byte-identical to the capture script's (which were transcribed verbatim from the pristine `.tsx`). The golden was produced by `verbatim projectTimeline → these element builders → ser`; this test produces `composeTimeline → renderBodyText rename-shim → these (byte-identical) element builders → ser`. The shim only renames `composeTimeline`'s `ComposedRow` payload fields back into the builders' 2-arg shapes (it carries values through verbatim, no logic), so byte-equality ⟺ `composeTimeline` reproduced the pristine composition exactly. (`parseStreamTimestamp` is reproduced in `adaptInput` to mirror the client adapter; it is the SAME function the capture script's verbatim `projectTimeline` used internally, so `ts` is identical on both sides.)
 
 - [ ] **Step 2: Run — verify pass (byte-identical)**
 
