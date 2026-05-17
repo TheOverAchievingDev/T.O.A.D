@@ -42,7 +42,7 @@ useSpanSummaries(activeTeamId)            [NEW sibling hook — Approach A]
   ├─ callTool({actor(teamId), method:'span_summary_list'})  → spanSummaries: SpanSummaryRow[]
   └─ callTool({actor(teamId), method:'span_summary_status'}) → summaryStatus: SummaryStatus|null
 App.tsx  ── summaryStatus.state/lastReasons ─▶ <Statusbar>  (NEW non-clickable segment)
-         └─ spanSummaries ─▶ <CockpitForMe> ─▶ timelineProjection.projectTimeline
+         └─ spanSummaries ─▶ <CockpitScreenV2> ─▶ <CockpitForMe> ─▶ timelineProjection.projectTimeline
               └─ projectSpanSummaryEvents(rows, now)  [NEW pure helper]
                  → TimelineEvent[] (most-recent-first) PREPENDED as a
                    contiguous block before the composeTimeline rows
@@ -146,8 +146,17 @@ from the Commit-2 changed set.)
 
 **Wiring (additive only):** `App.tsx` calls `useSpanSummaries(activeTeamId)`
 alongside `useToadData`; threads `summaryStatus?.state`/`lastReasons` →
-`<Statusbar>` (the new props) and `spanSummaries` → `<CockpitForMe>`.
-`CockpitForMe.tsx` passes `spanSummaries` into the existing
+`<Statusbar>` (the new props, in App.tsx). **Ratified 2026-05-17 (controller
+pre-flight, Task-6 grounding):** App.tsx renders `<CockpitScreenV2>` (NOT
+`<CockpitForMe>` directly — the earlier draft's pin was inaccurate);
+`<CockpitForMe>` is rendered by `CockpitScreenV2.tsx`'s FOR-me branch. So
+`spanSummaries` is threaded **App.tsx → `<CockpitScreenV2>` →
+`<CockpitForMe>`**: App passes an additive `spanSummaries` prop to
+`<CockpitScreenV2>`; `CockpitScreenV2.tsx` adds an additive
+`spanSummaries?: SpanSummaryRow[]` prop and forwards it to its `<CockpitForMe>`
+(the FOR-me branch only — the developer-mode `<CockpitWithMe>` branch has no
+FlowTimeline summary and is NOT threaded). `CockpitForMe.tsx` accepts the
+additive prop and passes `spanSummaries` into the existing
 `timelineProjection` call that builds the `events` for `<FlowTimeline … />`.
 
 ## 7. Dormant→live (the non-inert bar)
@@ -190,8 +199,12 @@ renders the honest empty/unavailable, not a fabricated value).
   (additive PREPEND — `[...summaryEvents, ...composedEvents]`),
   `ui/src/components/Statusbar.tsx` (segment + props).
   **`FlowTimeline.tsx` is NOT changed** (`'violet'` already styled — ratified).
-  `ui/src/App.tsx` + `ui/src/components/cockpit/CockpitForMe.tsx` (additive
-  threading). `typecheck` + `build` green.
+  `ui/src/App.tsx` + `ui/src/components/cockpit/CockpitScreenV2.tsx` +
+  `ui/src/components/cockpit/CockpitForMe.tsx` (additive threading — ratified
+  2026-05-17: `CockpitScreenV2.tsx` is in the changed set because App renders
+  `<CockpitScreenV2>` which renders `<CockpitForMe>`). `typecheck` + `build`
+  green. (Commit 2 changed set = these **6** files incl.
+  `ui/test/spanSummaryProjection.test.mjs`'s appended prepend test.)
 
 **Commit-hygiene gate (controller-verified — the P3b-2/P3c-1 lesson):** each
 commit `git add` only its exact enumerated paths (never `-A`/`.`);
@@ -226,6 +239,16 @@ Mandatory whole-implementation subagent review before Commit 2.
   `composeTimeline` (P2a) is byte-frozen → the ratified design **PREPENDS**
   `[...summaryEvents, ...composedEvents]` (NO ts-sort, composed `.map`
   byte-unchanged), not a chronological merge.
+- **Ratified 2026-05-17 (Task-6 grounding):** `App.tsx` renders
+  `<CockpitScreenV2 …/>` (NOT `<CockpitForMe>` directly — the earlier pin was
+  wrong). `<CockpitForMe>` is rendered by `CockpitScreenV2.tsx`'s FOR-me
+  (non-`developerMode`) branch; the `developerMode` branch renders
+  `<CockpitWithMe>` (no FlowTimeline summary → not threaded). `spanSummaries`
+  threads App.tsx → `<CockpitScreenV2>` (additive prop) → `CockpitScreenV2.tsx`
+  `CockpitScreenV2Props` (additive `spanSummaries?: SpanSummaryRow[]`) →
+  `<CockpitForMe>` (FOR-me branch, additive `spanSummaries={props.spanSummaries}`)
+  → `CockpitForMe.tsx`'s existing `projectTimeline({…})` `useMemo`. `<Statusbar>`
+  IS in App.tsx (that pin was correct).
 - `Statusbar`'s `status-seg` markup + `statusbarTone` + the "null hides the
   segment" precedent (`Statusbar.tsx`).
 - The P3c-1 command return shapes (§2) consumed verbatim — P3c-1 NOT changed.

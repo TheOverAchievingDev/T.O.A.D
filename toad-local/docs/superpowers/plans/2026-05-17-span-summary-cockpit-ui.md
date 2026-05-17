@@ -4,7 +4,7 @@
 
 **Goal:** Surface the span-summary subsystem in the cockpit — the persisted plain-English summaries as a most-recent-first block prepended to the FlowTimeline, and the honest `SummaryMonitor` status as a non-clickable Statusbar segment — by consuming the P3c-1 `/api/call` commands via a dedicated `useSpanSummaries` hook.
 
-**Architecture:** A new sibling hook `useSpanSummaries(activeTeamId)` polls `span_summary_list`/`span_summary_status` through the existing `callTool` client; a pure `projectSpanSummaryEvents` helper maps rows → `TimelineEvent[]` (most-recent-first); `timelineProjection.projectTimeline` PREPENDS that block ahead of the byte-unchanged `composeTimeline`-derived events; `App.tsx` threads the status to a new `Statusbar` segment and the summaries to `CockpitForMe`. UI-only; `useToadData.ts`/`FlowTimeline.tsx`/backend all byte-unchanged.
+**Architecture:** A new sibling hook `useSpanSummaries(activeTeamId)` polls `span_summary_list`/`span_summary_status` through the existing `callTool` client; a pure `projectSpanSummaryEvents` helper maps rows → `TimelineEvent[]` (most-recent-first); `timelineProjection.projectTimeline` PREPENDS that block ahead of the byte-unchanged `composeTimeline`-derived events; `App.tsx` threads the status to a new `Statusbar` segment and the summaries via `<CockpitScreenV2>` to `CockpitForMe` (ratified 2026-05-17 — App renders `<CockpitScreenV2>`, which renders `<CockpitForMe>`). UI-only; `useToadData.ts`/`FlowTimeline.tsx`/backend all byte-unchanged.
 
 **Tech Stack:** React + TypeScript (Vite), `node:test` `.mjs` (the `flowCanvasModel` `tsc`-compile-then-import harness), the existing `callTool` API client.
 
@@ -25,8 +25,9 @@
 | `ui/src/hooks/useSpanSummaries.ts` | **Create.** Sibling poll hook over `callTool`; mirrors `useToadData`'s discipline; never throws. |
 | `ui/src/components/cockpit/timelineProjection.tsx` | **Modify (additive).** `projectTimeline` gains optional `spanSummaries`; PREPEND `[...summaryEvents, ...composedEvents]`. The `composeTimeline` call + the existing `.map(...)` byte-unchanged. |
 | `ui/src/components/Statusbar.tsx` | **Modify (additive).** 2 new optional props + one non-clickable `status-seg`. Existing props/segments byte-unchanged. |
+| `ui/src/components/cockpit/CockpitScreenV2.tsx` | **Modify (additive).** *Ratified 2026-05-17 (Task-6 grounding):* App renders `<CockpitScreenV2>` which renders `<CockpitForMe>` (FOR-me branch). `CockpitScreenV2Props` gains `spanSummaries?: SpanSummaryRow[]`; forward `spanSummaries={props.spanSummaries}` to its `<CockpitForMe>` (the developer-mode `<CockpitWithMe>` branch is NOT threaded). |
 | `ui/src/components/cockpit/CockpitForMe.tsx` | **Modify (additive).** `CockpitForMeProps` gains `spanSummaries?`; thread it into the existing `projectTimeline({...})` call + its `useMemo` deps. |
-| `ui/src/App.tsx` | **Modify (additive).** Call `useSpanSummaries(activeTeamId)`; pass new props to `<Statusbar>` and `<CockpitForMe>`. |
+| `ui/src/App.tsx` | **Modify (additive).** Call `useSpanSummaries(activeTeamId)`; pass new props to `<Statusbar>` (in App.tsx) and `spanSummaries` to `<CockpitScreenV2>` (which forwards to `<CockpitForMe>`). |
 
 **NOT changed (controller diffs EMPTY):** `ui/src/hooks/useToadData.ts` (Approach A — sibling hook), `ui/src/components/cockpit/FlowTimeline.tsx` (`'violet'` already styled at `cockpit.css:408`), `ui/src/api/client.ts`, any backend (`toad-local/src/**`), `composeTimeline`/P2a, P3c-1 transport, `ui/src-tauri/**` (Sub-project C), `scripts/test-suites.txt`, any grid-view file.
 
@@ -44,8 +45,9 @@
   ```
   `composeTimeline` is imported from `../../../../src/runtime/timelineComposition/index.js` and returns rows with only a lossy relative `when` (no numeric ts).
 - `ui/src/components/Statusbar.tsx`: `StatusbarProps` (driftScore/driftStatus?/onOpenDrift/liveRuntimes/totalRuntimes/onOpenRuntimes/costToday?/costBudgetSummary?/onOpenCosts/gitBranch?/gitClean?/gitAhead?/gitBehind?/developerMode/providerQuota?/pendingApprovals/onOpenApprovals/cursorPos?/fileEncoding?/fileLanguage?). `function statusbarTone(s:'healthy'|'watch'|'breach'){ if(s==='breach')return 'bad'; if(s==='watch')return 'warn'; return ''; }`. Non-clickable segments use `<div className="status-seg" title=…>` (git seg, provider-quota seg); clickable use `<button className="status-seg">`. Pattern for a tone-colored dot: `<span className={\`dot${tone?' pulse':''}\`} style={tone?undefined:{background:'var(--signal-green)'}} />`.
-- `ui/src/App.tsx`: `const { team, tasks, runtimes, messages, loading, error, liveSource, refresh, agentStreams } = useToadData(activeTeamId);` (line 84). `<Statusbar driftScore=… driftStatus=… onOpenDrift=… … pendingApprovals=… onOpenApprovals=… developerMode=… />` (~1172). `App` renders exactly one `<CockpitForMe …/>`.
-- `ui/src/components/cockpit/CockpitForMe.tsx`: `export interface CockpitForMeProps { … tasks:UiTask[]; … agentStreams?:Record<string,StreamEntry[]>; … }`; destructures `agentStreams = {}` (~122); `const timelineEvents: TimelineEvent[] = useMemo(() => projectTimeline({ agentStreams, … }), [agentStreams, team.members, drift?.history, taskTransitions, selectedTask])` (~313-323); `<FlowTimeline events={timelineEvents} hero={heroNode} />` (~691).
+- `ui/src/App.tsx`: `const { team, tasks, runtimes, messages, loading, error, liveSource, refresh, agentStreams } = useToadData(activeTeamId);` (line 84). `<Statusbar driftScore=… driftStatus=… onOpenDrift=… … pendingApprovals=… onOpenApprovals=… developerMode=… />` at **lines 1172-1195** (closes `/>` at 1195) — Statusbar IS in App.tsx. **Ratified 2026-05-17 (Task-6 grounding — the earlier "App renders exactly one `<CockpitForMe/>`" pin was WRONG):** App.tsx renders `<CockpitScreenV2 …/>` at **lines 1008-1065** (closes `/>` at 1065; the existing props end `…onSwapAgentProvider={…}}` then `/>`). `<CockpitForMe>` is NOT in App.tsx.
+- `ui/src/components/cockpit/CockpitScreenV2.tsx`: `import { CockpitForMe } from './CockpitForMe';` (line 6, last import is `import { CockpitWithMe } from './CockpitWithMe';` line 7). `export interface CockpitScreenV2Props { team; tasks; runtimes; messages; agentStreams?; actor?; drift; developerMode; …; onMessageSent?; }` (lines 28-73, closes `}` at 73). `export function CockpitScreenV2(props: CockpitScreenV2Props) {` — `if (props.developerMode) return <CockpitWithMe …/>;` (lines 76-94), else `return ( <CockpitForMe team={props.team} tasks={props.tasks} runtimes={props.runtimes} messages={props.messages} agentStreams={props.agentStreams} drift={props.drift} reopenContext={props.reopenContext} onResumeTeam={props.onResumeTeam} onPauseTeam={props.onPauseTeam} onSwapAgentProvider={props.onSwapAgentProvider} onCreateTask={props.onCreateTask} onRefreshDrift={props.onRefreshDrift} driftRefreshing={props.driftRefreshing} onOpenTaskDetail={props.onOpenTaskDetail} onOpenDriftScreen={props.onOpenDriftScreen} /> );` (lines 95-113; the `<CockpitForMe` opens line 96, closes `/>` line 112).
+- `ui/src/components/cockpit/CockpitForMe.tsx`: `export interface CockpitForMeProps { team:Team; tasks:UiTask[]; runtimes:Runtime[]; messages?:Message[]; agentStreams?:Record<string,StreamEntry[]>; drift:DriftRunResult|null; …; onOpenDriftScreen?:()=>void; }` (lines 62-100, closes `}` at 100); `export function CockpitForMe({ team, tasks, runtimes, messages = [], agentStreams = {}, drift, reopenContext = null, … onOpenTaskDetail, onOpenDriftScreen, }: CockpitForMeProps) {` (destructure lines 117-133, `agentStreams = {}` at 122, closes `}: CockpitForMeProps) {` at 133); `const timelineEvents: TimelineEvent[] = useMemo(\n    () =>\n      projectTimeline({\n        agentStreams,\n        agents: team.members,\n        driftHistory: drift?.history,\n        taskTransitions,\n        activeTask: selectedTask,\n        limit: 8,\n      }),\n    [agentStreams, team.members, drift?.history, taskTransitions, selectedTask],\n  );` (lines 313-324); `<FlowTimeline events={timelineEvents} hero={heroNode} />` (~691).
 - The P3c-1 commands (consumed verbatim): `span_summary_list` → `{ summaries: SpanSummaryRow[] }` (`SpanSummaryRow = {spanId,teamId,runtimeId,agentId,sessionId,summaryText,model,cli,spanStartedAt,spanEndedAt,rowCount,tokens,createdAt}`, oldest-first); `span_summary_status` → `{ state:'idle'|'summarizing'|'rate-limited'|'degraded'|'unavailable', lastRunAt, lastDurationMs, teamsPolled, summarizedCount, degradedCount, skippedRateLimited, lastReasons:string[] }`.
 - ui `.mjs` tests run via `cd ui && node --test test/X.test.mjs` (the `flowCanvasModel.test.mjs` harness: `mkdtemp` → `spawnSync(node, [node_modules/typescript/bin/tsc, source, --module NodeNext --moduleResolution NodeNext --target ES2022 --outDir tmp --skipLibCheck --strict])` → dynamic `import`). NOT in `scripts/test-suites.txt`; backend root stays 1564.
 
@@ -602,71 +604,126 @@ Expected: zero TS errors. (No test — Statusbar is presentational; covered by t
 
 ---
 
-## Task 6: `App.tsx` + `CockpitForMe.tsx` additive threading
+## Task 6: `App.tsx` + `CockpitScreenV2.tsx` + `CockpitForMe.tsx` additive threading
+
+> **Ratified 2026-05-17 (controller pre-flight, Task-6 grounding):** the earlier
+> draft assumed App.tsx renders `<CockpitForMe>` directly. It does NOT — App.tsx
+> renders `<CockpitScreenV2>` (lines 1008-1065), and `<CockpitForMe>` is rendered
+> by `CockpitScreenV2.tsx`'s FOR-me (non-`developerMode`) branch (line 96). So
+> `spanSummaries` threads **App.tsx → `<CockpitScreenV2>` → `<CockpitForMe>`**
+> (3 files). `<Statusbar>` IS in App.tsx (unchanged from the original plan).
 
 **Files:**
 - Modify: `ui/src/App.tsx`
+- Modify: `ui/src/components/cockpit/CockpitScreenV2.tsx`
 - Modify: `ui/src/components/cockpit/CockpitForMe.tsx`
 
-- [ ] **Step 1: `CockpitForMe` — accept + thread `spanSummaries`**
+All edits are ADDITIVE — keep every existing import/prop/arg/dep byte-unchanged; only insert the new ones shown.
 
-In `ui/src/components/cockpit/CockpitForMe.tsx`, add the import (after existing imports):
+- [ ] **Step 1: `CockpitForMe.tsx` — accept + thread `spanSummaries` into `projectTimeline`**
+
+Add the import after the existing imports (top of file):
 
 ```ts
 import type { SpanSummaryRow } from '@/hooks/useSpanSummaries';
 ```
 
-In `export interface CockpitForMeProps { … }`, add (additive):
+In `export interface CockpitForMeProps { … }` (lines 62-100), add this field before the closing `}` (e.g. right after `onOpenDriftScreen?: () => void;`):
 
 ```ts
   spanSummaries?: SpanSummaryRow[];
 ```
 
-Destructure it in the component with a default (alongside `agentStreams = {}`):
+In the `export function CockpitForMe({ … }: CockpitForMeProps) {` destructure (lines 117-133), add this entry with a default right after `agentStreams = {},` (line 122):
 
 ```ts
   spanSummaries = [],
 ```
 
-In the existing `const timelineEvents: TimelineEvent[] = useMemo(() => projectTimeline({ agentStreams, … }), [agentStreams, team.members, drift?.history, taskTransitions, selectedTask])`, add `spanSummaries` to BOTH the `projectTimeline({ … })` argument object AND the `useMemo` dependency array:
+Replace the existing `timelineEvents` `useMemo` (lines 313-324) EXACTLY:
 
 ```ts
   const timelineEvents: TimelineEvent[] = useMemo(
-    () => projectTimeline({ agentStreams, /* …existing args… */ spanSummaries }),
+    () =>
+      projectTimeline({
+        agentStreams,
+        agents: team.members,
+        driftHistory: drift?.history,
+        taskTransitions,
+        activeTask: selectedTask,
+        limit: 8,
+      }),
+    [agentStreams, team.members, drift?.history, taskTransitions, selectedTask],
+  );
+```
+
+with (additive — `spanSummaries` added to the `projectTimeline({…})` arg object AND the dep array; every existing arg/dep byte-unchanged):
+
+```ts
+  const timelineEvents: TimelineEvent[] = useMemo(
+    () =>
+      projectTimeline({
+        agentStreams,
+        agents: team.members,
+        driftHistory: drift?.history,
+        taskTransitions,
+        activeTask: selectedTask,
+        limit: 8,
+        spanSummaries,
+      }),
     [agentStreams, team.members, drift?.history, taskTransitions, selectedTask, spanSummaries],
   );
 ```
 
-(Keep every existing argument and existing dep exactly as-is; only add the one new arg + the one new dep. Read the real lines ~313-323 and insert `spanSummaries` without altering the others.)
+- [ ] **Step 2: `CockpitScreenV2.tsx` — accept + forward `spanSummaries` to `<CockpitForMe>`**
 
-- [ ] **Step 2: `App.tsx` — call the hook + thread the props**
+Add the import after the existing imports (the last import is `import { CockpitWithMe } from './CockpitWithMe';` on line 7):
 
-In `ui/src/App.tsx`, add the import (after existing imports):
+```ts
+import type { SpanSummaryRow } from '@/hooks/useSpanSummaries';
+```
+
+In `export interface CockpitScreenV2Props { … }` (lines 28-73), add this field before the closing `}` (e.g. right after `onMessageSent?: () => void;`):
+
+```ts
+  /** P3c-2 — persisted span summaries, forwarded to <CockpitForMe>. */
+  spanSummaries?: SpanSummaryRow[];
+```
+
+In the FOR-me branch's `<CockpitForMe … />` element (lines 96-112), add this prop additively (e.g. right after `agentStreams={props.agentStreams}`); do NOT add anything to the `developerMode` `<CockpitWithMe>` branch:
+
+```tsx
+      spanSummaries={props.spanSummaries}
+```
+
+- [ ] **Step 3: `App.tsx` — call the hook + thread the props**
+
+Add the import after the existing imports (top of file; `CockpitScreenV2` is already imported at line 6):
 
 ```ts
 import { useSpanSummaries } from '@/hooks/useSpanSummaries';
 ```
 
-Immediately AFTER the existing line `const { team, tasks, runtimes, messages, loading, error, liveSource, refresh, agentStreams } = useToadData(activeTeamId);`, add:
+Immediately AFTER the existing line 84 `const { team, tasks, runtimes, messages, loading, error, liveSource, refresh, agentStreams } = useToadData(activeTeamId);`, add:
 
 ```ts
   const { spanSummaries, summaryStatus } = useSpanSummaries(activeTeamId);
 ```
 
-On the existing `<Statusbar … />` element, add the two new props (additive — keep all existing props):
+On the existing `<CockpitScreenV2 … />` element (lines 1008-1065), add the one new prop additively (e.g. right after `agentStreams={agentStreams}` on line 1013) — keep all existing props:
+
+```tsx
+              spanSummaries={spanSummaries}
+```
+
+On the existing `<Statusbar … />` element (lines 1172-1195), add the two new props additively (e.g. right after `onOpenApprovals={() => setTweak('showApprovals', true)}` line 1194) — keep all existing props:
 
 ```tsx
         summaryState={summaryStatus?.state ?? null}
         summaryReasons={summaryStatus?.lastReasons ?? []}
 ```
 
-On the existing single `<CockpitForMe … />` element, add the one new prop (additive):
-
-```tsx
-        spanSummaries={spanSummaries}
-```
-
-- [ ] **Step 3: Typecheck + build**
+- [ ] **Step 4: Typecheck + build**
 
 Run: `cd /c/Project-TOAD/toad-local/ui && npm run typecheck && npm run build`
 Expected: zero TS errors; build succeeds.
@@ -689,10 +746,10 @@ Run: `cd /c/Project-TOAD/toad-local && node scripts/run-test-suites.mjs` → exi
 - [ ] **Step 3: Commit-hygiene gate + Commit 2**
 
 ```bash
-git -C /c/Project-TOAD add toad-local/ui/src/components/cockpit/timelineProjection.tsx toad-local/ui/test/spanSummaryProjection.test.mjs toad-local/ui/src/components/Statusbar.tsx toad-local/ui/src/components/cockpit/CockpitForMe.tsx toad-local/ui/src/App.tsx
+git -C /c/Project-TOAD add toad-local/ui/src/components/cockpit/timelineProjection.tsx toad-local/ui/test/spanSummaryProjection.test.mjs toad-local/ui/src/components/Statusbar.tsx toad-local/ui/src/components/cockpit/CockpitScreenV2.tsx toad-local/ui/src/components/cockpit/CockpitForMe.tsx toad-local/ui/src/App.tsx
 git -C /c/Project-TOAD diff --cached --name-only
 ```
-Expected: EXACTLY those 5 paths. Confirm NONE of: `toad-local/ui/src-tauri/**`, `toad-local/src/**`, `toad-local/.mockup-symphony-flow/**`, `useToadData.ts`, `FlowTimeline.tsx`, any grid-view file.
+Expected: EXACTLY those **6** paths (ratified 2026-05-17 — `CockpitScreenV2.tsx` added: App→`<CockpitScreenV2>`→`<CockpitForMe>`). Confirm NONE of: `toad-local/ui/src-tauri/**`, `toad-local/src/**`, `toad-local/.mockup-symphony-flow/**`, `useToadData.ts`, `FlowTimeline.tsx`, any grid-view file.
 
 ```bash
 git -C /c/Project-TOAD -c commit.gpgsign=false commit -m "feat(cockpit): surface span summaries in the timeline + honest Statusbar segment (P3c-2, Commit 2)
@@ -713,11 +770,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 - [ ] **Step 4: Post-commit verify**
 
 ```bash
-git -C /c/Project-TOAD show --stat HEAD | tail -n 8        # EXACTLY 5 files
+git -C /c/Project-TOAD show --stat HEAD | tail -n 9        # EXACTLY 6 files
 git -C /c/Project-TOAD diff --stat c1d72ed HEAD -- toad-local/src toad-local/ui/src-tauri toad-local/ui/src/hooks/useToadData.ts toad-local/ui/src/components/cockpit/FlowTimeline.tsx toad-local/ui/src/api/client.ts toad-local/scripts/test-suites.txt   # EXPECT EMPTY
-git -C /c/Project-TOAD log --oneline -3                     # HEAD=Commit2, HEAD~1=Commit1, HEAD~2=c1d72ed (ratify)
+git -C /c/Project-TOAD log --oneline -5                     # HEAD=Commit2, HEAD~1=Commit1, then the plan/ratify chain
 ```
-Expected: HEAD stat exactly 5 files; the out-of-scope `diff --stat` EMPTY (backend / Sub-project-C / `useToadData` / `FlowTimeline` / client / test-suites all untouched); log chain correct. Controller re-confirms root 1564 unchanged.
+Expected: HEAD stat exactly **6** files (incl. `CockpitScreenV2.tsx`); the out-of-scope `diff --stat` EMPTY (backend / Sub-project-C / `useToadData` / `FlowTimeline` / client / test-suites all untouched — note `CockpitScreenV2.tsx` is NOT in the out-of-scope set, it is an intended Commit-2 file); log chain correct (Commit 2 → Commit 1 `3e8f042` → plan `27a8ab0` → the Task-6 ratify → spec ratify `c1d72ed`). Controller re-confirms root 1564 unchanged.
 
 ---
 
@@ -728,7 +785,7 @@ Expected: HEAD stat exactly 5 files; the out-of-scope `diff --stat` EMPTY (backe
 - §5 pure `projectSpanSummaryEvents` (own types/no-`@/`; `{id,when,dot:'violet',body:string}`; relative-when + createdAt/now fallback; blank-text skip; newest-first; stable ties; total/never-throws) → Task 1 (full code + TDD). ✓
 - §5 `projectTimeline` additive PREPEND `[...summaryEvents, ...composedEvents]`, composed `.map` byte-unchanged → Task 4. ✓
 - §6 Statusbar non-clickable segment (tone map, tooltip+lastReasons, null-hides, additive) + FlowTimeline ZERO change (`'violet'` already styled) → Task 5 (+ File Structure note). ✓
-- §6 App/CockpitForMe additive threading → Task 6. ✓
+- §6 App→CockpitScreenV2→CockpitForMe additive threading (ratified 2026-05-17: App renders `<CockpitScreenV2>`, not `<CockpitForMe>` directly; 3 files, all additive) → Task 6. ✓
 - §7 dormant→live → Task 7 review. §8 testing (TDD .mjs; typecheck/build; ui suites green; root 1564; not in test-suites.txt) → Tasks 1,3,7. §9 2 ordered commits + hygiene gate + out-of-scope EMPTY (incl. useToadData byte-unchanged) → Tasks 3,7. §10 §8d pins → File-Structure grounded-facts + Tasks. ✓
 
 **2. Placeholder scan:** No "TBD"/"handle edge cases"/"similar to". Every code step shows complete copy-paste content; every run step has the exact command + expected output. The only "read the real lines and insert without altering others" instruction (Task 6 Step 1, the `projectTimeline` useMemo) is a bounded additive-edit directive with the exact added arg/dep shown — not a placeholder (the surrounding existing args are intentionally not transcribed to avoid drift; the implementer preserves them verbatim).
