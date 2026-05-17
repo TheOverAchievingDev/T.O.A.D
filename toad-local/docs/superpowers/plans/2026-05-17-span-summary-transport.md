@@ -31,7 +31,7 @@
 **Grounded facts (verified against shipped code):**
 - `command-contract.js`: `COMMANDS = Object.freeze({ … GITHUB_CREATE_REPOSITORY: 'github_create_repository', });` ends at line 96 then `});` at 97. `MUTATING_COMMANDS` (99–153) does NOT include read/list commands; `commandRequiresIdempotency(c) = MUTATING_COMMANDS.includes(c)`.
 - `roleAuthority.js`: `COMMON_READ_TOOLS = Object.freeze([ 'task_list', … 'plugin_resource_list', ])` lines 18–50; spread into `architect/developer/reviewer/tester`; `lead`/`human` are `'*'`. `assertRoleCanCallTool({role,toolName})` throws `role authority: <role> cannot call <tool>` if not allowed; missing role → `human` (wildcard).
-- `localToolFacade.js`: `execute(command)` (line 206): `commandName=requireString(...)`; idempotency gate; `actor=normalizeActor(command.actor)` (211); `assertRoleCanCallTool({role:actor.role,toolName:commandName})` (213); `args = command.args && typeof command.args==='object' ? command.args : {}` (218); `switch(commandName){ case COMMANDS.X: return this.#handler(actor,args); }`; `default:` at 423. `#approvalList(actor)` (1159): `if (!this.readModel || typeof this.readModel.listApprovals !== 'function') { return { approvals: [] }; } return { approvals: this.readModel.listApprovals({ teamId: actor.teamId }) };`. `this.driftEngine = driftEngine && typeof driftEngine.runDrift==='function' ? driftEngine : null;` (187) — instance-field default-null precedent. `import { COMMANDS, commandRequiresIdempotency } from '../commands/command-contract.js';` (line 4).
+- `localToolFacade.js`: `execute(command)` (line 206): `commandName=requireString(...)`; idempotency gate; `actor=normalizeActor(command.actor)` (~243); `assertRoleCanCallTool({role:actor.role,toolName:commandName})`; `args = command.args && typeof command.args==='object' ? command.args : {}`; `switch(commandName){ case COMMANDS.X: return this.#handler(actor,args); }`; `default:` throws unknown-command. **`normalizeActor` (`localToolFacade.js:4332`) does `teamId: requireString(actor.teamId,'actor.teamId')` → THROWS on a missing/empty teamId, and it runs BEFORE the switch** — hence the ratified Task-3 early-dispatch (3c) before `normalizeActor`. `#approvalList(actor)` (1159): `if (!this.readModel || typeof this.readModel.listApprovals !== 'function') { return { approvals: [] }; } return { approvals: this.readModel.listApprovals({ teamId: actor.teamId }) };`. `this.driftEngine = driftEngine && typeof driftEngine.runDrift==='function' ? driftEngine : null;` (187) — instance-field default-null precedent. `import { COMMANDS, commandRequiresIdempotency } from '../commands/command-contract.js';` (line 4).
 - `dev-api-server.mjs`: line 107 (inside `if (runtime.toolFacade)` inside `if (driftDb)`): `runtime.toolFacade.driftEngine = driftEngine;`. `summaryMonitor = new SummaryMonitor({...})` ~176; `summaryMonitor.start();` ~203 (same `if (driftDb)` block).
 - P3b-2 `summaryMonitor.getStatus()` → `{state,lastRunAt,lastDurationMs,teamsPolled,summarizedCount,degradedCount,skippedRateLimited,lastReasons}`. P3a `readModel.listSpanSummaries({teamId,runtimeId})` → rows `{spanId,teamId,runtimeId,agentId,sessionId,summaryText,model,cli,spanStartedAt,spanEndedAt,rowCount,tokens,createdAt}` (consumed verbatim; unchanged).
 - Test harness (`test/localToolFacade.test.js`): `new LocalToolFacade({ broker, taskBoard, runtimeRegistry, approvalBroker, readModel })`; `facade.execute({ commandName: COMMANDS.X, actor: { teamId, agentId }, args })`. `test/roleAuthority.test.js`: `import { ROLE_TOOLS, KNOWN_ROLES, assertRoleCanCallTool } from '../src/security/roleAuthority.js'; test(...)`.
@@ -228,7 +228,7 @@ test('span_summary_status: ignores args, never throws', () => {
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `cd /c/Project-TOAD/toad-local && node --no-warnings --test test/spanSummaryTransport.test.js`
-Expected: FAIL — the new cases throw (the `switch` has no `SPAN_SUMMARY_*` case → falls to `default:` which throws an unknown-command error). The Task-1 contract test still passes. Confirm the failures are "unknown command"/no-handler (the right reason).
+Expected: FAIL — before the impl, the team-ful cases hit the `switch`'s `default:` (unknown-command throw) and the teamless-actor cases throw at `normalizeActor` (`actor.teamId must be a non-empty string`). Either is the right red reason (no handler / no early-dispatch yet). The Task-1 contract test still passes. Confirm it is one of those two reasons, NOT a facade-construction error.
 
 - [ ] **Step 3: Add the const, the instance field, the cases, and the handlers**
 
@@ -261,7 +261,33 @@ const SPAN_SUMMARY_UNAVAILABLE = Object.freeze({
     this.summaryMonitor = null;
 ```
 
-3c. In `execute()`'s `switch`, immediately AFTER the line `      case COMMANDS.HEALTH_STATUS:\n        return this.#healthStatus(actor, args);`, add:
+3c. **(RATIFIED 2026-05-17 — grounded correction.)** `execute()` calls
+`const actor = normalizeActor(command.actor)` BEFORE the `switch`, and
+`normalizeActor` (`localToolFacade.js:4332`) throws via
+`requireString(actor.teamId, 'actor.teamId')` on a missing/empty `teamId`. A
+handler guard alone therefore cannot honor the spec's never-throws-on-teamless
+contract (especially for the team-agnostic `span_summary_status`). Add an
+**early-dispatch block** in `execute()`, immediately AFTER the idempotency
+check (`if (commandRequiresIdempotency(commandName)) { … }`) and BEFORE
+`const actor = normalizeActor(command.actor);`:
+
+```js
+    // P3c-1 poll-safe reads: dispatch before strict normalizeActor so that
+    // cockpit polling with a missing/empty teamId never throws. The handlers
+    // themselves guard for incomplete actors and return safe empty envelopes.
+    if (
+      commandName === COMMANDS.SPAN_SUMMARY_LIST ||
+      commandName === COMMANDS.SPAN_SUMMARY_STATUS
+    ) {
+      assertRoleCanCallTool({ role: command.actor?.role, toolName: commandName });
+      const args = command.args && typeof command.args === 'object' ? command.args : {};
+      if (commandName === COMMANDS.SPAN_SUMMARY_LIST) return this.#spanSummaryList(command.actor, args);
+      return this.#spanSummaryStatus();
+    }
+```
+
+3c-fallback. ALSO add the verbatim cases in `execute()`'s `switch`, immediately
+AFTER the line `      case COMMANDS.HEALTH_STATUS:\n        return this.#healthStatus(actor, args);`, as a defensive fallback (harmless dead path while the early-dispatch intercepts these commands):
 
 ```js
       case COMMANDS.SPAN_SUMMARY_LIST:
@@ -269,6 +295,13 @@ const SPAN_SUMMARY_UNAVAILABLE = Object.freeze({
       case COMMANDS.SPAN_SUMMARY_STATUS:
         return this.#spanSummaryStatus();
 ```
+
+Security rationale (ratified): idempotency is a no-op for these non-mutating
+commands (absent from `MUTATING_COMMANDS`); `assertRoleCanCallTool` is still
+enforced with the same effective role the normal path uses (both commands are
+in `COMMON_READ_TOOLS`, allowed for every role); the bypass is scoped to
+exactly these two `commandName ===` checks so `normalizeActor` stays strict
+for every other command; the handlers guard the raw actor.
 
 3d. Immediately AFTER the `#approvalList(actor) { … }` method (the one returning `{ approvals }`), add the two private handlers:
 

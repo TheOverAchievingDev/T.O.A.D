@@ -125,6 +125,56 @@ defaults to `null` (an instance field, like `this.driftEngine` defaults null)
 and is late-injected by `dev-api-server.mjs` exactly as `driftEngine` is. No
 constructor-signature churn.
 
+### `execute()` dispatch placement (RATIFIED 2026-05-17)
+
+**Grounded correction (controller pre-emptive ratification — the P3b-2
+precedent):** the original §4 prescribed only the guarded handler, assuming the
+handler's `actor.teamId` guard alone delivers "never throws on a teamless
+poll". Grounding the real shipped code showed this is unreachable as
+prescribed: `localToolFacade.execute()` calls `normalizeActor(command.actor)`
+**before** the `switch`, and `normalizeActor`
+(`localToolFacade.js:4332`) does `teamId: requireString(actor.teamId,
+'actor.teamId')` — it **throws `TypeError`** on a missing/empty `teamId`
+before any handler runs. So the operator-approved never-throws-on-teamless
+requirement (and, more fundamentally, the team-agnostic nature of
+`span_summary_status` — a process-global status read must not require a team
+context) cannot be honored by a handler guard alone.
+
+**Ratified design:** `execute()` dispatches `span_summary_list` /
+`span_summary_status` via an **early-dispatch block placed AFTER
+`commandName = requireString(command.commandName)` and the idempotency check,
+but BEFORE `const actor = normalizeActor(command.actor)`**:
+
+```
+if (commandName === COMMANDS.SPAN_SUMMARY_LIST ||
+    commandName === COMMANDS.SPAN_SUMMARY_STATUS) {
+  assertRoleCanCallTool({ role: command.actor?.role, toolName: commandName });
+  const args = command.args && typeof command.args === 'object' ? command.args : {};
+  if (commandName === COMMANDS.SPAN_SUMMARY_LIST) return this.#spanSummaryList(command.actor, args);
+  return this.#spanSummaryStatus();
+}
+```
+
+The verbatim `case COMMANDS.SPAN_SUMMARY_LIST/SPAN_SUMMARY_STATUS:` entries are
+ALSO kept in the `switch` as a defensive fallback (harmless dead path while the
+early-dispatch intercepts them).
+
+**Security analysis (why this is sound, not a bypass):** (a) idempotency:
+both commands are non-mutating and absent from `MUTATING_COMMANDS`, so the
+idempotency gate is a no-op for them — running before it is irrelevant. (b)
+role authority: `assertRoleCanCallTool` is still called with the same role the
+normal path would use — `normalizeActor` only copies `role` when it is a
+non-empty string (else omits it) and `assertRoleCanCallTool` treats
+missing/empty role as `human` (wildcard); both commands are in
+`COMMON_READ_TOOLS` (allowed for every role), so the early-path role check is
+functionally identical to the normal path. (c) scope: the bypass applies to
+EXACTLY these two read commands (explicit `commandName ===` checks);
+`normalizeActor` remains strict for every other command (a teamless
+`approval_list` etc. still throws — globally unchanged). (d) the handlers
+receive the raw (possibly teamless/null) actor and their own guards return the
+safe empty envelope / the frozen unavailable status. Controller independently
+verified all four points by driving the real `execute()` seam.
+
 ### roleAuthority
 `assertRoleCanCallTool` (called by `execute()`) throws unless the command is in
 the actor role's allowlist; per-role lists spread the frozen
@@ -204,6 +254,14 @@ whole-implementation subagent review before the commit.
 - `approval_list` handler shape + `actor.teamId` use + the `if (!this.readModel
   || typeof this.readModel.listX !== 'function')` guard idiom.
 - `commandRequiresIdempotency` excludes both new commands (mirror `task_list`).
+- **`normalizeActor` (`localToolFacade.js:4332`) throws via
+  `requireString(actor.teamId)` on a missing/empty `teamId`, and it runs in
+  `execute()` BEFORE the `switch`** — hence the ratified §4 early-dispatch
+  (before `normalizeActor`, after `commandName`/idempotency, preserving
+  `assertRoleCanCallTool`) is required to honor the never-throws-on-teamless
+  contract. Controller drives the real `execute()` seam to confirm both
+  commands never throw teamlessly while role-auth + every other command path
+  stay unchanged.
 - `COMMON_READ_TOOLS` is the correct frozen allowlist in
   `src/security/roleAuthority.js`; `test/roleAuthority.test.js` asserts it.
 - The exact `dev-api-server.mjs` injection site mirrors line 107
