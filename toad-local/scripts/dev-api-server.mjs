@@ -12,6 +12,10 @@ import { SqlitePluginJobs } from '../src/plugins/pluginJobs.js';
 import { SqlitePluginResources } from '../src/plugins/pluginResources.js';
 import { DriftMonitor } from '../src/drift/driftMonitor.js';
 import { sweepZombies } from '../src/runtime/spawnLedger.js';
+import { SummaryMonitor } from '../src/runtime/spanSummary/summaryMonitor.js';
+import { summarizePendingSpans } from '../src/runtime/spanSummary/summarizePendingSpans.js';
+import { runSpanSummary } from '../src/runtime/spanSummary/runSpanSummary.js';
+import { SummaryRateLimiter } from '../src/runtime/spanSummary/summaryRateLimiter.js';
 
 // Project resolution:
 //   - TOAD_PROJECT_CWD env (set by the Tauri shell when the user picks a
@@ -58,6 +62,7 @@ const driftDb =
   runtime.taskBoard?.db ||
   null;
 let driftMonitor = null;
+let summaryMonitor = null;
 let foundryRuntime = null;
 if (driftDb) {
   const driftStore = new SqliteDriftStore({ db: driftDb });
@@ -150,6 +155,52 @@ if (driftDb) {
     // eslint-disable-next-line no-console
     console.warn('[drift] taskBoard does not support subscribe() — only the 60s tick will drive drift');
   }
+
+  // §-span-summary wiring (Readability Layer-2 P3b-2). First production
+  // caller of the P3b-1 engine. Mirrors the drift-monitor block above:
+  // periodic SummaryMonitor over live teams, honest degradation, the
+  // engine internals untouched. driftSettings is the same outer-scoped
+  // snapshot drift's engine consumes (the full effective settings, or
+  // undefined if the store was unavailable/threw); no second readEffective().
+  const sumCfg = (driftSettings && typeof driftSettings === 'object' && driftSettings.summarizer) || {};
+  const sumIntervalMs =
+    Number.isFinite(sumCfg.intervalMs) && sumCfg.intervalMs > 0
+      ? sumCfg.intervalMs
+      : undefined; // undefined → SummaryMonitor's 5-min default
+  const summaryLimiter = new SummaryRateLimiter({
+    maxPerHour:
+      Number.isFinite(sumCfg.maxPerHour) && sumCfg.maxPerHour > 0
+        ? sumCfg.maxPerHour
+        : 20,
+  });
+  summaryMonitor = new SummaryMonitor({
+    intervalMs: sumIntervalMs,
+    listLiveTeams: () => {
+      const runtimes = runtime.runtimeRegistry?.listRuntimes?.() ?? [];
+      const liveTeams = new Set(
+        runtimes
+          .filter((r) => r && (r.status === 'running' || r.status === 'live' || r.status === 'starting'))
+          .map((r) => r.teamId)
+          .filter((tid) => typeof tid === 'string' && tid.length > 0)
+      );
+      return Array.from(liveTeams);
+    },
+    resolveLeadProviderId: (teamId) =>
+      runtime.teamConfigRegistry?.get?.(teamId)?.lead?.providerId ?? 'anthropic',
+    summarize: ({ teamId, leadProviderId }) =>
+      summarizePendingSpans({
+        teamId,
+        leadProviderId,
+        listAwaiting: (a) => runtime.listSpansAwaitingSummary(a),
+        appendSummary: (s) => runtime.spanSummaryStore.appendSummary(s),
+        runImpl: runSpanSummary,
+        limiter: summaryLimiter,
+        settings: driftSettings,
+        cwd: projectCwd || undefined,
+        isolateHome: false,
+      }),
+  });
+  summaryMonitor.start();
 } else {
   // eslint-disable-next-line no-console
   console.warn('[drift] no SQLite handle available on runtime — drift engine disabled');
@@ -212,6 +263,9 @@ console.log(`Symphony AI install dir at ${installDir} (agents denied access via 
 async function shutdown() {
   if (driftMonitor && typeof driftMonitor.stop === 'function') {
     driftMonitor.stop();
+  }
+  if (summaryMonitor && typeof summaryMonitor.stop === 'function') {
+    summaryMonitor.stop();
   }
   await runtime.close();
   process.exit(0);
