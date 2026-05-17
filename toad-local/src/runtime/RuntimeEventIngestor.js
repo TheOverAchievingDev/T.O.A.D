@@ -20,6 +20,7 @@ export class RuntimeEventIngestor {
     runtimeRegistry = null,
     identityValidator = null,
     compactionHandler = null,
+    compactionTrigger = null,
     eventBus = null,
     sideEffectLog = null,
   }) {
@@ -33,6 +34,7 @@ export class RuntimeEventIngestor {
     this.allowedToolNames = new Set(allowedToolNames);
     this.adapters = adapters;
     this.compactionHandler = compactionHandler;
+    this.compactionTrigger = compactionTrigger;
     this.eventBus = eventBus;
     this.sideEffectLog = sideEffectLog;
     this.identityValidator =
@@ -198,14 +200,15 @@ export class RuntimeEventIngestor {
   }
 
   #dispatchCompactionLifecycle(event) {
-    if (!this.compactionHandler) return;
     if (event.type === 'compact_boundary') {
-      this.compactionHandler.onCompactBoundary(event);
+      if (this.compactionHandler) this.compactionHandler.onCompactBoundary(event);
+      if (this.compactionTrigger) this.compactionTrigger.onCompactBoundary(event);
     } else if (event.type === 'turn_completed') {
-      // Fire-and-forget — the handler manages its own error policy
-      void this.compactionHandler.onTurnCompleted(event);
+      if (this.compactionHandler) void this.compactionHandler.onTurnCompleted(event);
+      if (this.compactionTrigger) void this.compactionTrigger.onTurnCompleted(event);
     } else if (event.type === 'turn_failed') {
-      this.compactionHandler.onTurnFailed(event);
+      if (this.compactionHandler) this.compactionHandler.onTurnFailed(event);
+      if (this.compactionTrigger) this.compactionTrigger.onTurnFailed(event);
     }
   }
 

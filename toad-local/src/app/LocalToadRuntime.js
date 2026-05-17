@@ -4,6 +4,8 @@ import { DeliveryWorker } from '../delivery/deliveryWorker.js';
 import { RuntimeDirectory } from '../delivery/runtimeDirectory.js';
 import { LocalReadModel } from '../read/LocalReadModel.js';
 import { CompactionHandler } from '../runtime/CompactionHandler.js';
+import { CompactionTrigger, resolveThresholdFromSettings } from '../runtime/compactionTrigger/index.js';
+import { getContextUsage } from '../runtime/contextUsage/index.js';
 import { RuntimeEventBus } from '../runtime/RuntimeEventBus.js';
 import { RuntimeEventIngestor } from '../runtime/RuntimeEventIngestor.js';
 import { RuntimeSupervisor, resolveWindowsCommand } from '../runtime/RuntimeSupervisor.js';
@@ -269,6 +271,17 @@ export class LocalToadRuntime {
     this.sideEffectLog = db ? new SideEffectLog(db) : null;
     this.compactionHandler = new CompactionHandler({ adapters, taskBoard: this.taskBoard, sideEffectLog: this.sideEffectLog });
     this.eventBus = new RuntimeEventBus();
+    this.compactionTrigger = new CompactionTrigger({
+      adapters,
+      sideEffectLog: this.sideEffectLog,
+      eventBus: this.eventBus,
+      getContextUsage: (agentId, opts) => getContextUsage(agentId, {
+        ...opts,
+        runtimeRegistry: this.runtimeRegistry,
+        eventLog: this.eventLog,
+      }),
+      getThreshold: () => resolveThresholdFromSettings(this.settingsStore),
+    });
     this.apiServer = new ApiServer({
       eventBus: this.eventBus,
       toolFacade: this.toolFacade,
@@ -302,6 +315,7 @@ export class LocalToadRuntime {
         adapters,
         runtimeRegistry: this.runtimeRegistry,
         compactionHandler: this.compactionHandler,
+        compactionTrigger: this.compactionTrigger,
         eventBus: this.eventBus,
         sideEffectLog: this.sideEffectLog,
       });
