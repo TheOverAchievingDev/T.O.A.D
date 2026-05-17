@@ -11,6 +11,7 @@ import { RuntimeEventIngestor } from '../runtime/RuntimeEventIngestor.js';
 import { RuntimeSupervisor, resolveWindowsCommand } from '../runtime/RuntimeSupervisor.js';
 import { SqliteRuntimeEventLog } from '../runtime/sqliteRuntimeEventLog.js';
 import { SqliteNarrationStore } from '../runtime/sqliteNarrationStore.js';
+import { SqliteSpanSummaryStore } from '../runtime/sqliteSpanSummaryStore.js';
 import { SqliteRuntimeRegistry } from '../runtime/sqliteRuntimeRegistry.js';
 import { SqliteTaskBoard } from '../task/sqliteTaskBoard.js';
 import { SqliteTeamConfigRegistry } from '../team/sqliteTeamConfigRegistry.js';
@@ -72,6 +73,7 @@ export class LocalToadRuntime {
     runtimeRegistry = null,
     eventLog = null,
     narrationStore = null,
+    spanSummaryStore = null,
     teamConfigRegistry = null,
     foundryStore = null,
     adapters = new Map(),
@@ -130,6 +132,7 @@ export class LocalToadRuntime {
     this.runtimeRegistry = runtimeRegistry || new SqliteRuntimeRegistry({ filePath: dbPath });
     this.eventLog = eventLog || new SqliteRuntimeEventLog({ filePath: dbPath });
     this.narrationStore = narrationStore || new SqliteNarrationStore({ filePath: dbPath });
+    this.spanSummaryStore = spanSummaryStore || new SqliteSpanSummaryStore({ filePath: dbPath });
     this.teamConfigRegistry = teamConfigRegistry || new SqliteTeamConfigRegistry({ filePath: dbPath });
     this.pluginJobs = new SqlitePluginJobs({ filePath: dbPath });
     // Foundry sessions are global (live in ~/.symphony/foundry.db) so they
@@ -193,6 +196,7 @@ export class LocalToadRuntime {
         runtimeRegistry: this.runtimeRegistry,
         eventLog: this.eventLog,
         narrationStore: this.narrationStore,
+        spanSummaryStore: this.spanSummaryStore,
         approvalBroker: this.approvalBroker,
       });
     // Worktree manager: only enabled when projectCwd is set so tests with
@@ -797,6 +801,14 @@ export class LocalToadRuntime {
     return this.readModel.listSpans(input);
   }
 
+  listSpanSummaries(input) {
+    return this.readModel.listSpanSummaries(input);
+  }
+
+  listSpansAwaitingSummary(input) {
+    return this.readModel.listSpansAwaitingSummary(input);
+  }
+
   listToolCalls(input) {
     return this.readModel.listToolCalls(input);
   }
@@ -819,6 +831,7 @@ export class LocalToadRuntime {
     if (this.eventBus) this.eventBus.dispose();
     closeIfSupported(this.eventLog);
     closeIfSupported(this.narrationStore);
+    closeIfSupported(this.spanSummaryStore);
     closeIfSupported(this.pluginJobs);
     closeIfSupported(this.runtimeRegistry);
 

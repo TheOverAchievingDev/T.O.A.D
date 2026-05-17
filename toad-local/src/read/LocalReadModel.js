@@ -5,6 +5,7 @@ import {
   stripCrossTeamPrefix,
 } from '../protocol/crossTeam.js';
 import { detectSpans, DEFAULT_SPAN_CONFIG } from '../runtime/spanDetection/index.js';
+import { decideSpansToSummarize } from '../runtime/spanSummary/index.js';
 
 export class LocalReadModel {
   constructor({
@@ -14,6 +15,7 @@ export class LocalReadModel {
     eventLog = null,
     approvalBroker = null,
     narrationStore = null,
+    spanSummaryStore = null,
   }) {
     if (!broker || typeof broker.listMessages !== 'function') {
       throw new TypeError('broker with listMessages() is required');
@@ -24,6 +26,7 @@ export class LocalReadModel {
     this.eventLog = eventLog;
     this.approvalBroker = approvalBroker;
     this.narrationStore = narrationStore;
+    this.spanSummaryStore = spanSummaryStore;
   }
 
   listTeamChat({ teamId, limit = null }) {
@@ -111,6 +114,18 @@ export class LocalReadModel {
       this.listNarratedTimeline({ teamId, runtimeId }),
       DEFAULT_SPAN_CONFIG,
     );
+  }
+
+  listSpanSummaries({ teamId, runtimeId = null }) {
+    if (!this.spanSummaryStore || typeof this.spanSummaryStore.listSummaries !== 'function') return [];
+    return this.spanSummaryStore.listSummaries({ teamId: requireString(teamId, 'teamId'), runtimeId });
+  }
+
+  listSpansAwaitingSummary({ teamId, runtimeId = null }) {
+    return decideSpansToSummarize({
+      spans: this.listSpans({ teamId, runtimeId }),
+      summarizedSpanIds: new Set(this.listSpanSummaries({ teamId, runtimeId }).map((s) => s.spanId)),
+    });
   }
 
   listApprovals({ teamId }) {
