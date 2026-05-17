@@ -5,6 +5,7 @@ import type { DriftRunResult } from '@/hooks/useDrift';
 import type { BottomPanelTab } from './BottomPanel';
 import { CockpitForMe } from './CockpitForMe';
 import { CockpitWithMe } from './CockpitWithMe';
+import type { SpanSummaryRow } from '@/hooks/useSpanSummaries';
 
 /**
  * Phase 2 Task 11 — CockpitScreenV2.
@@ -70,6 +71,8 @@ export interface CockpitScreenV2Props {
   onOpenTaskDetail?: (taskId: string) => void;
   onOpenDriftScreen?: () => void;
   onMessageSent?: () => void;
+  /** P3c-2 — persisted span summaries, forwarded to <CockpitForMe>. */
+  spanSummaries?: SpanSummaryRow[];
 }
 
 export function CockpitScreenV2(props: CockpitScreenV2Props) {
@@ -99,6 +102,7 @@ export function CockpitScreenV2(props: CockpitScreenV2Props) {
       runtimes={props.runtimes}
       messages={props.messages}
       agentStreams={props.agentStreams}
+      spanSummaries={props.spanSummaries}
       drift={props.drift}
       reopenContext={props.reopenContext}
       onResumeTeam={props.onResumeTeam}

@@ -57,6 +57,7 @@ import {
 } from '@/integrations/tauri';
 import { callTool as callToadApi } from '@/api/client';
 import { useDrift } from '@/hooks/useDrift';
+import { useSpanSummaries } from '@/hooks/useSpanSummaries';
 
 type ProjectOpenScreen = Extract<Tweaks['screen'], 'cockpit' | 'workspace' | 'code'>;
 
@@ -82,6 +83,7 @@ function AppInner() {
   const [tweaks, setTweak] = useTweaks();
   const [activeTeamId, setActiveTeamId] = useState<string | null>(null);
   const { team, tasks, runtimes, messages, loading, error, liveSource, refresh, agentStreams } = useToadData(activeTeamId);
+  const { spanSummaries, summaryStatus } = useSpanSummaries(activeTeamId);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [taskCreateOpen, setTaskCreateOpen] = useState(false);
@@ -1011,6 +1013,7 @@ function AppInner() {
               runtimes={runtimes}
               messages={messages}
               agentStreams={agentStreams}
+              spanSummaries={spanSummaries}
               actor={{
                 teamId: team.name || activeTeamId || 'system',
                 agentId: 'ui-client',
@@ -1192,6 +1195,8 @@ function AppInner() {
         developerMode={tweaks.developerMode === true}
         pendingApprovals={pendingApprovals}
         onOpenApprovals={() => setTweak('showApprovals', true)}
+        summaryState={summaryStatus?.state ?? null}
+        summaryReasons={summaryStatus?.lastReasons ?? []}
       />
 
       {setupDialog && (

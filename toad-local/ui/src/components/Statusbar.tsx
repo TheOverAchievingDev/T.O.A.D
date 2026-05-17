@@ -66,6 +66,11 @@ export interface StatusbarProps {
   pendingApprovals: number;
   onOpenApprovals: () => void;
 
+  /** P3c-2 — honest span-summary monitor state; null hides the segment. */
+  summaryState?: 'idle' | 'summarizing' | 'rate-limited' | 'degraded' | 'unavailable' | null;
+  /** Reasons surfaced in the tooltip when degraded; [] when none. */
+  summaryReasons?: string[];
+
   /** Right-side: Code screen passes these when active so the bar shows
    *  cursor position / file metadata; null on other screens. */
   cursorPos?: { line: number; col: number } | null;
@@ -77,6 +82,12 @@ function statusbarTone(status: 'healthy' | 'watch' | 'breach'): string {
   if (status === 'breach') return 'bad';
   if (status === 'watch') return 'warn';
   return '';
+}
+
+function summaryTone(state: NonNullable<StatusbarProps['summaryState']>): string {
+  if (state === 'degraded' || state === 'unavailable') return 'bad';
+  if (state === 'rate-limited') return 'warn';
+  return ''; // idle / summarizing → quiet (green dot)
 }
 
 export function Statusbar({
@@ -97,6 +108,8 @@ export function Statusbar({
   providerQuota,
   pendingApprovals,
   onOpenApprovals,
+  summaryState = null,
+  summaryReasons = [],
   cursorPos,
   fileEncoding,
   fileLanguage,
@@ -134,6 +147,26 @@ export function Statusbar({
         <span className="num">{driftScore == null ? '--' : `${Math.round(driftScore)}%`}</span>
         <span className="muted">{driftStatusLabel}</span>
       </button>
+
+      {/* Span summaries — honest monitor state; null hides. Non-clickable
+          (no dedicated screen), mirrors the git/provider-quota seg shape. */}
+      {summaryState != null && (() => {
+        const t = summaryTone(summaryState);
+        const reasons = Array.isArray(summaryReasons) ? summaryReasons : [];
+        return (
+          <div
+            className={`status-seg${t ? ` ${t}` : ''}`}
+            title={`Span summaries: ${summaryState}${reasons.length ? ` — ${reasons.join(', ')}` : ''}`}
+          >
+            <span
+              className={`dot${t ? ' pulse' : ''}`}
+              style={t ? undefined : { background: 'var(--signal-green)' }}
+            />
+            <span>summaries</span>
+            <span className="num">{summaryState}</span>
+          </div>
+        );
+      })()}
 
       {/* Runtimes — live/total. */}
       <button

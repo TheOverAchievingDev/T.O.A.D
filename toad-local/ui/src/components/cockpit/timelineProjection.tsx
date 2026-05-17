@@ -3,6 +3,7 @@ import type { StreamEntry } from '@/utils/agentStream';
 import type { ReactNode } from 'react';
 import type { TimelineEvent, TimelineDot } from './FlowTimeline';
 import { composeTimeline } from '../../../../src/runtime/timelineComposition/index.js';
+import { projectSpanSummaryEvents, type SpanSummaryRow } from './spanSummaryProjection';
 
 interface ComposedRow {
   id: string;
@@ -67,6 +68,9 @@ export interface TimelineProjectionInput {
   now?: number;
   /** Cap on the number of events returned. Default 8. */
   limit?: number;
+  /** P3c-2 — persisted span summaries (P3c-1 span_summary_list rows).
+   *  Prepended (most-recent-first) ahead of the composeTimeline rows. */
+  spanSummaries?: SpanSummaryRow[];
 }
 
 /**
@@ -189,7 +193,7 @@ export function projectTimeline(input: TimelineProjectionInput): TimelineEvent[]
     limit: input.limit,
   });
 
-  return (rows as ComposedRow[]).map((row): TimelineEvent => {
+  const composedEvents = (rows as ComposedRow[]).map((row): TimelineEvent => {
     const body = renderBody(row);
     return {
       id: row.id,
@@ -199,4 +203,7 @@ export function projectTimeline(input: TimelineProjectionInput): TimelineEvent[]
       body,
     };
   });
+
+  const summaryEvents = projectSpanSummaryEvents(input.spanSummaries ?? [], now) as TimelineEvent[];
+  return [...summaryEvents, ...composedEvents];
 }

@@ -21,6 +21,7 @@ import {
   type FlowPanelState,
   normalizeFlowPanelState,
 } from './forMeFlowPanels';
+import type { SpanSummaryRow } from '@/hooks/useSpanSummaries';
 
 /**
  * Phase 2 CockpitForMe — the calm three-column observation surface
@@ -97,6 +98,7 @@ export interface CockpitForMeProps {
   driftRefreshing?: boolean;
   onOpenTaskDetail?: (taskId: string) => void;
   onOpenDriftScreen?: () => void;
+  spanSummaries?: SpanSummaryRow[];
 }
 
 const ACTIVE_STATUSES = new Set(['in-progress', 'review']);
@@ -120,6 +122,7 @@ export function CockpitForMe({
   runtimes,
   messages = [],
   agentStreams = {},
+  spanSummaries = [],
   drift,
   reopenContext = null,
   onResumeTeam,
@@ -319,8 +322,9 @@ export function CockpitForMe({
         taskTransitions,
         activeTask: selectedTask,
         limit: 8,
+        spanSummaries,
       }),
-    [agentStreams, team.members, drift?.history, taskTransitions, selectedTask],
+    [agentStreams, team.members, drift?.history, taskTransitions, selectedTask, spanSummaries],
   );
 
   // Hero text: "Your team is working on t_42 — bulk subscription quantity"

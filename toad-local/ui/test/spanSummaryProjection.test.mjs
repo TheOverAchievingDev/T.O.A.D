@@ -106,3 +106,21 @@ test('projectSpanSummaryEvents: stable order for equal spanEndedAt (input order 
     assert.deepEqual(ev.map((e) => e.id), ['summary-P', 'summary-Q', 'summary-Z']);
   } finally { await cleanup(); }
 });
+
+test('projectSpanSummaryEvents output is what projectTimeline prepends (shape contract)', async () => {
+  const { mod, cleanup } = await load();
+  try {
+    // Contract the timelineProjection prepend relies on: each event is a
+    // {id,when,dot:'violet',body} object — structurally a TimelineEvent —
+    // so `[...summaryEvents, ...composedEvents]` is a valid TimelineEvent[].
+    const ev = mod.projectSpanSummaryEvents([R('K', 'k', '2026-05-16T01:00:00.000Z')], NOW);
+    assert.equal(ev.length, 1);
+    for (const e of ev) {
+      assert.deepEqual(Object.keys(e).sort(), ['body', 'dot', 'id', 'when']);
+      assert.equal(e.dot, 'violet');
+      assert.equal(typeof e.id, 'string');
+      assert.equal(typeof e.when, 'string');
+      assert.equal(typeof e.body, 'string');
+    }
+  } finally { await cleanup(); }
+});
