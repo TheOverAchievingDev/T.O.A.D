@@ -645,6 +645,14 @@ import { SqliteNarrationStore } from '../runtime/sqliteNarrationStore.js';
   }
 ```
 
+(g) **CONTROLLER-RATIFIED (T6 implementation, §8d plan under-specification).** In `async close()`, directly after the existing `closeIfSupported(this.eventLog);` line, add:
+
+```javascript
+    closeIfSupported(this.narrationStore);
+```
+
+Rationale: `LocalToadRuntime.close()` closes **every** SQLite-backed store via `closeIfSupported(...)` (`eventLog`, `pluginJobs`, `runtimeRegistry`, `approvalBroker`, `foundryStore`, `teamConfigRegistry`, `taskBoard`, `broker`). `SqliteNarrationStore` opens its own connection via `openToadDatabase` exactly like `SqliteRuntimeEventLog` — omitting its `close()` leaks the file handle and on Windows makes `rmSync` of test temp dirs throw `EBUSY` (observed: 11 existing-suite regressions). This is the mandatory teardown companion to construction (mirrors `closeIfSupported(this.eventLog)` immediately above it); the original Task-6 edit list (a–f) under-specified it. It is **not** scope creep — surfaced + ratified so the spec/code reviewers do not flag the close() line as an unrequested change.
+
 - [ ] **Step 4: Run — verify pass**
 
 Run: `cd /c/Project-TOAD/toad-local && node --no-warnings --test test/localToadRuntime.narration.test.js`
