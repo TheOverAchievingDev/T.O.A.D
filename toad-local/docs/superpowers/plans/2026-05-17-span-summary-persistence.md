@@ -529,20 +529,15 @@ Expected: PASS — 5 tests, all green, output pristine.
 
 **Files:** Modify `package.json`.
 
-- [ ] **Step 1: Append the 3 Commit-1 suites to `scripts.test`**
+> **§8d RATIFICATION (controller, do not revert) — the canonical chain moved out of `package.json`.** Appending the 3 P3a suites pushed the single `scripts.test` `&&`-chain from 8006 chars (P2b) to **8193**, over Windows cmd.exe's **8191** hard limit → `npm test` failed with `The command line is too long.` (NOT a test failure). The chain was already at 97.7% of the ceiling at P2b; the inline-string wiring is structurally unviable on Windows and would block P3a *and all future suite additions*. **Ratified fix:** the verbatim ordered chain now lives in `scripts/test-suites.txt` (plain text — no command-line ceiling); a controller-authored `scripts/run-test-suites.mjs` splits it on ` && ` and runs each command sequentially with the same shell, fail-fast, propagating the first failing exit code — EXACT prior `&&` semantics/order/flags preserved (controller independently probed: `pass && exit(7) && sentinel` → runner exits 7, sentinel never runs). `package.json` `scripts.test` = `node scripts/run-test-suites.mjs`. The 3 P3a suites are already appended to the chain inside `test-suites.txt`. Future suites append ` && node …` to `test-suites.txt` exactly as before. Same pre-emptive-ratification discipline as 508f780/94b507d/bc7b966.
 
-In `package.json`, `scripts.test` currently ends with:
-`&& node --no-warnings --test test/localToadRuntime.spanDetection.test.js"`
+- [ ] **Step 1: Confirm the 3 Commit-1 suites are in the canonical chain**
 
-Append (leading space; one line; before the closing `"`):
-
-```
- && node --no-warnings --test test/spanSummary.decide.test.js && node --no-warnings --test test/spanSummary.purity.test.js && node --no-warnings --test test/sqliteSpanSummaryStore.test.js
-```
+The chain lives in `scripts/test-suites.txt` (controller created it verbatim-equal to the prior `scripts.test`, including the 3 P3a Commit-1 suites) and is run by `scripts/run-test-suites.mjs` (controller-authored); `package.json` `scripts.test` is `node scripts/run-test-suites.mjs`.
 
 Validate:
 
-Run: `cd /c/Project-TOAD/toad-local && node -e "const t=require('./package.json').scripts.test; console.log(['spanSummary.decide','spanSummary.purity','sqliteSpanSummaryStore'].every(s=>t.includes(s)))"`
+Run: `cd /c/Project-TOAD/toad-local && node -e "const t=require('node:fs').readFileSync('./scripts/test-suites.txt','utf8'); console.log(['spanSummary.decide','spanSummary.purity','sqliteSpanSummaryStore'].every(s=>t.includes(s)) && require('./package.json').scripts.test==='node scripts/run-test-suites.mjs')"`
 Expected: `true`
 
 - [ ] **Step 2: Full root suite — fail 0, all 3 P3a-Commit-1 suites executed**
@@ -559,7 +554,7 @@ Expected: `>= 3` (the 3 P3a-Commit-1 suites genuinely ran — the un-wired-test 
 - [ ] **Step 3: Commit 1**
 
 ```bash
-git -C /c/Project-TOAD add toad-local/src/runtime/spanSummary/decideSpansToSummarize.js toad-local/src/runtime/spanSummary/index.js toad-local/src/runtime/sqliteSpanSummaryStore.js toad-local/src/storage/schema.sql toad-local/test/spanSummary.decide.test.js toad-local/test/spanSummary.purity.test.js toad-local/test/sqliteSpanSummaryStore.test.js toad-local/package.json
+git -C /c/Project-TOAD add toad-local/src/runtime/spanSummary/decideSpansToSummarize.js toad-local/src/runtime/spanSummary/index.js toad-local/src/runtime/sqliteSpanSummaryStore.js toad-local/src/storage/schema.sql toad-local/test/spanSummary.decide.test.js toad-local/test/spanSummary.purity.test.js toad-local/test/sqliteSpanSummaryStore.test.js toad-local/scripts/run-test-suites.mjs toad-local/scripts/test-suites.txt toad-local/package.json
 git -C /c/Project-TOAD -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(spans): durable span_summaries store + pure decideSpansToSummarize core (Readability Layer-2 P3a, Commit 1)
 
@@ -758,12 +753,12 @@ Expected: PASS — 4 tests, all green, output pristine.
 
 **Files:** Modify `package.json`.
 
-- [ ] **Step 1: Append the e2e suite to `scripts.test`**
+- [ ] **Step 1: Append the e2e suite to the canonical chain (`scripts/test-suites.txt`)**
 
-In `package.json`, `scripts.test` now ends with:
-`&& node --no-warnings --test test/sqliteSpanSummaryStore.test.js"`
+Per the §8d ratification (Task 4), the chain lives in `scripts/test-suites.txt` (run by `scripts/run-test-suites.mjs`; `package.json` `scripts.test` = `node scripts/run-test-suites.mjs`). `scripts/test-suites.txt` currently ends with:
+`&& node --no-warnings --test test/sqliteSpanSummaryStore.test.js`
 
-Append (leading space; before the closing `"`):
+Append to the END of `scripts/test-suites.txt` (leading space; same single line; it is plain text — no command-line-length ceiling):
 
 ```
  && node --no-warnings --test test/localToadRuntime.spanSummary.test.js
@@ -771,7 +766,7 @@ Append (leading space; before the closing `"`):
 
 Validate:
 
-Run: `cd /c/Project-TOAD/toad-local && node -e "const t=require('./package.json').scripts.test; console.log(['spanSummary.decide','spanSummary.purity','sqliteSpanSummaryStore','localToadRuntime.spanSummary'].every(s=>t.includes(s)))"`
+Run: `cd /c/Project-TOAD/toad-local && node -e "const t=require('node:fs').readFileSync('./scripts/test-suites.txt','utf8'); console.log(['spanSummary.decide','spanSummary.purity','sqliteSpanSummaryStore','localToadRuntime.spanSummary'].every(s=>t.includes(s)) && require('./package.json').scripts.test==='node scripts/run-test-suites.mjs')"`
 Expected: `true`
 
 - [ ] **Step 2: Full root suite — fail 0, ALL 4 P3a suites executed**
