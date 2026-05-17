@@ -47,6 +47,8 @@ const COMMON_READ_TOOLS = Object.freeze([
   'foundry_session_get',
   'plugin_list_available',
   'plugin_resource_list',
+  'span_summary_list',
+  'span_summary_status',
 ]);
 
 export const ROLE_TOOLS = Object.freeze({

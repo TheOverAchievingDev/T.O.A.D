@@ -94,6 +94,8 @@ export const COMMANDS = Object.freeze({
   GIT_INIT_LOCAL: 'git_init_local',
   GIT_SET_REMOTE: 'git_set_remote',
   GITHUB_CREATE_REPOSITORY: 'github_create_repository',
+  SPAN_SUMMARY_LIST: 'span_summary_list',
+  SPAN_SUMMARY_STATUS: 'span_summary_status',
 });
 
 export const MUTATING_COMMANDS = Object.freeze([

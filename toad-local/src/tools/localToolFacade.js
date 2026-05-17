@@ -81,6 +81,22 @@ import {
 } from '../ide/ideGitTools.js';
 import { computeContextUsage } from '../runtime/contextUsage/index.js';
 
+// P3c-1 span-summary transport: the honest "monitor not running" status
+// returned by span_summary_status when no SummaryMonitor is injected
+// (tests, no-project mode, monitor not constructed). Same shape as the
+// P3b-2 getStatus() object; frozen so the shared const cannot be mutated
+// by a consumer. NEVER papered over as a faked 'idle'.
+const SPAN_SUMMARY_UNAVAILABLE = Object.freeze({
+  state: 'unavailable',
+  lastRunAt: null,
+  lastDurationMs: 0,
+  teamsPolled: 0,
+  summarizedCount: 0,
+  degradedCount: 0,
+  skippedRateLimited: 0,
+  lastReasons: Object.freeze([]),
+});
+
 export class LocalToolFacade {
   // 90s TTL cache for the claude /usage pty probe. We don't store this
   // in SQLite because plan-quota changes faster than session boundaries
@@ -185,6 +201,10 @@ export class LocalToolFacade {
     this.vercelToolImpls = vercelToolImpls && typeof vercelToolImpls === 'object'
       ? vercelToolImpls : null;
     this.driftEngine = driftEngine && typeof driftEngine.runDrift === 'function' ? driftEngine : null;
+    // Not a constructor param — an instance field defaulting null, late
+    // injected by dev-api-server.mjs exactly as driftEngine is. Keeps the
+    // constructor signature unchanged.
+    this.summaryMonitor = null;
     // git invoker for tools that need to read the project's git state
     // (e.g. github_origin_remote). Injectable so tests don't shell out.
     this.runGit = typeof runGit === 'function' ? runGit : defaultRunGit;
@@ -207,6 +227,18 @@ export class LocalToolFacade {
     const commandName = requireString(command.commandName, 'commandName');
     if (commandRequiresIdempotency(commandName)) {
       requireString(command.idempotencyKey, 'idempotencyKey');
+    }
+    // P3c-1 poll-safe reads: dispatch before strict normalizeActor so that
+    // cockpit polling with a missing/empty teamId never throws. The handlers
+    // themselves guard for incomplete actors and return safe empty envelopes.
+    if (
+      commandName === COMMANDS.SPAN_SUMMARY_LIST ||
+      commandName === COMMANDS.SPAN_SUMMARY_STATUS
+    ) {
+      assertRoleCanCallTool({ role: command.actor?.role, toolName: commandName });
+      const args = command.args && typeof command.args === 'object' ? command.args : {};
+      if (commandName === COMMANDS.SPAN_SUMMARY_LIST) return this.#spanSummaryList(command.actor, args);
+      return this.#spanSummaryStatus();
     }
     const actor = normalizeActor(command.actor);
     try {
@@ -258,6 +290,12 @@ export class LocalToolFacade {
         return this.#toolActivity(actor, args);
       case COMMANDS.HEALTH_STATUS:
         return this.#healthStatus(actor, args);
+      // Defensive fallback only — the early-dispatch above (before normalizeActor)
+      // is the live path for these two commands and passes the raw actor.
+      case COMMANDS.SPAN_SUMMARY_LIST:
+        return this.#spanSummaryList(actor, args);
+      case COMMANDS.SPAN_SUMMARY_STATUS:
+        return this.#spanSummaryStatus();
       case COMMANDS.IDE_TREE_LIST:
         return this.#ideTreeList(actor, args);
       case COMMANDS.IDE_READ_FILE:
@@ -1162,6 +1200,37 @@ export class LocalToolFacade {
       return { approvals: [] };
     }
     return { approvals: this.readModel.listApprovals({ teamId: actor.teamId }) };
+  }
+
+  #spanSummaryList(actor, args) {
+    // Mirrors #approvalList's guard/envelope. The actor.teamId guard is
+    // intentionally stricter than #approvalList (which would let a
+    // teamless actor reach readModel and throw on requireString): a
+    // poll-safe read the cockpit hits must genuinely never throw.
+    if (
+      !this.readModel ||
+      typeof this.readModel.listSpanSummaries !== 'function' ||
+      !actor ||
+      typeof actor.teamId !== 'string' ||
+      actor.teamId.length === 0
+    ) {
+      return { summaries: [] };
+    }
+    return {
+      summaries: this.readModel.listSpanSummaries({
+        teamId: actor.teamId,
+        runtimeId: args && typeof args.runtimeId === 'string' ? args.runtimeId : null,
+      }),
+    };
+  }
+
+  #spanSummaryStatus() {
+    // The P3b-2 SummaryMonitor is late-injected onto this.summaryMonitor
+    // by dev-api-server.mjs. Verbatim getStatus() when present; the frozen
+    // honest 'unavailable' object otherwise. Never throws; no args.
+    return this.summaryMonitor && typeof this.summaryMonitor.getStatus === 'function'
+      ? this.summaryMonitor.getStatus()
+      : SPAN_SUMMARY_UNAVAILABLE;
   }
 
   #sendApprovalResponseToRuntime({ approval, decision, reason, shouldSend }) {

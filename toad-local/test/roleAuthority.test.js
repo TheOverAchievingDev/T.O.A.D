@@ -223,3 +223,10 @@ test('roleAuthority: ide tools are operator-only for Slice A and B', () => {
     );
   }
 });
+
+test('span-summary read commands are role-authorized like other COMMON_READ tools', () => {
+  for (const role of ['architect', 'developer', 'reviewer', 'tester', 'lead', 'human']) {
+    assertRoleCanCallTool({ role, toolName: 'span_summary_list' });
+    assertRoleCanCallTool({ role, toolName: 'span_summary_status' });
+  }
+});

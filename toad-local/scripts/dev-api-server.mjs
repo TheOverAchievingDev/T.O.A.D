@@ -201,6 +201,7 @@ if (driftDb) {
       }),
   });
   summaryMonitor.start();
+  if (runtime.toolFacade) runtime.toolFacade.summaryMonitor = summaryMonitor;
 } else {
   // eslint-disable-next-line no-console
   console.warn('[drift] no SQLite handle available on runtime — drift engine disabled');
