@@ -97,6 +97,7 @@ export function CockpitScreenV2(props: CockpitScreenV2Props) {
       team={props.team}
       tasks={props.tasks}
       runtimes={props.runtimes}
+      messages={props.messages}
       agentStreams={props.agentStreams}
       drift={props.drift}
       reopenContext={props.reopenContext}

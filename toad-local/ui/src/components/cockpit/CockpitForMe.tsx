@@ -1,13 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Agent, Runtime, Team, UiTask } from '@/types';
+import type { Agent, Message, Runtime, Team, UiTask } from '@/types';
 import type { StreamEntry } from '@/utils/agentStream';
 import type { DriftRunResult } from '@/hooks/useDrift';
 import { Icon } from '../Icon';
+import { CockpitFlowCanvas } from '../CockpitFlowCanvas';
 import { PaneSplitter } from './PaneSplitter';
 import { AgentCard } from './AgentCard';
 import { FlowTimeline, type TimelineEvent } from './FlowTimeline';
 import { Inspector, type InspectorTab } from './Inspector';
 import { projectTimeline, type TaskTransition } from './timelineProjection';
+import {
+  DEFAULT_FOR_ME_VIEW_MODE,
+  FOR_ME_VIEW_MODE_STORAGE_KEY,
+  type ForMeViewMode,
+  normalizeForMeViewMode,
+} from './forMeViewMode';
+import {
+  FLOW_LEFT_PANEL_STORAGE_KEY,
+  FLOW_RIGHT_PANEL_STORAGE_KEY,
+  type FlowPanelState,
+  normalizeFlowPanelState,
+} from './forMeFlowPanels';
 
 /**
  * Phase 2 CockpitForMe — the calm three-column observation surface
@@ -50,6 +63,7 @@ export interface CockpitForMeProps {
   team: Team;
   tasks: UiTask[];
   runtimes: Runtime[];
+  messages?: Message[];
   agentStreams?: Record<string, StreamEntry[]>;
   drift: DriftRunResult | null;
   reopenContext?: {
@@ -104,6 +118,7 @@ export function CockpitForMe({
   team,
   tasks,
   runtimes,
+  messages = [],
   agentStreams = {},
   drift,
   reopenContext = null,
@@ -120,6 +135,27 @@ export function CockpitForMe({
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(() => pickDefaultAgent(team)?.id ?? null);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('task');
   const [bannerDismissed, setBannerDismissed] = useState<boolean>(false);
+  const [viewMode, setViewMode] = useState<ForMeViewMode>(() => {
+    try {
+      return normalizeForMeViewMode(window.localStorage.getItem(FOR_ME_VIEW_MODE_STORAGE_KEY));
+    } catch {
+      return DEFAULT_FOR_ME_VIEW_MODE;
+    }
+  });
+  const [flowLeftPanel, setFlowLeftPanel] = useState<FlowPanelState>(() => {
+    try {
+      return normalizeFlowPanelState(window.localStorage.getItem(FLOW_LEFT_PANEL_STORAGE_KEY));
+    } catch {
+      return 'collapsed';
+    }
+  });
+  const [flowRightPanel, setFlowRightPanel] = useState<FlowPanelState>(() => {
+    try {
+      return normalizeFlowPanelState(window.localStorage.getItem(FLOW_RIGHT_PANEL_STORAGE_KEY));
+    } catch {
+      return 'collapsed';
+    }
+  });
 
   // Phase 3a Task 5 — observe task lifecycle transitions via snapshot
   // delta. Each render compares prev tasks vs current; new rows or
@@ -219,6 +255,31 @@ export function CockpitForMe({
     }
   };
 
+  const changeViewMode = (mode: ForMeViewMode) => {
+    setViewMode(mode);
+    try {
+      window.localStorage.setItem(FOR_ME_VIEW_MODE_STORAGE_KEY, mode);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const changeFlowPanel = (side: 'left' | 'right', state: FlowPanelState) => {
+    if (side === 'left') {
+      setFlowLeftPanel(state);
+    } else {
+      setFlowRightPanel(state);
+    }
+    try {
+      window.localStorage.setItem(
+        side === 'left' ? FLOW_LEFT_PANEL_STORAGE_KEY : FLOW_RIGHT_PANEL_STORAGE_KEY,
+        state,
+      );
+    } catch {
+      /* ignore */
+    }
+  };
+
   const selectedTask = useMemo(
     () => (selectedTaskId ? tasks.find((t) => t.id === selectedTaskId) ?? null : null),
     [selectedTaskId, tasks],
@@ -282,6 +343,220 @@ export function CockpitForMe({
     : undefined;
 
   const activeAgents = team.members.filter((a) => ACTIVE_STATUSES.has(a.status as string)).length;
+
+  if (viewMode === 'flow') {
+    return (
+      <div className="cockpit-for">
+        {reopenContext && !bannerDismissed && (
+          <ReopenBanner
+            context={reopenContext}
+            isRunning={teamIsLive}
+            onResume={onResumeTeam}
+            onPause={onPauseTeam}
+            onDismiss={dismissBanner}
+          />
+        )}
+        <div className="cockpit-for-flow-shell">
+          <aside className={`cockpit-flow-side cockpit-flow-side-left ${flowLeftPanel}`}>
+            {flowLeftPanel === 'expanded' ? (
+              <div className="cockpit-flow-panel">
+                <div className="cockpit-flow-panel-head">
+                  <div>
+                    <h4>TEAM</h4>
+                    <span>{activeAgents}/{team.members.length} active</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="cockpit-flow-collapse"
+                    onClick={() => changeFlowPanel('left', 'collapsed')}
+                    title="Collapse team panel"
+                  >
+                    <Icon name="chevronLeft" size={14} />
+                  </button>
+                </div>
+                <div className="cockpit-flow-panel-body">
+                  {team.members.map((a) => {
+                    const agentTask = a.task
+                      ? tasks.find((t) => t.id === a.task) ?? null
+                      : null;
+                    return (
+                      <AgentCard
+                        key={a.id}
+                        agent={a}
+                        runtime={runtimeByAgent.get(a.id) ?? null}
+                        currentTask={agentTask}
+                        active={selectedAgentId === a.id}
+                        onSelect={(id) => {
+                          setSelectedAgentId(id);
+                          setInspectorTab('agent');
+                          changeFlowPanel('right', 'expanded');
+                        }}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="cockpit-flow-rail-button"
+                onClick={() => changeFlowPanel('left', 'expanded')}
+                title="Open team panel"
+              >
+                <Icon name="users" size={15} />
+                <span>Team</span>
+                <strong>{activeAgents}/{team.members.length}</strong>
+              </button>
+            )}
+          </aside>
+
+          <main className="cockpit-flow-main">
+            <div className="cockpit-action-strip">
+              {teamIsLive && onPauseTeam && (
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={() => { void onPauseTeam(); }}
+                  title="Stop every live agent in this team"
+                >
+                  <Icon name="pause" size={11} /> Pause team
+                </button>
+              )}
+              {!teamIsLive && onResumeTeam && (
+                <button type="button" className="btn primary" onClick={onResumeTeam}>
+                  <Icon name="play" size={11} /> Resume team
+                </button>
+              )}
+              {onCreateTask && (
+                <button type="button" className="btn" onClick={onCreateTask}>
+                  <Icon name="plus" size={12} /> Add task
+                </button>
+              )}
+              {onRefreshDrift && (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => { void onRefreshDrift(); }}
+                  disabled={driftRefreshing}
+                  title={driftRefreshing
+                    ? 'Drift judge is running (this can take up to 30s)'
+                    : 'Re-run all drift checks now'}
+                  style={driftRefreshing ? { opacity: 0.65, cursor: 'wait' } : undefined}
+                >
+                  <Icon
+                    name={driftRefreshing ? 'refresh' : 'eye'}
+                    size={12}
+                    className={driftRefreshing ? 'spin' : undefined}
+                  />
+                  {driftRefreshing ? ' Running drift...' : ' Run drift'}
+                </button>
+              )}
+              <div style={{ flex: 1 }} />
+              <div className="cockpit-view-toggle" role="group" aria-label="FOR me view">
+                <button
+                  type="button"
+                  aria-pressed={false}
+                  onClick={() => changeViewMode('timeline')}
+                  title="Show the plain-English activity timeline"
+                >
+                  <Icon name="list" size={12} /> Timeline
+                </button>
+                <button
+                  type="button"
+                  className="active"
+                  aria-pressed
+                  onClick={() => changeViewMode('flow')}
+                  title="Show the team flow canvas"
+                >
+                  <Icon name="workflow" size={12} /> Flow
+                </button>
+              </div>
+              <button type="button" className="btn ghost" title="What can I do here? (Phase 4)">
+                <Icon name="info" size={12} /> ?
+              </button>
+            </div>
+            <CockpitFlowCanvas
+              team={team}
+              tasks={tasks}
+              runtimes={runtimes}
+              messages={messages}
+              agentStreams={agentStreams}
+              selectedTaskId={selectedTaskId}
+              selectedAgentId={selectedAgentId}
+              driftData={drift}
+              onSelectTask={(taskId) => {
+                setSelectedTaskId(taskId);
+                setInspectorTab('task');
+              }}
+              onSelectAgent={(agentId) => {
+                setSelectedAgentId(agentId);
+                setInspectorTab('agent');
+              }}
+              onOpenTask={(taskId) => {
+                setSelectedTaskId(taskId);
+                setInspectorTab('task');
+                onOpenTaskDetail?.(taskId);
+                changeFlowPanel('right', 'expanded');
+              }}
+              onOpenLogs={(runtimeId) => {
+                const runtime = runtimes.find((r) => r.id === runtimeId);
+                if (runtime?.agent) {
+                  setSelectedAgentId(runtime.agent);
+                  setInspectorTab('agent');
+                  changeFlowPanel('right', 'expanded');
+                }
+              }}
+              onCreateTask={onCreateTask ?? (() => {})}
+            />
+          </main>
+
+          <aside className={`cockpit-flow-side cockpit-flow-side-right ${flowRightPanel}`}>
+            {flowRightPanel === 'expanded' ? (
+              <div className="cockpit-flow-panel">
+                <div className="cockpit-flow-panel-head">
+                  <div>
+                    <h4>INSPECTOR</h4>
+                    <span>{inspectorTab}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="cockpit-flow-collapse"
+                    onClick={() => changeFlowPanel('right', 'collapsed')}
+                    title="Collapse inspector panel"
+                  >
+                    <Icon name="chevronRight" size={14} />
+                  </button>
+                </div>
+                <div className="cockpit-flow-panel-body inspector-body">
+                  <Inspector
+                    activeTab={inspectorTab}
+                    onChangeTab={setInspectorTab}
+                    selectedTask={selectedTask}
+                    selectedAgent={selectedAgent}
+                    drift={drift}
+                    onOpenTaskDetail={onOpenTaskDetail}
+                    onOpenDriftScreen={onOpenDriftScreen}
+                    onSwapAgentProvider={onSwapAgentProvider}
+                  />
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="cockpit-flow-rail-button"
+                onClick={() => changeFlowPanel('right', 'expanded')}
+                title="Open inspector panel"
+              >
+                <Icon name="info" size={15} />
+                <span>Inspector</span>
+                <strong>{selectedTask?.id ?? selectedAgent?.name ?? 'Open'}</strong>
+              </button>
+            )}
+          </aside>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="cockpit-for">
@@ -390,6 +665,25 @@ export function CockpitForMe({
                 </button>
               )}
               <div style={{ flex: 1 }} />
+              <div className="cockpit-view-toggle" role="group" aria-label="FOR me view">
+                <button
+                  type="button"
+                  className="active"
+                  aria-pressed
+                  onClick={() => changeViewMode('timeline')}
+                  title="Show the plain-English activity timeline"
+                >
+                  <Icon name="list" size={12} /> Timeline
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={false}
+                  onClick={() => changeViewMode('flow')}
+                  title="Show the team flow canvas"
+                >
+                  <Icon name="workflow" size={12} /> Flow
+                </button>
+              </div>
               <button type="button" className="btn ghost" title="What can I do here? (Phase 4)">
                 <Icon name="info" size={12} /> ?
               </button>
