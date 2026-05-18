@@ -51,6 +51,13 @@ export const SEED_PROVIDERS: Provider[] = [
   {
     id: 'opencode',
     label: 'OpenCode',
-    models: ['Default', 'GLM-4.6', 'Qwen3-Coder', 'Local'],
+    models: [
+      'Default',
+      'opencode/big-pickle',
+      'opencode/deepseek-v4-flash-free',
+      'opencode/minimax-m2.5-free',
+      'opencode/nemotron-3-super-free',
+      'opencode/qwen3.6-plus-free',
+    ],
   },
 ];

@@ -953,6 +953,15 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
     },
   }),
   makeTool({
+    name: COMMANDS.PROVIDER_MODEL_LIST,
+    title: 'List Provider Models',
+    description: 'Read available provider models for dynamic providers. OpenCode returns free models plus models for providers configured in local OpenCode credentials.',
+    required: ['providerId'],
+    properties: {
+      providerId: { type: 'string', enum: ['opencode'] },
+    },
+  }),
+  makeTool({
     name: COMMANDS.AUDIT_LOG_QUERY,
     title: 'Query Audit Log',
     description: '§20 Returns a chronologically-sorted (newest first) merge of task events + runtime events for the actor’s team. Each event carries a _source tag (`task` or `runtime`). Supports `limit` (default 200, max 1000) and optional `sinceMs` filter. Read-only; available to every role.',

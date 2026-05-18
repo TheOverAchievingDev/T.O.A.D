@@ -6603,7 +6603,7 @@ test('provider_auth_status anthropic happy path returns signedIn:true', async ()
   assert.ok(typeof result.signedIn === 'boolean' || result.signedIn === null);
 });
 
-test('provider_auth_status returns supported=false for opencode (placeholder)', () => {
+test('provider_auth_status reports opencode provider credentials', () => {
   const facade = new LocalToolFacade({
     broker: new InMemoryBroker(),
     taskBoard: new InMemoryTaskBoard(),
@@ -6613,8 +6613,38 @@ test('provider_auth_status returns supported=false for opencode (placeholder)', 
     actor: { teamId: 't', agentId: 'lead', role: 'lead' },
     args: { providerId: 'opencode' },
   });
-  assert.equal(result.supported, false);
-  assert.equal(result.signedIn, null);
+  assert.equal(result.supported, true);
+  assert.equal(result.apiOnly, true);
+  assert.ok(typeof result.signedIn === 'boolean' || result.signedIn === null);
+});
+
+test('provider_model_list returns OpenCode free and authenticated-provider models', () => {
+  const facade = new LocalToolFacade({
+    broker: new InMemoryBroker(),
+    taskBoard: new InMemoryTaskBoard(),
+    providerAuthSpawnSync: () => ({
+      status: 0,
+      stdout: [
+        'opencode/deepseek-v4-flash-free',
+        'deepseek/deepseek-v4-pro',
+        'anthropic/claude-sonnet-4-5',
+      ].join('\n'),
+      stderr: '',
+      error: null,
+    }),
+    providerAuthStat: () => ({ isFile: () => true }),
+    providerAuthReadFile: () => JSON.stringify({ deepseek: { type: 'api' } }),
+  });
+  const result = facade.execute({
+    commandName: COMMANDS.PROVIDER_MODEL_LIST,
+    actor: { teamId: 't', agentId: 'lead', role: 'lead' },
+    args: { providerId: 'opencode' },
+  });
+
+  assert.equal(result.supported, true);
+  assert.ok(result.models.some((m) => m.id === 'opencode/deepseek-v4-flash-free'));
+  assert.ok(result.models.some((m) => m.id === 'deepseek/deepseek-v4-pro'));
+  assert.ok(!result.models.some((m) => m.id === 'anthropic/claude-sonnet-4-5'));
 });
 
 test('provider_auth_login dispatches spawn for non-manual providers', () => {

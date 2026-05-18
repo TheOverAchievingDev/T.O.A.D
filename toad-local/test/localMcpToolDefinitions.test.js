@@ -63,6 +63,7 @@ test('listLocalMcpTools exposes MCP-shaped local command tools', () => {
     'provider_auth_login',
     'provider_auth_logout',
     'provider_auth_status',
+    'provider_model_list',
     'review_decide',
     'review_list',
     'review_request',
@@ -163,7 +164,7 @@ test('mutating MCP tools require idempotencyKey in their schemas', () => {
   }
 
   // Read-only tools
-  for (const name of ['task_list', 'agent_status', 'approval_list', 'runtime_events', 'cross_team_messages', 'tool_activity', 'health_status', 'team_list', 'review_list', 'stuck_runtime_list', 'foundry_session_list', 'foundry_session_get', 'project_state_describe', 'ide_tree_list', 'ide_read_file', 'ide_get_status', 'ide_get_diff']) {
+  for (const name of ['task_list', 'agent_status', 'approval_list', 'runtime_events', 'cross_team_messages', 'tool_activity', 'health_status', 'team_list', 'review_list', 'stuck_runtime_list', 'foundry_session_list', 'foundry_session_get', 'project_state_describe', 'ide_tree_list', 'ide_read_file', 'ide_get_status', 'ide_get_diff', 'provider_model_list']) {
     assert.ok(!getLocalMcpTool(name).inputSchema.required.includes('idempotencyKey'), name);
     assert.equal(getLocalMcpTool(name).annotations.readOnlyHint, true, `${name} should be readOnly`);
   }

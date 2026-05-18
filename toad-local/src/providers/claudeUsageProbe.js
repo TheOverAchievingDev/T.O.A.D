@@ -102,53 +102,12 @@ function stripAnsi(s) {
  * So we identify candidate labels (lines that match known patterns)
  * and pair each with the next "% used" we see.
  *
- * We accept slight whitespace/Unicode variations because pty rendering
- * inserts non-breaking-spaces and weird padding.
+ * The live parsing path uses SECTION_HEADER_RE + classifyHeader below,
+ * which splits the rendered panel into per-section chunks before extracting
+ * pctUsed/resetIn. The older label-pattern approach was replaced because it
+ * ran across the whole inlined panel and could pick up the wrong section's
+ * percent when headers and bars are interleaved.
  */
-// LEGACY (kept exported but unused — kept to avoid breaking any
-// hypothetical importer; SECTION_REGEXES below is the live path).
-// eslint-disable-next-line no-unused-vars
-const LEGACY_LABEL_PATTERNS = [
-  // ordered: more specific before less specific so we match the right bucket
-  { kind: 'opusWeekly', re: /current\s+week\s*\(.*?opus.*?\)/i, label: 'Weekly · Opus' },
-  { kind: 'sonnetWeekly', re: /current\s+week\s*\(.*?sonnet.*?\)/i, label: 'Weekly · Sonnet' },
-  { kind: 'weekly', re: /current\s+week(?!\s*\(.*?(opus|sonnet))/i, label: 'Weekly · all models' },
-  { kind: 'session', re: /current\s+session/i, label: 'Session (5h)' },
-  // Older / variant phrasings — keep as fallbacks.
-  { kind: 'opusWeekly', re: /weekly.*opus/i, label: 'Weekly · Opus' },
-  { kind: 'weekly', re: /weekly\s*limit/i, label: 'Weekly limit' },
-  { kind: 'session', re: /\b5h\s*limit\b/i, label: '5h limit' },
-];
-
-// eslint-disable-next-line no-unused-vars
-function legacyClassifyLabel(line) {
-  for (const p of LEGACY_LABEL_PATTERNS) {
-    if (p.re.test(line)) return { kind: p.kind, label: p.label };
-  }
-  return null;
-}
-
-// eslint-disable-next-line no-unused-vars
-function legacyFindPercent(line) {
-  // Claude inserts pt-1-spaced glyphs ("22%[1Cused") in some renderings;
-  // also handle "22% used" and "22 % used" variants.
-  const m = line.match(/(\d{1,3})\s*%[\s \xa0]*used/i);
-  if (!m) return null;
-  return Math.min(100, Math.max(0, Number(m[1])));
-}
-
-// eslint-disable-next-line no-unused-vars
-function legacyFindReset(line) {
-  // Two formats observed:
-  //   "Resets 12:50am (America/Denver)"
-  //   "Resets May 7, 3pm (America/Denver)"
-  // Capture from "Resets" to the closing paren or end-of-line.
-  const m = line.match(/resets?\s+([^()]*?)(?:\s*\([^)]*\))?\s*$/i);
-  if (!m) return null;
-  const raw = m[1].trim();
-  if (!raw || raw.length > 80) return null;
-  return raw;
-}
 
 /**
  * Section header detector — used to split the inlined panel into

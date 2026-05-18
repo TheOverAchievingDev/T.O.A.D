@@ -3,9 +3,10 @@ import type { Team, UiTask, TaskRiskLevel, MatchedRiskRule } from '@/types';
 import { ROLES, roleStyle } from '@/data/roles';
 import { Icon, type IconName } from './Icon';
 import { callTool, ToadApiError, type Actor } from '@/api/client';
-// PlanSection / DiffSection / ValidationsSection are temporarily unused —
-// they need real backend data flow before they go back in. See comment
-// above the section block in render.
+import { PlanSection } from './task-detail/PlanSection';
+import { DiffSection } from './task-detail/DiffSection';
+import { ValidationsSection } from './task-detail/ValidationsSection';
+import type { PlanData, ValidationData, DiffFileData } from './task-detail/seed';
 import { TaskRiskBadge } from './TaskRiskBadge';
 import { ReviewComposer } from './ReviewComposer';
 import { TaskLifecycle } from './TaskLifecycle';
@@ -105,6 +106,40 @@ interface BackendTask {
   dependencyTaskIds?: string[];
   testCommands?: string[];
   priority?: string;
+  // File-scope contract (deferred editor — data now surfaced).
+  allowedFiles?: string[];
+  forbiddenFiles?: string[];
+  // Plan data projected from PLAN_PROPOSED/APPROVED/REJECTED events.
+  plan?: {
+    state?: 'proposed' | 'approved' | 'rejected';
+    proposedBy?: string;
+    decidedBy?: string;
+    proposedAt?: string;
+    decidedAt?: string;
+    summary?: string;
+    approach?: string[];
+    filesExpectedToChange?: string[];
+    risks?: string[];
+    validationPlan?: string[];
+  } | null;
+  // Validation history projected from VALIDATION_RUN events.
+  validations?: Array<{
+    kind?: string;
+    command?: string;
+    verdict?: string;
+    exitCode?: number | null;
+    durationMs?: number | null;
+    stdout?: string;
+    stderr?: string;
+    actorId?: string;
+    createdAt?: string;
+  }>;
+  // Review data from REVIEW_REQUESTED events.
+  review?: {
+    files?: string[];
+    scopeDrift?: string[];
+    diff?: string;
+  } | null;
 }
 
 interface BackendHistory {
@@ -287,6 +322,11 @@ type TimelineFilter = 'all' | 'comments' | 'changes' | 'logs';
 export function TaskDetailModal({ team, taskId, task, onClose, actor = DEFAULT_ACTOR }: TaskDetailModalProps) {
   const [filter, setFilter] = useState<TimelineFilter>('all');
   const [composer, setComposer] = useState('');
+  const [planData, setPlanData] = useState<PlanData | null>(null);
+  const [validationsData, setValidationsData] = useState<ValidationData[]>([]);
+  const [diffFiles, setDiffFiles] = useState<DiffFileData[]>([]);
+  const [allowedFiles, setAllowedFiles] = useState<string[]>([]);
+  const [forbiddenFiles, setForbiddenFiles] = useState<string[]>([]);
   const [detail, setDetail] = useState<TaskDetailData>(() => {
     if (!task) return EMPTY_DETAIL;
     const safeId = task.id || taskId || '';
@@ -383,6 +423,71 @@ export function TaskDetailModal({ team, taskId, task, onClose, actor = DEFAULT_A
             dependencyTaskIds: Array.isArray(t.dependencyTaskIds) ? t.dependencyTaskIds : prev.dependencyTaskIds,
             testCommands: Array.isArray(t.testCommands) ? t.testCommands : prev.testCommands,
           }));
+          // Project plan data from the task's plan field.
+          if (t.plan && t.plan.state) {
+            const p = t.plan;
+            // Map string risks to { sev, text } shape PlanSection expects.
+            const risks = (p.risks ?? []).map((r: string) => {
+              const m = r.match(/^\[(high|med|low)\]\s*/i);
+              return m
+                ? { sev: m[1].toLowerCase() as 'high' | 'med' | 'low', text: r.replace(/^\[.*?\]\s*/, '') }
+                : { sev: 'low' as const, text: r };
+            });
+            const validation = (p.validationPlan ?? []).map((v: string) => {
+              const parts = v.split(/\s+/);
+              const kinds = ['install', 'lint', 'typecheck', 'test', 'build', 'security', 'manual'] as const;
+              type VKind = typeof kinds[number];
+              const kind: VKind = (kinds as readonly string[]).includes(parts[0]?.toLowerCase()) ? parts[0].toLowerCase() as VKind : 'manual';
+              return { kind, cmd: v };
+            });
+            setPlanData({
+              state: (p.state as 'proposed' | 'approved' | 'rejected') ?? 'proposed',
+              proposer: p.proposedBy ?? '',
+              decider: p.decidedBy ?? '',
+              proposedAt: p.proposedAt ? new Date(p.proposedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
+              decidedAt: p.decidedAt ? new Date(p.decidedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
+              summary: p.summary ?? '',
+              approach: Array.isArray(p.approach) ? p.approach : [],
+              filesExpected: Array.isArray(p.filesExpectedToChange) ? p.filesExpectedToChange : [],
+              risks,
+              validation,
+            });
+          }
+          // Project validation history from task.validations[].
+          if (Array.isArray(t.validations) && t.validations.length > 0) {
+            const mapped: ValidationData[] = t.validations.map((v, i) => ({
+              id: `v-${i}-${v.kind ?? 'unknown'}`,
+              kind: (v.kind ?? 'manual') as ValidationData['kind'],
+              cmd: v.command ?? v.kind ?? '',
+              verdict: (['passed', 'failed', 'not_run'].includes(v.verdict ?? '') ? v.verdict : 'not_run') as ValidationData['verdict'],
+              duration: typeof v.durationMs === 'number' ? `${(v.durationMs / 1000).toFixed(1)}s` : null,
+              exitCode: v.exitCode ?? null,
+              ranAt: v.createdAt ? new Date(v.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null,
+              ranBy: v.actorId ?? null,
+              output: [
+                ...(v.stdout ? v.stdout.split('\n').filter(Boolean) : []),
+                ...(v.stderr ? v.stderr.split('\n').filter(Boolean) : []),
+              ],
+            }));
+            setValidationsData(mapped);
+          }
+          // Project diff files from task.review.files (the review-requested payload).
+          if (t.review && Array.isArray(t.review.files) && t.review.files.length > 0) {
+            const scopeDriftSet = new Set(t.review.scopeDrift ?? []);
+            const files: DiffFileData[] = t.review.files.map((f: string) => ({
+              path: f,
+              added: 0,
+              removed: 0,
+              status: 'modified' as const,
+              expected: !scopeDriftSet.has(f),
+              drift: scopeDriftSet.has(f),
+              hunks: [],
+            }));
+            setDiffFiles(files);
+          }
+          // File-scope contract fields.
+          if (Array.isArray(t.allowedFiles)) setAllowedFiles(t.allowedFiles);
+          if (Array.isArray(t.forbiddenFiles)) setForbiddenFiles(t.forbiddenFiles);
         }
         const merged = [
           ...(res?.taskEvents ? backendEventsToTimeline(res.taskEvents) : []),
@@ -492,8 +597,6 @@ export function TaskDetailModal({ team, taskId, task, onClose, actor = DEFAULT_A
             {loading && <span className="dim" style={{ marginLeft: 8 }}>Loading…</span>}
           </div>
           <div className="td-head-right">
-            <button className="btn btn-sm btn-ghost" type="button"><Icon name="eye" size={12} /> Open team</button>
-            <button className="icon-btn" title="More" type="button"><Icon name="moreH" size={14} /></button>
             <button className="icon-btn" onClick={onClose} type="button"><Icon name="x" size={16} /></button>
           </div>
         </div>
@@ -596,10 +699,16 @@ export function TaskDetailModal({ team, taskId, task, onClose, actor = DEFAULT_A
               </div>
             ) : null}
 
+            {planData && <PlanSection team={team} plan={planData} />}
+
+            {diffFiles.length > 0 && <DiffSection files={diffFiles} />}
+
+            {validationsData.length > 0 && <ValidationsSection validations={validationsData} />}
+
             {(detail.status === 'review' || taskId) && taskId && (
               <ReviewComposer
                 taskId={taskId}
-                changedFiles={[]}
+                changedFiles={diffFiles.map((f) => f.path)}
                 actor={actor}
                 onDecided={() => {
                   // Refresh would normally come from a parent. For now we just
@@ -730,6 +839,37 @@ export function TaskDetailModal({ team, taskId, task, onClose, actor = DEFAULT_A
               ))}
             </div>
 
+
+            {(allowedFiles.length > 0 || forbiddenFiles.length > 0) && (
+              <div className="td-side-block">
+                <div className="td-side-label">File scope contract</div>
+                {allowedFiles.length > 0 && (
+                  <div style={{ marginBottom: 8 }}>
+                    <div className="dim" style={{ fontSize: 10.5, marginBottom: 4, letterSpacing: '0.05em', textTransform: 'uppercase' }}>Allowed</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      {allowedFiles.map((f) => (
+                        <div key={f} className="mono" style={{ fontSize: 11, color: 'oklch(0.72 0.15 145)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <Icon name="check" size={9} style={{ marginRight: 4 }} />{f}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {forbiddenFiles.length > 0 && (
+                  <div>
+                    <div className="dim" style={{ fontSize: 10.5, marginBottom: 4, letterSpacing: '0.05em', textTransform: 'uppercase' }}>Forbidden</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      {forbiddenFiles.map((f) => (
+                        <div key={f} className="mono" style={{ fontSize: 11, color: 'oklch(0.65 0.20 25)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          ×{f}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="td-side-block">
               <div className="td-side-label">
                 Attachments <span className="dim">{detail.attachments.length}</span>
@@ -755,6 +895,7 @@ export function TaskDetailModal({ team, taskId, task, onClose, actor = DEFAULT_A
               ))}
             </div>
           </aside>
+
         </div>
 
         <div className="td-composer">
@@ -784,16 +925,8 @@ export function TaskDetailModal({ team, taskId, task, onClose, actor = DEFAULT_A
               disabled={posting}
             />
             <div className="composer-actions">
-              <div style={{ display: 'flex', gap: 4 }}>
-                <button className="icon-btn" type="button"><Icon name="paperclip" size={14} /></button>
-                <button className="icon-btn" type="button"><Icon name="mic" size={14} /></button>
-                <button className="btn btn-sm btn-ghost" type="button">
-                  <Icon name="workflow" size={12} /> Suggest a task
-                </button>
-              </div>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                 {postError && <span style={{ color: 'var(--err)', fontSize: 11 }}>{postError}</span>}
-                <button className="btn btn-sm" type="button" disabled={posting}>Approve</button>
                 <button
                   className="btn btn-sm btn-primary"
                   type="button"

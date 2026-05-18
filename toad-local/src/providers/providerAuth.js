@@ -99,14 +99,15 @@ const PROVIDER_COMMANDS = Object.freeze({
   opencode: {
     label: 'OpenCode',
     cli: 'opencode',
-    loginArgs: ['auth', 'login'],
-    logoutArgs: ['auth', 'logout'],
-    supported: false,
+    manualLogin: true,
+    loginInstructions: 'Run `opencode providers login` in a terminal or configure provider API credentials. TOAD will pick up the auth state automatically once OpenCode has credentials.',
+    logoutArgs: ['providers', 'logout'],
+    supported: true,
     apiOnly: true,
     unsupportedReason: 'OpenCode is API-only — there is no subscription/plan auth flow. Use the API key tab.',
-    statusMode: 'cli',
-    statusArgs: ['auth', 'status'],
-    parseStatus: parseGenericStatus,
+    statusMode: 'file',
+    statusFile: path.join('~', '.local', 'share', 'opencode', 'auth.json'),
+    parseFileStatus: parseOpencodeFileStatus,
   },
 });
 
@@ -476,6 +477,29 @@ function parseGeminiFileStatus(authJson, infoJson, providerId) {
     subscriptionType: pickString(active?.subscription_type),
     authMethod: 'google oauth',
     raw: { hasAccessToken: !!authJson.access_token || !!authJson.token, accounts: accounts.length },
+  };
+}
+
+function parseOpencodeFileStatus(authJson, _infoJson, providerId) {
+  if (!authJson || typeof authJson !== 'object' || Array.isArray(authJson)) {
+    return { providerId, supported: true, apiOnly: true, signedIn: false, reason: 'opencode auth.json is empty or invalid' };
+  }
+  const providers = Object.entries(authJson)
+    .filter(([, value]) => value && typeof value === 'object')
+    .map(([key]) => key);
+  if (providers.length === 0) {
+    return { providerId, supported: true, apiOnly: true, signedIn: false, reason: 'opencode auth.json contains no provider credentials' };
+  }
+  return {
+    providerId,
+    supported: true,
+    apiOnly: true,
+    signedIn: true,
+    user: null,
+    plan: null,
+    subscriptionType: null,
+    authMethod: 'opencode provider credentials',
+    raw: { providers },
   };
 }
 

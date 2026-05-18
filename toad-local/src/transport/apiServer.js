@@ -337,6 +337,7 @@ function normalizeAllowedOrigins(value) {
 const DEFAULT_ALLOWED_ORIGINS = Object.freeze([
   'http://localhost:5173',
   'http://127.0.0.1:5173',
+  'http://tauri.localhost',
 ]);
 
 const STATIC_MIME = Object.freeze({

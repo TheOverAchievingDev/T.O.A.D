@@ -66,6 +66,7 @@ export const COMMANDS = Object.freeze({
   PROVIDER_AUTH_STATUS: 'provider_auth_status',
   PROVIDER_AUTH_LOGIN: 'provider_auth_login',
   PROVIDER_AUTH_LOGOUT: 'provider_auth_logout',
+  PROVIDER_MODEL_LIST: 'provider_model_list',
   RAILWAY_GET_CONNECTION_STRING: 'railway_get_connection_string',
   RAILWAY_LINK: 'railway_link',
   RAILWAY_PROVISION_DB: 'railway_provision_db',

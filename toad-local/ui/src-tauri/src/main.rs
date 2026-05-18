@@ -17,6 +17,12 @@ use std::process::{Child, Command};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, RunEvent, State, WindowEvent};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 /// Holds the spawned orchestrator child + the resolved script + project
 /// dir so we can respawn after a `switch_project` call. The script path
 /// is stable for the app's lifetime; the project path changes at runtime.
@@ -147,6 +153,8 @@ fn spawn_api(app: &AppHandle, project_dir: &Path, script: &Path, project_cwd: &s
     // it as "no project loaded" and starts in degraded mode. The UI
     // shows the picker until the user opens a folder.
     cmd.env("TOAD_PROJECT_CWD", project_cwd);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
 
     match cmd.spawn() {
         Ok(child) => {

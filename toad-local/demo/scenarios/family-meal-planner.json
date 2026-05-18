@@ -1,0 +1,291 @@
+{
+  "project": {
+    "name": "Family Meal Planner",
+    "slug": "family-meal-planner",
+    "idea": "A practical meal planning app for busy families with picky eaters, shared grocery lists, budget-aware recipes, and substitution suggestions."
+  },
+  "workspace": {
+    "defaultRoot": "C:\\SymphonyDemo\\family-meal-planner"
+  },
+  "foundry": {
+    "sessionId": "demo-family-meal-planner",
+    "title": "Family Meal Planner",
+    "provider": "anthropic",
+    "messages": [
+      {
+        "role": "user",
+        "text": "I want a family meal planning app. The big problem is that everyone has different dislikes, allergies, and schedules."
+      },
+      {
+        "role": "assistant",
+        "text": "Let's lock the product shape before the team builds. I need to capture users, rules for substitutions, grocery workflows, and what success looks like."
+      },
+      {
+        "role": "user",
+        "text": "The first version should be a web app. Parents can build a weekly plan, mark dislikes for each person, and get a grocery list."
+      },
+      {
+        "role": "assistant",
+        "text": "Good. I will produce the founding docs the agents need: product brief, technical spec, data model, roadmap, and acceptance criteria."
+      }
+    ],
+    "artifacts": [
+      {
+        "kind": "product_brief",
+        "title": "Product brief",
+        "targetPath": "docs/foundry/product-brief.md",
+        "status": "approved",
+        "content": "# Family Meal Planner - Product Brief\n\n## Audience\nBusy parents who already know that AI can generate recipes but need a real, owned app that respects family preferences, schedules, allergies, and budget.\n\n## Core promise\nTurn a messy set of family constraints into a weekly plan, then produce a grocery list that can actually be used at the store.\n\n## MVP outcomes\n- Create household members with dislikes, favorites, dietary restrictions, and allergy flags.\n- Generate or manually assemble a seven day meal plan.\n- Swap meals without breaking restrictions.\n- Produce a consolidated grocery list grouped by store section.\n- Explain substitutions in plain language so the family trusts the plan.\n\n## Non-goals\n- Restaurant delivery.\n- Calorie tracking.\n- Social feed features.\n"
+      },
+      {
+        "kind": "technical_spec",
+        "title": "Technical spec",
+        "targetPath": "docs/foundry/technical-spec.md",
+        "status": "approved",
+        "content": "# Technical Spec\n\n## Stack\n- React + TypeScript for the frontend.\n- Node API routes for planning and grocery-list generation.\n- Prisma with Postgres for households, recipes, constraints, and plans.\n\n## System modules\n1. Household profile manager.\n2. Recipe catalog and tagging.\n3. Constraint engine for allergies, dislikes, and schedules.\n4. Meal plan board.\n5. Grocery list compiler.\n6. Review and drift checks against this Foundry spec.\n\n## Quality bar\nEvery generated plan must preserve allergy constraints. Dislikes can be overridden, but allergies cannot.\n"
+      },
+      {
+        "kind": "data_model",
+        "title": "Prisma data model",
+        "targetPath": "docs/foundry/prisma-schema.md",
+        "status": "approved",
+        "content": "# Prisma Schema Draft\n\n```prisma\nmodel Household {\n  id        String   @id @default(cuid())\n  name      String\n  members   Member[]\n  recipes   Recipe[]\n  mealPlans MealPlan[]\n}\n\nmodel Member {\n  id          String @id @default(cuid())\n  householdId String\n  name        String\n  dislikes    String[]\n  allergies   String[]\n  favorites   String[]\n}\n\nmodel Recipe {\n  id          String @id @default(cuid())\n  householdId String\n  title       String\n  ingredients Json\n  tags        String[]\n  prepMinutes Int\n}\n\nmodel MealPlan {\n  id          String @id @default(cuid())\n  householdId String\n  weekStart   DateTime\n  meals       MealPlanItem[]\n}\n```\n"
+      },
+      {
+        "kind": "roadmap",
+        "title": "Build roadmap",
+        "targetPath": "docs/foundry/roadmap.md",
+        "status": "approved",
+        "content": "# Build Roadmap\n\n## Slice 1 - Data foundation\nCreate household, member, recipe, and meal plan models with seed data.\n\n## Slice 2 - Planning UI\nBuild a weekly board that shows breakfast, lunch, and dinner slots.\n\n## Slice 3 - Preference engine\nApply hard allergy rules and soft dislike rules to recipe selection.\n\n## Slice 4 - Grocery list\nCompile ingredients across the week, group by store section, and allow checking off items.\n\n## Slice 5 - Drift review\nCompare implementation against the founding docs before merge.\n"
+      },
+      {
+        "kind": "acceptance_criteria",
+        "title": "Acceptance criteria",
+        "targetPath": "docs/foundry/acceptance-criteria.md",
+        "status": "approved",
+        "content": "# Acceptance Criteria\n\n- A parent can create at least three household members.\n- Each member can store dislikes and allergies.\n- The weekly board can hold at least 21 meal slots.\n- The planner never assigns a recipe containing a member allergy.\n- Grocery output groups ingredients by produce, dairy, meat, pantry, and frozen.\n- Review notes show whether changed files align with the Foundry docs.\n"
+      }
+    ]
+  },
+  "team": {
+    "teamId": "family-meal-planner",
+    "validation": {
+      "testCommand": "node -e \"console.log('demo validation passed')\""
+    },
+    "members": [
+      {
+        "agentId": "lead",
+        "role": "lead",
+        "providerId": "anthropic",
+        "model": "claude-sonnet-4",
+        "summary": "Coordinating Foundry docs, task delegation, and merge readiness."
+      },
+      {
+        "agentId": "developer",
+        "role": "developer",
+        "providerId": "openai",
+        "model": "gpt-5-codex",
+        "summary": "Building the data foundation and meal planning board."
+      },
+      {
+        "agentId": "tester",
+        "role": "tester",
+        "providerId": "gemini",
+        "model": "gemini-2.5-pro",
+        "summary": "Checking constraints, test coverage, and validation output."
+      },
+      {
+        "agentId": "reviewer",
+        "role": "reviewer",
+        "providerId": "anthropic",
+        "model": "claude-opus-4.7",
+        "summary": "Reviewing implementation against the founding docs and drift report."
+      }
+    ]
+  },
+  "tasks": [
+    {
+      "taskId": "FMP-001",
+      "subject": "Create household and recipe data model",
+      "description": "Add the first Prisma-style schema draft and repository seed objects for households, members, recipes, and meal plans.",
+      "ownerId": "developer",
+      "status": "in_progress",
+      "allowedFiles": [
+        "docs/foundry/prisma-schema.md",
+        "src/domain/meal-planner/**"
+      ],
+      "acceptanceCriteria": [
+        "Households can contain multiple members.",
+        "Allergy fields are modeled separately from dislikes."
+      ]
+    },
+    {
+      "taskId": "FMP-002",
+      "subject": "Build preference questionnaire",
+      "description": "Create the onboarding flow that asks for allergies, dislikes, favorite meals, budget, and cooking schedule.",
+      "ownerId": "developer",
+      "status": "review",
+      "files": [
+        "src/ui/PreferenceQuestionnaire.tsx",
+        "src/domain/meal-planner/preferences.ts"
+      ],
+      "diff": "diff --git a/src/ui/PreferenceQuestionnaire.tsx b/src/ui/PreferenceQuestionnaire.tsx\nnew file mode 100644\nindex 0000000..a8c20f4\n--- /dev/null\n+++ b/src/ui/PreferenceQuestionnaire.tsx\n@@ -0,0 +1,9 @@\n+export function PreferenceQuestionnaire() {\n+  return <section>Family preferences</section>;\n+}\n",
+      "reviewSummary": "Adds the first questionnaire surface and stores allergies separately from dislikes."
+    },
+    {
+      "taskId": "FMP-003",
+      "subject": "Add substitution rules and validation tests",
+      "description": "Verify that allergy rules are hard blocks while dislikes produce warnings and substitution suggestions.",
+      "ownerId": "tester",
+      "status": "testing",
+      "validation": {
+        "kind": "test",
+        "command": "node -e \"console.log('preference tests passed')\""
+      }
+    },
+    {
+      "taskId": "FMP-004",
+      "subject": "Compile grocery list from weekly plan",
+      "description": "Group ingredients by store section and dedupe repeated pantry items.",
+      "ownerId": "developer",
+      "status": "ready"
+    },
+    {
+      "taskId": "FMP-005",
+      "subject": "Review drift against Foundry docs",
+      "description": "Confirm the team is still building the product described by the founding documents.",
+      "ownerId": "reviewer",
+      "status": "pending"
+    }
+  ],
+  "runtimeScripts": {
+    "lead": [
+      {
+        "type": "text",
+        "delayMs": 900,
+        "text": "I have the Foundry docs loaded. I am splitting the app into data, questionnaire, testing, and grocery-list work."
+      },
+      {
+        "type": "tool",
+        "delayMs": 1100,
+        "name": "mcp__toad-local__message_send",
+        "input": {
+          "to": "developer",
+          "text": "Start with the household and preference model. Keep allergy rules hard-blocked."
+        }
+      },
+      {
+        "type": "text",
+        "delayMs": 1200,
+        "text": "Developer has the first implementation task, tester is watching allergy coverage, and reviewer is tracking drift."
+      }
+    ],
+    "developer": [
+      {
+        "type": "text",
+        "delayMs": 800,
+        "text": "I am adding the household model and preference questionnaire. The data model follows the Prisma draft from Foundry."
+      },
+      {
+        "type": "tool",
+        "delayMs": 900,
+        "name": "mcp__toad-local__task_comment",
+        "input": {
+          "taskId": "FMP-001",
+          "text": "Implemented household, member, and recipe seed shapes. Allergies are separate from dislikes."
+        }
+      },
+      {
+        "type": "text",
+        "delayMs": 1300,
+        "text": "The first review package is ready for the preference questionnaire. I kept files inside the planned scope."
+      }
+    ],
+    "tester": [
+      {
+        "type": "text",
+        "delayMs": 1000,
+        "text": "I am checking that the substitution engine refuses allergy conflicts and only warns for dislikes."
+      },
+      {
+        "type": "tool",
+        "delayMs": 900,
+        "name": "mcp__toad-local__validation_run",
+        "input": {
+          "taskId": "FMP-003",
+          "kind": "test"
+        }
+      },
+      {
+        "type": "text",
+        "delayMs": 1000,
+        "text": "Validation is passing in the demo run. Next I want coverage for grocery section grouping."
+      }
+    ],
+    "reviewer": [
+      {
+        "type": "text",
+        "delayMs": 1000,
+        "text": "I am comparing the changed questionnaire files against the product brief and acceptance criteria."
+      },
+      {
+        "type": "tool",
+        "delayMs": 900,
+        "name": "mcp__toad-local__review_request",
+        "input": {
+          "taskId": "FMP-002",
+          "summary": "Questionnaire matches the Foundry docs and keeps allergy handling visible.",
+          "files": [
+            "src/ui/PreferenceQuestionnaire.tsx",
+            "src/domain/meal-planner/preferences.ts"
+          ]
+        }
+      },
+      {
+        "type": "text",
+        "delayMs": 1100,
+        "text": "Scope drift is clean for this review. The app is still aligned with the founding docs."
+      }
+    ]
+  },
+  "seedFiles": [
+    {
+      "path": "README.md",
+      "content": "# Family Meal Planner\n\nDemo workspace generated by Symphony AI's desktop demo recorder.\n"
+    },
+    {
+      "path": "src/domain/meal-planner/preferences.ts",
+      "content": "export const preferenceRules = {\n  allergiesAreHardBlocks: true,\n  dislikesAreWarnings: true,\n};\n"
+    },
+    {
+      "path": "src/ui/PreferenceQuestionnaire.tsx",
+      "content": "export function PreferenceQuestionnaire() {\n  return <section>Family preferences</section>;\n}\n"
+    }
+  ],
+  "scenes": [
+    {
+      "name": "Foundry",
+      "durationMs": 12000,
+      "navTitle": "Foundry",
+      "caption": "Turn the idea into founding docs."
+    },
+    {
+      "name": "Cockpit flow",
+      "durationMs": 16000,
+      "navTitle": "Cockpit",
+      "caption": "Watch the mixed-provider team coordinate work."
+    },
+    {
+      "name": "Code",
+      "durationMs": 10000,
+      "navTitle": "Code",
+      "caption": "Open the real repo files behind the plan."
+    },
+    {
+      "name": "Drift",
+      "durationMs": 10000,
+      "navTitle": "Drift",
+      "caption": "Check alignment against the founding docs."
+    }
+  ]
+}

@@ -263,7 +263,7 @@ test('ApiServer omits ACAO when request Origin is not on the allow-list', async 
   assert.equal(res.headers['access-control-allow-origin'], undefined);
 });
 
-test('ApiServer defaults allowedOrigins to localhost:5173 and 127.0.0.1:5173', async (t) => {
+test('ApiServer defaults allowedOrigins to dev and packaged Tauri origins', async (t) => {
   const eventBus = new RuntimeEventBus();
   const server = new ApiServer({
     eventBus,
@@ -284,9 +284,15 @@ test('ApiServer defaults allowedOrigins to localhost:5173 and 127.0.0.1:5173', a
     { actor: { teamId: 'team-a', agentId: 'operator' }, method: 'task_list' },
     { Origin: 'http://127.0.0.1:5173' }
   );
+  const c = await postJson(
+    port,
+    { actor: { teamId: 'team-a', agentId: 'operator' }, method: 'task_list' },
+    { Origin: 'http://tauri.localhost' }
+  );
 
   assert.equal(a.headers['access-control-allow-origin'], 'http://localhost:5173');
   assert.equal(b.headers['access-control-allow-origin'], 'http://127.0.0.1:5173');
+  assert.equal(c.headers['access-control-allow-origin'], 'http://tauri.localhost');
 });
 
 test('ApiServer allowedOrigins "*" echoes any origin', async (t) => {

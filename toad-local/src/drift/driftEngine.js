@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+﻿import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -404,11 +404,42 @@ export class DriftEngine {
     // failed/partial run doesn't suppress the next periodic retry).
     this.#lastRunAt.set(teamId, this.now());
 
-    // Step D: Reap resolved corrections after persisting.
     if (typeof this.store.reapResolvedCorrections === 'function') {
       this.store.reapResolvedCorrections({ teamId, taskBoard: this.deps?.taskBoard });
     }
 
+    // Step E: Broker notification for gate-mode constitution findings.
+    // Proactively push a message to the team so the lead agent is alerted
+    // without needing to poll drift_run. Only fires for gate-mode findings
+    // (observe-mode surfaces in the UI drift stream without blocking;
+    // messaging on every observe hit would spam the inbox on every run).
+    const gateFindings = allFindings.filter(
+      (f) => f.constitutionMode === 'gate' && !f.correctionTaskId,
+    );
+    if (gateFindings.length > 0 && this.deps?.broker
+        && typeof this.deps.broker.appendMessage === 'function') {
+      const titles = gateFindings.slice(0, 5).map((f) => `• ${f.title}`).join('\n');
+      const extra = gateFindings.length > 5 ? `\n\u2026and ${gateFindings.length - 5} more.` : '';
+      const text = [
+        `[drift] ${gateFindings.length} gate-mode constitution violation${gateFindings.length === 1 ? '' : 's'} detected`,
+        'These will block merge_ready \u2192 done until resolved:\n' + titles + extra,
+        'Run `drift_run` to see full findings, or use `drift_correction_create` to open a remediation task.',
+      ].join('\n\n');
+      try {
+        this.deps.broker.appendMessage({
+          teamId,
+          idempotencyKey: `drift-gate-notify-${runId}`,
+          from: { kind: 'system', id: 'drift-engine' },
+          to: { kind: 'team' },
+          kind: 'system',
+          text,
+          taskRefs: [],
+          metadata: { source: 'drift_gate_violation', runId, findingCount: gateFindings.length },
+        });
+      } catch {
+        // Non-fatal — notification failure must never abort the drift run.
+      }
+    }
     const history = this.store.listScoreHistory({ teamId, limit: 30 })
       .map((h) => ({ runId: h.runId, teamScore: h.teamScore, createdAt: h.createdAt }));
 

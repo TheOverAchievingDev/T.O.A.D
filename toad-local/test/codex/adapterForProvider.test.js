@@ -4,6 +4,8 @@ import { EventEmitter } from 'node:events';
 import { createAdapterForProvider } from '../../src/runtime/adapterForProvider.js';
 import { ClaudeStreamJsonAdapter } from '../../src/runtime/ClaudeStreamJsonAdapter.js';
 import { CodexExecAdapter } from '../../src/runtime/CodexExecAdapter.js';
+import { GeminiExecAdapter } from '../../src/runtime/GeminiExecAdapter.js';
+import { OpencodeExecAdapter } from '../../src/runtime/OpencodeExecAdapter.js';
 import { RuntimeSupervisor } from '../../src/runtime/RuntimeSupervisor.js';
 
 function fakeChild() { const c = new EventEmitter(); c.stdout = new EventEmitter(); c.stdin = { writable: true }; return c; }
@@ -53,4 +55,26 @@ test('createAdapterForProvider threads sessionStore + turnTimeoutMs into the Cod
   // plan draft on purpose. Intent: the Claude branch never receives sessionStore.
   assert.equal(claude.providerId, 'claude');
   assert.equal(claude.sessionStore, undefined);
+});
+
+test('gemini routes to GeminiExecAdapter (no child needed)', () => {
+  const a = createAdapterForProvider({ runtimeId: 'r', teamId: 't', agentId: 'a', child: null, providerId: 'gemini', cwd: '/w', systemPrompt: 'p' });
+  assert.ok(a instanceof GeminiExecAdapter);
+  assert.equal(a.providerId, 'gemini');
+});
+
+test('opencode routes to OpencodeExecAdapter and keeps model args', () => {
+  const a = createAdapterForProvider({
+    runtimeId: 'r',
+    teamId: 't',
+    agentId: 'a',
+    child: null,
+    providerId: 'opencode',
+    cwd: '/w',
+    systemPrompt: 'p',
+    args: ['--model', 'deepseek/deepseek-v4'],
+  });
+  assert.ok(a instanceof OpencodeExecAdapter);
+  assert.equal(a.providerId, 'opencode');
+  assert.deepEqual(a.args, ['--model', 'deepseek/deepseek-v4']);
 });

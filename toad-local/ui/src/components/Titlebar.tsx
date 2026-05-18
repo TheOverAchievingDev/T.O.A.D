@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Icon } from './Icon';
+
 
 /**
  * Phase 1 Titlebar — four-zone layout below the Menubar.
@@ -42,9 +43,17 @@ export interface TitlebarProps {
   activeProjectPath?: string | null;
 
   /** Click on the project pill — Phase 1 routes to the existing
-   *  ProjectPicker screen; Phase 2 replaces with a real popover. */
+   *  ProjectPicker screen; used as the "Browse..." fallback in the
+   *  Phase 2 popover when the user wants the full picker. */
   onOpenProjectDropdown: () => void;
   onAddProject: () => void;
+
+  /** Phase 2: project list for the inline popover. When provided
+   *  (and onSelectProject is set), the pill opens a compact dropdown
+   *  instead of navigating to the full ProjectPicker screen. */
+  projects?: Array<{ name: string; path: string }>;
+  onSelectProject?: (path: string) => void;
+
 
   /** Center palette trigger. */
   onOpenCommandPalette?: () => void;
@@ -97,14 +106,30 @@ export function Titlebar({
   totalRuntimes = 0,
   onStopTeam,
   windowControls,
+  projects,
+  onSelectProject,
 }: TitlebarProps) {
   const [phIndex, setPhIndex] = useState(0);
+  const [pillOpen, setPillOpen] = useState(false);
+  const pillRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const id = window.setInterval(() => {
       setPhIndex((i) => (i + 1) % PLACEHOLDERS.length);
     }, 4200);
     return () => window.clearInterval(id);
   }, []);
+  // Close popover on outside click.
+  useEffect(() => {
+    if (!pillOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (pillRef.current && !pillRef.current.contains(e.target as Node)) {
+        setPillOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [pillOpen]);
+
 
   // Derive a short path prefix from the absolute project path for the
   // pill's tertiary context (e.g. "~/projects/" before "harvest").
@@ -119,16 +144,110 @@ export function Titlebar({
           Symphony
         </div>
         <span className="title-sep">/</span>
-        <button
-          className="project-pill"
-          type="button"
-          onClick={onOpenProjectDropdown}
-          title={activeProjectPath ?? 'Open project picker'}
-        >
-          {pathPrefix && <span className="ctx">{pathPrefix}</span>}
-          <span className="label">{activeProjectName ?? 'no project'}</span>
-          <Icon name="chevronDown" size={12} className="chev" />
-        </button>
+        <div className="project-pill-wrap" ref={pillRef} style={{ position: 'relative' }}>
+          <button
+            className="project-pill"
+            type="button"
+            onClick={() => {
+              if (projects && projects.length > 0 && onSelectProject) {
+                setPillOpen((o) => !o);
+              } else {
+                onOpenProjectDropdown();
+              }
+            }}
+            title={activeProjectPath ?? 'Open project picker'}
+            aria-expanded={pillOpen}
+            aria-haspopup="listbox"
+          >
+            {pathPrefix && <span className="ctx">{pathPrefix}</span>}
+            <span className="label">{activeProjectName ?? 'no project'}</span>
+            <Icon name="chevronDown" size={12} className="chev"
+              style={{ transform: pillOpen ? 'rotate(180deg)' : undefined,
+                       transition: 'transform 150ms ease' }}
+            />
+          </button>
+          {pillOpen && projects && projects.length > 0 && (
+            <div
+              className="project-pill-popover"
+              role="listbox"
+              style={{
+                position: 'absolute',
+                top: 'calc(100% + 6px)',
+                left: 0,
+                minWidth: 260,
+                maxWidth: 380,
+                background: 'var(--bg-panel, #1a1a2e)',
+                border: '1px solid var(--border, rgba(255,255,255,0.10))',
+                borderRadius: 8,
+                boxShadow: '0 8px 32px rgba(0,0,0,0.45)',
+                zIndex: 9999,
+                overflow: 'hidden',
+              }}
+            >
+              <div style={{ padding: '6px 0', maxHeight: 300, overflowY: 'auto' }}>
+                {projects.map((p) => (
+                  <button
+                    key={p.path}
+                    type="button"
+                    role="option"
+                    aria-selected={p.path === activeProjectPath}
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'flex-start',
+                      gap: 2,
+                      width: '100%',
+                      padding: '7px 14px',
+                      background: p.path === activeProjectPath
+                        ? 'var(--accent-wash, rgba(100,120,255,0.12))' : 'transparent',
+                      border: 'none',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                    }}
+                    onClick={() => {
+                      onSelectProject!(p.path);
+                      setPillOpen(false);
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-hover, rgba(255,255,255,0.06))';
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.background =
+                        p.path === activeProjectPath
+                          ? 'var(--accent-wash, rgba(100,120,255,0.12))' : 'transparent';
+                    }}
+                  >
+                    <span style={{ fontSize: 13, fontWeight: p.path === activeProjectPath ? 600 : 400,
+                        color: p.path === activeProjectPath ? 'var(--accent)' : 'var(--fg)' }}>
+                      {p.name}
+                    </span>
+                    <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-dim)',
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        maxWidth: 340 }}>
+                      {p.path}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <div style={{ borderTop: '1px solid var(--border, rgba(255,255,255,0.08))', padding: '6px 8px' }}>
+                <button
+                  type="button"
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    width: '100%', padding: '5px 8px',
+                    background: 'transparent', border: 'none',
+                    cursor: 'pointer', fontSize: 12,
+                    color: 'var(--fg-muted)',
+                    borderRadius: 4,
+                  }}
+                  onClick={() => { setPillOpen(false); onOpenProjectDropdown(); }}
+                >
+                  <Icon name="plus" size={12} /> Browse…
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
         <button
           className="icon-btn"
           type="button"
@@ -138,6 +257,7 @@ export function Titlebar({
           <Icon name="plus" size={14} />
         </button>
       </div>
+
 
       <div className="title-center">
         <button

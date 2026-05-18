@@ -1,0 +1,352 @@
+{
+  "generatedAt": "2026-05-17T03:25:27.417Z",
+  "scenario": {
+    "name": "Family Meal Planner",
+    "slug": "family-meal-planner",
+    "idea": "A practical meal planning app for busy families with picky eaters, shared grocery lists, budget-aware recipes, and substitution suggestions."
+  },
+  "workspacePath": "C:\\SymphonyDemo\\family-meal-planner",
+  "viewport": null,
+  "captures": [
+    {
+      "ok": true,
+      "id": "cockpit-for-me",
+      "title": "Cockpit - FOR me overview",
+      "group": "cockpit",
+      "description": "Cockpit - FOR me overview",
+      "warnings": [],
+      "file": "00-cockpit-for-me.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\00-cockpit-for-me.png"
+    },
+    {
+      "ok": true,
+      "id": "cockpit-with-me",
+      "title": "Cockpit - WITH me IDE mode",
+      "group": "cockpit",
+      "description": "Cockpit - WITH me IDE mode",
+      "warnings": [],
+      "file": "01-cockpit-with-me.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\01-cockpit-with-me.png"
+    },
+    {
+      "ok": true,
+      "id": "cockpit-bottom-validations",
+      "title": "Cockpit - validation bottom panel",
+      "group": "cockpit",
+      "description": "Cockpit - validation bottom panel",
+      "warnings": [],
+      "file": "02-cockpit-bottom-validations.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\02-cockpit-bottom-validations.png"
+    },
+    {
+      "ok": true,
+      "id": "foundry-discovery",
+      "title": "Foundry - discovery chat and docs",
+      "group": "foundry",
+      "description": "Foundry - discovery chat and docs",
+      "warnings": [],
+      "file": "03-foundry-discovery.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\03-foundry-discovery.png"
+    },
+    {
+      "ok": true,
+      "id": "foundry-roadmap-artifact",
+      "title": "Foundry - roadmap artifact selected",
+      "group": "foundry",
+      "description": "Foundry - roadmap artifact selected",
+      "warnings": [],
+      "file": "04-foundry-roadmap-artifact.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\04-foundry-roadmap-artifact.png"
+    },
+    {
+      "ok": true,
+      "id": "code-explorer",
+      "title": "Code - project explorer",
+      "group": "code",
+      "description": "Code - project explorer",
+      "warnings": [],
+      "file": "05-code-explorer.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\05-code-explorer.png"
+    },
+    {
+      "ok": true,
+      "id": "code-search",
+      "title": "Code - search pane",
+      "group": "code",
+      "description": "Code - search pane",
+      "warnings": [],
+      "file": "06-code-search.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\06-code-search.png"
+    },
+    {
+      "ok": true,
+      "id": "tasks-board",
+      "title": "Tasks - status board",
+      "group": "tasks",
+      "description": "Tasks - status board",
+      "warnings": [],
+      "file": "07-tasks-board.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\07-tasks-board.png"
+    },
+    {
+      "ok": true,
+      "id": "tasks-by-assignee",
+      "title": "Tasks - grouped by assignee",
+      "group": "tasks",
+      "description": "Tasks - grouped by assignee",
+      "warnings": [],
+      "file": "08-tasks-by-assignee.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\08-tasks-by-assignee.png"
+    },
+    {
+      "ok": true,
+      "id": "drift-monitor",
+      "title": "Drift monitor",
+      "group": "watch",
+      "description": "Drift monitor",
+      "warnings": [],
+      "file": "09-drift-monitor.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\09-drift-monitor.png"
+    },
+    {
+      "ok": true,
+      "id": "costs",
+      "title": "Costs and usage",
+      "group": "watch",
+      "description": "Costs and usage",
+      "warnings": [],
+      "file": "10-costs.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\10-costs.png"
+    },
+    {
+      "ok": true,
+      "id": "audit",
+      "title": "Audit log",
+      "group": "inspect",
+      "description": "Audit log",
+      "warnings": [],
+      "file": "11-audit.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\11-audit.png"
+    },
+    {
+      "ok": true,
+      "id": "project-picker",
+      "title": "Project picker",
+      "group": "project",
+      "description": "Project picker",
+      "warnings": [],
+      "file": "12-project-picker.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\12-project-picker.png"
+    },
+    {
+      "ok": true,
+      "id": "create-team",
+      "title": "Create team from Foundry plan",
+      "group": "workflow",
+      "description": "Create team from Foundry plan",
+      "warnings": [],
+      "file": "13-create-team.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\13-create-team.png"
+    },
+    {
+      "ok": true,
+      "id": "create-task",
+      "title": "Create task modal",
+      "group": "workflow",
+      "description": "Create task modal",
+      "warnings": [],
+      "file": "14-create-task.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\14-create-task.png"
+    },
+    {
+      "ok": true,
+      "id": "task-detail",
+      "title": "Task detail and review",
+      "group": "workflow",
+      "description": "Task detail and review",
+      "warnings": [],
+      "file": "15-task-detail.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\15-task-detail.png"
+    },
+    {
+      "ok": true,
+      "id": "drawer-runtimes",
+      "title": "Runtimes drawer",
+      "group": "drawers",
+      "description": "Runtimes drawer",
+      "warnings": [],
+      "file": "16-drawer-runtimes.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\16-drawer-runtimes.png"
+    },
+    {
+      "ok": true,
+      "id": "drawer-notifications",
+      "title": "Notifications drawer",
+      "group": "drawers",
+      "description": "Notifications drawer",
+      "warnings": [],
+      "file": "17-drawer-notifications.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\17-drawer-notifications.png"
+    },
+    {
+      "ok": true,
+      "id": "drawer-approvals",
+      "title": "Approvals drawer",
+      "group": "drawers",
+      "description": "Approvals drawer",
+      "warnings": [],
+      "file": "18-drawer-approvals.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\18-drawer-approvals.png"
+    },
+    {
+      "ok": true,
+      "id": "drawer-diagnostics",
+      "title": "Diagnostics drawer",
+      "group": "drawers",
+      "description": "Diagnostics drawer",
+      "warnings": [],
+      "file": "19-drawer-diagnostics.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\19-drawer-diagnostics.png"
+    },
+    {
+      "ok": true,
+      "id": "providers-modal",
+      "title": "Providers modal",
+      "group": "drawers",
+      "description": "Providers modal",
+      "warnings": [],
+      "file": "20-providers-modal.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\20-providers-modal.png"
+    },
+    {
+      "ok": true,
+      "id": "command-palette",
+      "title": "Command palette",
+      "group": "workflow",
+      "description": "Command palette",
+      "warnings": [],
+      "file": "21-command-palette.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\21-command-palette.png"
+    },
+    {
+      "ok": true,
+      "id": "settings-general",
+      "title": "Settings - General",
+      "group": "settings",
+      "description": "Settings - General",
+      "warnings": [],
+      "file": "22-settings-general.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\22-settings-general.png"
+    },
+    {
+      "ok": true,
+      "id": "settings-providers",
+      "title": "Settings - Providers",
+      "group": "settings",
+      "description": "Settings - Providers",
+      "warnings": [],
+      "file": "23-settings-providers.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\23-settings-providers.png"
+    },
+    {
+      "ok": true,
+      "id": "settings-foundry",
+      "title": "Settings - Foundry",
+      "group": "settings",
+      "description": "Settings - Foundry",
+      "warnings": [],
+      "file": "24-settings-foundry.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\24-settings-foundry.png"
+    },
+    {
+      "ok": true,
+      "id": "settings-drift",
+      "title": "Settings - Drift",
+      "group": "settings",
+      "description": "Settings - Drift",
+      "warnings": [],
+      "file": "25-settings-drift.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\25-settings-drift.png"
+    },
+    {
+      "ok": true,
+      "id": "settings-plugins",
+      "title": "Settings - Plugins",
+      "group": "settings",
+      "description": "Settings - Plugins",
+      "warnings": [],
+      "file": "26-settings-plugins.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\26-settings-plugins.png"
+    },
+    {
+      "ok": true,
+      "id": "settings-github",
+      "title": "Settings - GitHub",
+      "group": "settings",
+      "description": "Settings - GitHub",
+      "warnings": [],
+      "file": "27-settings-github.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\27-settings-github.png"
+    },
+    {
+      "ok": true,
+      "id": "settings-workspace",
+      "title": "Settings - Workspace",
+      "group": "settings",
+      "description": "Settings - Workspace",
+      "warnings": [],
+      "file": "28-settings-workspace.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\28-settings-workspace.png"
+    },
+    {
+      "ok": true,
+      "id": "settings-risk",
+      "title": "Settings - Risk policies",
+      "group": "settings",
+      "description": "Settings - Risk policies",
+      "warnings": [],
+      "file": "29-settings-risk.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\29-settings-risk.png"
+    },
+    {
+      "ok": true,
+      "id": "settings-mcp",
+      "title": "Settings - MCP servers",
+      "group": "settings",
+      "description": "Settings - MCP servers",
+      "warnings": [],
+      "file": "30-settings-mcp.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\30-settings-mcp.png"
+    },
+    {
+      "ok": true,
+      "id": "settings-notifications",
+      "title": "Settings - Notifications",
+      "group": "settings",
+      "description": "Settings - Notifications",
+      "warnings": [],
+      "file": "31-settings-notifications.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\31-settings-notifications.png"
+    },
+    {
+      "ok": true,
+      "id": "settings-advanced",
+      "title": "Settings - Advanced",
+      "group": "settings",
+      "description": "Settings - Advanced",
+      "warnings": [],
+      "file": "32-settings-advanced.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\32-settings-advanced.png"
+    },
+    {
+      "ok": true,
+      "id": "settings-about",
+      "title": "Settings - About",
+      "group": "settings",
+      "description": "Settings - About",
+      "warnings": [],
+      "file": "33-settings-about.png",
+      "path": "C:\\Project-TOAD\\toad-local\\demo\\screenshots\\family-meal-planner-full\\33-settings-about.png"
+    }
+  ]
+}

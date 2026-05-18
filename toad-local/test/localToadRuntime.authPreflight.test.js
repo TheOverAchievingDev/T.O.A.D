@@ -144,8 +144,10 @@ test('launchAgent proceeds when preflight allows (claude command, projectCwd set
 });
 
 // ── (c) non-claude command: preflight NEVER invoked ──────────────────────────
-// SP1a: 'codex' is now a first-class Codex session path (see test/codex/localToadRuntime.codexLaunch.test.js); this test guards the preflight-skip + launchAgent invariant for the providers that STILL use the launchAgent path (gemini/opencode/generic).
-test('launchAgent skips preflight entirely for non-claude (gemini) commands', async () => {
+// SP1a/SP1b: codex, gemini, and opencode are first-class session paths; this test
+// guards the preflight-skip + launchAgent invariant for providers that
+// still use the persistent launchAgent path (generic/custom command).
+test('launchAgent skips preflight entirely for non-claude persistent commands', async () => {
   const projectCwd = mkdtempSync(join(tmpdir(), 'toad-authpf-'));
   const supervisor = createFakeSupervisor();
   const child = createFakeChild();
@@ -171,13 +173,13 @@ test('launchAgent skips preflight entirely for non-claude (gemini) commands', as
     const result = await runtime.launchAgent({
       teamId: 'team-a',
       agentId: 'lead',
-      runtimeId: 'runtime-gemini-1',
-      command: 'gemini',
+      runtimeId: 'runtime-custom-1',
+      command: 'custom-agent',
     });
 
     assert.equal(preflightCalled, 0, 'preflight must not be invoked for non-claude commands');
     assert.equal(supervisor.calls.length, 1, 'supervisor.launchAgent must be called');
-    assert.equal(result.runtimeId, 'runtime-gemini-1');
+    assert.equal(result.runtimeId, 'runtime-custom-1');
   } finally {
     await runtime.close();
     rmSync(projectCwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

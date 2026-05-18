@@ -41,6 +41,7 @@ import {
   triggerAuthLogout as providerTriggerAuthLogout,
   SUPPORTED_PROVIDERS,
 } from '../providers/providerAuth.js';
+import { listProviderModels } from '../providers/providerModels.js';
 import { PLUGIN_COMMANDS, SUPPORTED_PLUGINS } from '../plugins/pluginRegistry.js';
 import {
   getAuthStatus as pluginGetAuthStatus,
@@ -390,6 +391,8 @@ export class LocalToolFacade {
         return this.#providerAuthLogin(args);
       case COMMANDS.PROVIDER_AUTH_LOGOUT:
         return this.#providerAuthLogout(args);
+      case COMMANDS.PROVIDER_MODEL_LIST:
+        return this.#providerModelList(args);
       case COMMANDS.PLUGIN_LIST_AVAILABLE:
         return this.#pluginListAvailable(actor, args);
       case COMMANDS.PLUGIN_LOGIN:
@@ -2905,6 +2908,8 @@ export class LocalToolFacade {
     return providerGetAuthStatus({
       providerId,
       spawnSyncImpl: this.providerAuthSpawnSync,
+      readFileImpl: this.providerAuthReadFile,
+      statImpl: this.providerAuthStat,
     });
   }
 
@@ -2921,6 +2926,16 @@ export class LocalToolFacade {
     return providerTriggerAuthLogout({
       providerId,
       spawnSyncImpl: this.providerAuthSpawnSync,
+    });
+  }
+
+  #providerModelList(args) {
+    const providerId = requireString(args?.providerId, 'args.providerId');
+    return listProviderModels({
+      providerId,
+      spawnSyncImpl: this.providerAuthSpawnSync,
+      readFileImpl: this.providerAuthReadFile,
+      statImpl: this.providerAuthStat,
     });
   }
 

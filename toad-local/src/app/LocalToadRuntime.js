@@ -39,6 +39,7 @@ import { createAdapterForProvider } from '../runtime/adapterForProvider.js';
 import { makeRuntimeRegistrySessionStore } from '../runtime/codex/runtimeRegistrySessionStore.js';
 import { writeCodexProjectConfig, writeAgentsMd } from '../mcp/codexMcpConfig.js';
 import { writeGeminiProjectConfig, writeGeminiMd } from '../mcp/geminiMcpConfig.js';
+import { writeOpencodeProjectConfig, writeOpencodeInstructions } from '../mcp/opencodeMcpConfig.js';
 import { computeUndeliveredSessionMessages } from '../runtime/codex/reconcileSessionInboxes.js';
 import { spawn as nodeSpawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -303,6 +304,8 @@ export class LocalToadRuntime {
         githubClientId,
         providerAuthSpawn,
         providerAuthSpawnSync,
+        providerAuthReadFile,
+        providerAuthStat,
       });
     const db = this.runtimeRegistry?.db || this.eventLog?.db || null;
     this.sideEffectLog = db ? new SideEffectLog(db) : null;
@@ -574,10 +577,14 @@ export class LocalToadRuntime {
       || (providerForCommand(input && input.command) === 'openai');
     const __isGeminiLaunch = (input && input.providerId === 'gemini')
       || (providerForCommand(input && input.command) === 'gemini');
+    const __isOpencodeLaunch = (input && input.providerId === 'opencode')
+      || (providerForCommand(input && input.command) === 'opencode');
     if (__isCodexLaunch) {
       runtime = await this.#prepareCodexRuntime(scrubbedInput);
     } else if (__isGeminiLaunch) {
       runtime = await this.#prepareGeminiRuntime(scrubbedInput);
+    } else if (__isOpencodeLaunch) {
+      runtime = await this.#prepareOpencodeRuntime(scrubbedInput);
     } else {
       const launchInput = this.#withToadMcpConfig(scrubbedInput);
       if (this.#authPreflightEnabled && isClaudeCommand(input && input.command)) {
@@ -786,6 +793,39 @@ export class LocalToadRuntime {
       agentId: input.agentId,
       runtimeId: input.runtimeId,
       command: input.command,
+      cwd,
+      systemPrompt: input.systemPrompt,
+      taskId: input.taskId,
+      restartPolicy: input.restartPolicy,
+    });
+  }
+
+  async #prepareOpencodeRuntime(input) {
+    const auth = await this.getProviderAuthStatusImpl({ providerId: 'opencode' });
+    if (!auth || auth.signedIn !== true) {
+      throw new Error(
+        `OpenCode not authenticated - run \`opencode providers login\` or configure provider credentials.${auth && auth.reason ? ` (${auth.reason})` : ''}`,
+      );
+    }
+    const cwd = requireLaunchCwd(input);
+    writeOpencodeProjectConfig({
+      projectCwd: cwd,
+      dbPath: this.dbPath,
+      teamId: input.teamId,
+      agentId: input.agentId,
+      role: resolveLaunchRole(input),
+      taskId: input.taskId,
+      runtimeId: input.runtimeId,
+    });
+    if (typeof input.systemPrompt === 'string' && input.systemPrompt.trim().length > 0) {
+      writeOpencodeInstructions({ projectCwd: cwd, content: input.systemPrompt });
+    }
+    return this.supervisor.registerSessionAgent({
+      teamId: input.teamId,
+      agentId: input.agentId,
+      runtimeId: input.runtimeId,
+      command: input.command,
+      args: input.args,
       cwd,
       systemPrompt: input.systemPrompt,
       taskId: input.taskId,

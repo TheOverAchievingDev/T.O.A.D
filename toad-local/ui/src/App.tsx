@@ -719,13 +719,55 @@ function AppInner() {
         // 30s (2026-05-15 report).
         void handleRunDrift();
         return;
-      case 'validations:run':
-        // Validations need the active task's id, which lives in the
-        // Cockpit's selectedTask state. Phase 2c (CockpitWithMe) will
-        // wire a bus from this menu to the active validation runner.
-        // eslint-disable-next-line no-console
-        console.warn('[menu] Run Validations on Active Task — coming in Phase 2c');
+      case 'validations:run': {
+        if (!selectedTaskId) {
+          toasts.toast({
+            id: 'validations-no-task',
+            severity: 'warn',
+            title: 'No task selected',
+            body: 'Open a task in the detail panel first, then use Run › Run Validations.',
+            source: 'validations',
+          });
+          return;
+        }
+        const validTeamId = team.name || activeTeamId;
+        if (!validTeamId) return;
+        const vToastId = `validations-run-${Date.now()}`;
+        toasts.toast({
+          id: vToastId,
+          severity: 'blocking',
+          title: 'Running validations…',
+          body: `Kicking off validation suite for task ${selectedTaskId}.`,
+          source: 'validations',
+        });
+        void callToadApi({
+          actor: { teamId: validTeamId, agentId: 'ui-client', role: 'human' },
+          method: 'validation_run',
+          args: { taskId: selectedTaskId, kinds: ['lint', 'typecheck', 'test', 'build'] },
+          idempotencyKey: `menu-validations-${selectedTaskId}-${Date.now()}`,
+        })
+          .then((result: unknown) => {
+            const r = result as { verdict?: string; summary?: string } | null;
+            const verdict = r?.verdict ?? 'done';
+            toasts.toast({
+              id: vToastId,
+              severity: verdict === 'passed' ? 'success' : verdict === 'failed' ? 'error' : 'warn',
+              title: `Validations ${verdict}`,
+              body: r?.summary ?? `Completed for task ${selectedTaskId}.`,
+              source: 'validations',
+            });
+          })
+          .catch((err: unknown) => {
+            toasts.toast({
+              id: vToastId,
+              severity: 'error',
+              title: 'Validations failed',
+              body: err instanceof Error ? err.message : String(err),
+              source: 'validations',
+            });
+          });
         return;
+      }
       case 'foundry:refine':
         // Foundry refinement passes are per-session; the menu needs to
         // know which session is "active" which is a Phase 3 IA decision.
@@ -817,9 +859,15 @@ function AppInner() {
         setDeveloperMode={(v) => setTweak('developerMode', v)}
         activeProjectName={projectRegistry.active?.name ?? null}
         activeProjectPath={projectRegistry.active?.path ?? null}
-        // Phase 1: clicking the project pill routes to the existing
-        // picker screen. Phase 2 swaps in a real popover dropdown.
+        // Phase 2: clicking the project pill opens an inline popover.
+        // Falls back to the full picker screen when the list is empty
+        // or the user clicks "Browse..." inside the popover.
         onOpenProjectDropdown={() => setTweak('screen', 'picker')}
+        projects={projectRegistry.projects.map((p) => ({ name: p.name, path: p.path }))}
+        onSelectProject={(path) => {
+          const found = projectRegistry.projects.find((p) => p.path === path);
+          if (found) projectRegistry.setActive(found.id);
+        }}
         onAddProject={() => setAddProjectOpen(true)}
         onOpenCommandPalette={togglePalette}
         onOpenNotifs={() => setTweak('showNotifs', true)}

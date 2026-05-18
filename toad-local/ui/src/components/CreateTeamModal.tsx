@@ -8,6 +8,7 @@ import { Icon } from './Icon';
 import { PlanUsagePanel } from './PlanUsagePanel';
 import { callTool, ToadApiError, type Actor } from '@/api/client';
 import { useProjects } from '@/hooks/useProjects';
+import { mergeDynamicProviderModels, modelArgsForProvider } from './createTeamModelArgs';
 
 interface MemberDraft {
   id: number;
@@ -46,6 +47,7 @@ interface CreateTeamModalProps {
 
 type ProjectMode = 'list' | 'custom';
 type EffortLevel = 'default' | 'low' | 'medium' | 'high';
+type ModelLoadState = 'idle' | 'loading' | 'loaded' | 'degraded' | 'error';
 type SubmitState =
   | { kind: 'idle' }
   | { kind: 'creating' }
@@ -77,6 +79,9 @@ export function CreateTeamModal({
     }));
   }, [seed]);
   const [teamName, setTeamName] = useState(seed?.teamName ?? '');
+  const [runtimeProviders, setRuntimeProviders] = useState<Provider[]>(providers);
+  const [opencodeModelState, setOpencodeModelState] = useState<ModelLoadState>('idle');
+  const [opencodeModelNote, setOpencodeModelNote] = useState('');
   const [solo, setSolo] = useState(false);
   const [members, setMembers] = useState<MemberDraft[]>(seededMembers);
   const [expandedMember, setExpandedMember] = useState<number | null>(null);
@@ -95,7 +100,7 @@ export function CreateTeamModal({
   const [customPath, setCustomPath] = useState(seed?.projectPath ?? '');
   const [effort, setEffort] = useState<EffortLevel>('medium');
   const [leadProvider, setLeadProvider] = useState(seed?.leadProvider ?? 'anthropic');
-  const [leadModel, setLeadModel] = useState('Opus 4.6');
+  const [leadModel, setLeadModel] = useState(seed?.leadProvider === 'opencode' ? 'Default' : 'Opus 4.6');
   const [leadPrompt, setLeadPrompt] = useState(seed?.leadPrompt ?? '');
   const [validationInstall, setValidationInstall] = useState('');
   const [validationLint, setValidationLint] = useState('');
@@ -121,6 +126,43 @@ export function CreateTeamModal({
     if (project) return;
     if (recentProjects[0]?.path) setProject(recentProjects[0].path);
   }, [project, projectMode, recentProjects]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRuntimeProviders(providers);
+    setOpencodeModelState('loading');
+    void callTool<{
+      models?: Array<{ id?: string }>;
+      degraded?: boolean;
+      reason?: string | null;
+      authenticatedProviders?: string[];
+    }>({
+      actor,
+      method: 'provider_model_list',
+      args: { providerId: 'opencode' },
+    }).then((result) => {
+      if (cancelled) return;
+      const modelIds = Array.isArray(result.models)
+        ? result.models.map((m) => (typeof m.id === 'string' ? m.id : '')).filter(Boolean)
+        : [];
+      if (modelIds.length > 0) {
+        setRuntimeProviders(mergeDynamicProviderModels(providers, 'opencode', modelIds));
+        setOpencodeModelState(result.degraded ? 'degraded' : 'loaded');
+        const authProviders = Array.isArray(result.authenticatedProviders) ? result.authenticatedProviders : [];
+        setOpencodeModelNote(authProviders.length > 0
+          ? `Free models plus ${authProviders.join(', ')} credentials`
+          : 'Free OpenCode models');
+      } else {
+        setOpencodeModelState('error');
+        setOpencodeModelNote(result.reason || 'Could not load OpenCode models');
+      }
+    }).catch((err) => {
+      if (cancelled) return;
+      setOpencodeModelState('error');
+      setOpencodeModelNote(err instanceof Error ? err.message : 'Could not load OpenCode models');
+    });
+    return () => { cancelled = true; };
+  }, [actor, providers]);
 
   const updateMember = (id: number, patch: Partial<MemberDraft>) =>
     setMembers((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
@@ -149,23 +191,29 @@ export function CreateTeamModal({
     }
 
     const teamId = teamName.trim();
+    const leadModelArgs = modelArgsForProvider(leadProvider, leadModel);
     const lead = {
       agentId: 'lead',
       role: 'lead' as const,
       providerId: leadProvider,
       prompt: leadPrompt,
       skipPermissions: autoApprove,
+      ...(leadModelArgs.length > 0 ? { args: leadModelArgs } : {}),
       ...(cwd ? { cwd } : {}),
     };
     const teammates = solo
       ? []
-      : members.map((m) => ({
-          agentId: m.name.trim() || `agent-${m.id}`,
-          role: m.role,
-          providerId: m.provider,
-          skipPermissions: autoApprove,
-          ...(cwd ? { cwd } : {}),
-        }));
+      : members.map((m) => {
+          const modelArgs = modelArgsForProvider(m.provider, m.model);
+          return {
+            agentId: m.name.trim() || `agent-${m.id}`,
+            role: m.role,
+            providerId: m.provider,
+            skipPermissions: autoApprove,
+            ...(modelArgs.length > 0 ? { args: modelArgs } : {}),
+            ...(cwd ? { cwd } : {}),
+          };
+        });
 
     // Pack validation commands; only include keys the user actually filled in
     // so the backend's normalizer doesn't see empty strings.
@@ -300,7 +348,7 @@ export function CreateTeamModal({
             </div>
             <div style={{ flex: 1, fontSize: 11.5, color: 'var(--fg-muted)' }}>Team Lead — coordinates and delegates</div>
             <button className="member-mini-btn" type="button">
-              <span className="provider-glyph anthropic" />
+              <span className={`provider-glyph ${leadProvider}`} />
               {leadModel}
             </button>
             <span style={{ width: 24 }} />
@@ -308,7 +356,7 @@ export function CreateTeamModal({
 
           {!solo && members.map((m) => {
             const expanded = expandedMember === m.id;
-            const providerEntry = providers.find((p) => p.id === m.provider);
+            const providerEntry = runtimeProviders.find((p) => p.id === m.provider);
             return (
               <div key={m.id}>
                 <div className="member" style={roleStyle(m.role)}>
@@ -351,7 +399,7 @@ export function CreateTeamModal({
                 {expanded && (
                   <div className="model-strip">
                     <span className="label">Provider</span>
-                    {providers.map((p) => (
+                    {runtimeProviders.map((p) => (
                       <button
                         key={p.id}
                         type="button"
@@ -373,6 +421,11 @@ export function CreateTeamModal({
                         {modelName}
                       </button>
                     ))}
+                    {m.provider === 'opencode' && (
+                      <span className="label" title={opencodeModelNote}>
+                        {opencodeModelState === 'loading' ? 'Loading models' : opencodeModelNote}
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
@@ -480,14 +533,14 @@ export function CreateTeamModal({
                 <div className="field">
                   <label>Default model</label>
                   <div className="model-strip" style={{ margin: 0 }}>
-                    {providers.map((p) => (
+                    {runtimeProviders.map((p) => (
                       <button
                         key={p.id}
                         type="button"
                         className={`model-pill ${leadProvider === p.id ? 'active' : ''}`}
                         onClick={() => {
                           setLeadProvider(p.id);
-                          setLeadModel(p.models[1] ?? p.models[0] ?? 'Default');
+                          setLeadModel(p.id === 'opencode' ? 'Default' : (p.models[1] ?? p.models[0] ?? 'Default'));
                         }}
                       >
                         <span className={`provider-glyph ${p.id}`} style={{ marginRight: 4 }} />
@@ -495,7 +548,7 @@ export function CreateTeamModal({
                       </button>
                     ))}
                     <span style={{ width: 1, background: 'var(--border-soft)', alignSelf: 'stretch', margin: '0 4px' }} />
-                    {(providers.find((p) => p.id === leadProvider)?.models ?? []).map((mm) => (
+                    {(runtimeProviders.find((p) => p.id === leadProvider)?.models ?? []).map((mm) => (
                       <button
                         key={mm}
                         type="button"
@@ -505,6 +558,11 @@ export function CreateTeamModal({
                         {mm}
                       </button>
                     ))}
+                    {leadProvider === 'opencode' && (
+                      <span className="label" title={opencodeModelNote}>
+                        {opencodeModelState === 'loading' ? 'Loading models' : opencodeModelNote}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>

@@ -42,6 +42,7 @@ const COMMON_READ_TOOLS = Object.freeze([
   'risk_policy_get',
   'risk_policy_preview',
   'provider_auth_status',
+  'provider_model_list',
   'audit_log_query',
   'foundry_session_list',
   'foundry_session_get',

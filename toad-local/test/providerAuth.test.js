@@ -38,13 +38,17 @@ test('SUPPORTED_PROVIDERS is the expected set', () => {
   assert.deepEqual([...SUPPORTED_PROVIDERS].sort(), ['anthropic', 'gemini', 'opencode', 'openai'].sort());
 });
 
-test('getAuthStatus reports opencode as API-only', () => {
-  const result = getAuthStatus({ providerId: 'opencode' });
+test('getAuthStatus reports opencode credentials from auth file', () => {
+  const result = getAuthStatus({
+    providerId: 'opencode',
+    statImpl: () => ({ isFile: () => true }),
+    readFileImpl: () => JSON.stringify({ deepseek: { type: 'api' }, google: { type: 'api' } }),
+  });
   assert.equal(result.providerId, 'opencode');
-  assert.equal(result.supported, false);
+  assert.equal(result.supported, true);
   assert.equal(result.apiOnly, true);
-  assert.equal(result.signedIn, null);
-  assert.match(result.reason, /API-only|API key/i);
+  assert.equal(result.signedIn, true);
+  assert.deepEqual(result.raw.providers.sort(), ['deepseek', 'google']);
 });
 
 test('getAuthStatus returns unknown-provider error', () => {
@@ -235,10 +239,11 @@ test('triggerAuthLogin(anthropic) returns manual-login instructions instead of a
   assert.equal(spawnCalled, false, 'must NOT spawn for manual-login providers');
 });
 
-test('triggerAuthLogin returns started=false for unsupported providers', () => {
+test('triggerAuthLogin(opencode) returns manual provider-login instructions', () => {
   const result = triggerAuthLogin({ providerId: 'opencode' });
   assert.equal(result.started, false);
-  assert.match(result.reason, /OpenCode|wire|depends on/i);
+  assert.equal(result.manualLogin, true);
+  assert.match(result.reason, /opencode providers login/i);
 });
 
 test('triggerAuthLogin handles spawn throwing for non-manual providers', () => {

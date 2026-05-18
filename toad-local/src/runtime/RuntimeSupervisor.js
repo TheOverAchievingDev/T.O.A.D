@@ -239,11 +239,12 @@ export class RuntimeSupervisor {
     const adapter = this.createAdapter({
       runtimeId, teamId, agentId, child: null,
       providerId: providerForCommand(command) || 'openai',
-      cwd: input.cwd, systemPrompt: input.systemPrompt,
+      cwd: input.cwd, systemPrompt: input.systemPrompt, args: input.args,
     });
+    const args = Array.isArray(input.args) ? input.args.map((entry) => String(entry)) : [];
     const record = {
       runtimeId, teamId, agentId, command,
-      args: [], cwd: input.cwd || null,
+      args, cwd: input.cwd || null,
       env: {}, stdio: null, deliveryMode: 'session_turn',
       taskId: typeof input.taskId === 'string' && input.taskId.length > 0 ? input.taskId : null,
       child: null, adapter, status: 'running', pid: null,
