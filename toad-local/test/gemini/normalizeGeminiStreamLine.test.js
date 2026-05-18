@@ -48,7 +48,11 @@ test('tool_use and tool_result become normalized tool events', () => {
   assert.equal(resultEvents[0].type, 'runtime_event');
 });
 
-test('successful result becomes turn_completed with usage alias for existing usage aggregation', () => {
+test('successful result becomes turn_completed with usage=parsed.stats on the event (grounded 2026-05-18)', () => {
+  // GROUNDED: §9 ratified usage lives directly on the event (not on raw),
+  // keyed as `usage` and equal to `parsed.stats`. The prior assertion
+  // checked `raw.usage` via the unverified `withUsageAlias` helper — that
+  // was never grounded reality; corrected here.
   const events = normalizeGeminiStreamLine(JSON.stringify({
     type: 'result',
     status: 'success',
@@ -57,8 +61,9 @@ test('successful result becomes turn_completed with usage alias for existing usa
 
   assert.equal(events.length, 1);
   assert.equal(events[0].type, 'turn_completed');
-  assert.equal(events[0].raw.usage.input_tokens, 10);
-  assert.equal(events[0].raw.usage.output_tokens, 3);
+  assert.equal(events[0].usage.input_tokens, 10);
+  assert.equal(events[0].usage.output_tokens, 3);
+  assert.equal(events[0].usage.duration_ms, 50);
 });
 
 test('error result and error events become turn_failed', () => {
@@ -78,8 +83,13 @@ test('error result and error events become turn_failed', () => {
   assert.match(error[0].error, /tool warning/);
 });
 
-test('malformed and unknown lines are total and visible', () => {
+test('malformed and unknown lines are total and visible (grounded 2026-05-18)', () => {
+  // GROUNDED: non-JSON lines that do NOT start with '{' are stdout noise
+  // (warnings/notices) — they are SKIPPED, not parse_error. Only lines that
+  // start with '{' and fail to parse become parse_error. The prior assertion
+  // `'not json'[0].type === 'parse_error'` was ungrounded; corrected here.
   assert.deepEqual(normalizeGeminiStreamLine('', ctx), []);
-  assert.equal(normalizeGeminiStreamLine('not json', ctx)[0].type, 'parse_error');
+  assert.deepEqual(normalizeGeminiStreamLine('not json', ctx), []); // non-'{' → skip
+  assert.equal(normalizeGeminiStreamLine('{"broken"', ctx)[0].type, 'parse_error'); // '{'-prefixed bad JSON → parse_error
   assert.equal(normalizeGeminiStreamLine(JSON.stringify({ type: 'other' }), ctx)[0].type, 'runtime_event');
 });
