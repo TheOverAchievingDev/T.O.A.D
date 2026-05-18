@@ -2,6 +2,9 @@ import { createHash } from 'node:crypto';
 
 const RUNTIME_DELIVERY_MODES = new Set(['runtime_stdin', 'runtime_bridge']);
 const SESSION_DELIVERY_MODES = new Set(['session_turn']);
+// W2: a session wake that keeps failing is re-driven up to this many times,
+// then goes terminal (surfaced honestly) instead of storming forever.
+const SESSION_WAKE_RETRY_CAP = 8;
 
 export class DeliveryWorker {
   constructor({ broker, runtimeDirectory, adapters }) {
@@ -107,6 +110,29 @@ export class DeliveryWorker {
           resolved.deliveryMode === 'offline_queue' ? 'queued_offline' : 'queued_for_recipient',
       });
     } catch (error) {
+      if (SESSION_DELIVERY_MODES.has(resolved.deliveryMode)) {
+        // W2 (spec §5/§8): a failed session wake must never be silently
+        // dropped. Re-commit `queued_for_recipient` so the retry sweep
+        // re-drives it — BOUNDED by a retryCount in receipt_json so a
+        // persistently-failing wake goes terminal instead of storming.
+        const prior = Number(begin.attempt && begin.attempt.receipt && begin.attempt.receipt.retryCount) || 0;
+        const next = prior + 1;
+        if (next >= SESSION_WAKE_RETRY_CAP) {
+          // eslint-disable-next-line no-console
+          console.warn(`[delivery] session wake permanently failed after ${next} attempts: runtime=${resolved.runtimeId} msg=${message.messageId}: ${error?.message || error}`);
+          return this.broker.failDeliveryAttempt({
+            attemptId: begin.attempt.attemptId,
+            error,
+            retryable: false,
+            responseState: 'delivery_failed_terminal',
+          });
+        }
+        return this.broker.commitDeliveryAttempt({
+          attemptId: begin.attempt.attemptId,
+          receipt: { retryCount: next, lastError: String(error?.message || error).slice(0, 500) },
+          responseState: 'queued_for_recipient',
+        });
+      }
       return this.broker.failDeliveryAttempt({
         attemptId: begin.attempt.attemptId,
         error,
