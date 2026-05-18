@@ -26,7 +26,12 @@ test('text events become assistant_text', () => {
   assert.equal(events[0].text, 'OK');
 });
 
-test('tool events become tool_use or runtime_event', () => {
+// GROUNDED CORRECTION (SP1c Task 3): the original `type:"tool"` →
+// `tool_use{toolName}` assertion encoded an UNVERIFIED guess. The real
+// 1.15.4 1-turn capture (grounding doc §8/§9/§10) never produced a `tool`
+// event; §10 RATIFIES unknown/unseen top-level types degrading to
+// `runtime_event`. This was never real — corrected to grounded reality.
+test('tool events degrade to runtime_event (shape UNVERIFIED in §10)', () => {
   const use = normalizeOpencodeStreamLine(JSON.stringify({
     type: 'tool',
     sessionID: 'ses_123',
@@ -38,35 +43,53 @@ test('tool events become tool_use or runtime_event', () => {
     part: { type: 'tool', state: { status: 'completed', output: 'ok' } },
   }), ctx);
 
-  assert.equal(use[0].type, 'tool_use');
-  assert.equal(use[0].toolName, 'bash');
+  assert.equal(use[0].type, 'runtime_event');
   assert.equal(result[0].type, 'runtime_event');
 });
 
-test('step_finish aliases token usage and completes successful turns', () => {
+// GROUNDED CORRECTION (SP1c Task 3): the original assertion expected usage
+// aliased into `raw.usage` as `{input_tokens,output_tokens}` — an
+// ungrounded guess. §9 RATIFIES `turn_completed` carrying
+// `usage:{inputTokens,outputTokens,totalTokens,cacheRead,cacheWrite}`,
+// `costUsd`, `stopReason` on the event itself. Corrected to grounded shape.
+test('step_finish completes successful turns with grounded usage', () => {
   const events = normalizeOpencodeStreamLine(JSON.stringify({
     type: 'step_finish',
     sessionID: 'ses_123',
     part: {
       type: 'step-finish',
       reason: 'stop',
-      tokens: { input: 5, output: 2, total: 7, reasoning: 1 },
+      tokens: { input: 5, output: 2, total: 7, reasoning: 1, cache: { write: 0, read: 3 } },
+      cost: 0.0042,
     },
   }), ctx);
 
   assert.equal(events[0].type, 'turn_completed');
-  assert.deepEqual(events[0].raw.usage, { input_tokens: 5, output_tokens: 2 });
+  assert.deepEqual(events[0].usage, {
+    inputTokens: 5,
+    outputTokens: 2,
+    totalTokens: 7,
+    cacheRead: 3,
+    cacheWrite: 0,
+  });
+  assert.equal(events[0].costUsd, 0.0042);
+  assert.equal(events[0].stopReason, 'stop');
 });
 
-test('error-like finishes and malformed JSON are surfaced', () => {
-  const failed = normalizeOpencodeStreamLine(JSON.stringify({
+// GROUNDED CORRECTION (SP1c Task 3): the original expected an `error`-reason
+// `step_finish` → `turn_failed{error}`. §9/§10 only RATIFY `step_finish` →
+// `turn_completed` (the error path is UNVERIFIED — §10 lists it unseen), so
+// any `step_finish` is `turn_completed` and the `reason` is surfaced via
+// `stopReason`. The `{nope` → parse_error assertion stays (still real).
+test('error-reason step_finish still completes; malformed {-JSON → parse_error', () => {
+  const finished = normalizeOpencodeStreamLine(JSON.stringify({
     type: 'step_finish',
-    part: { type: 'step-finish', reason: 'error', error: 'bad session' },
+    part: { type: 'step-finish', reason: 'error' },
   }), ctx);
   const malformed = normalizeOpencodeStreamLine('{nope', ctx);
 
-  assert.equal(failed[0].type, 'turn_failed');
-  assert.match(failed[0].error, /bad session/);
+  assert.equal(finished[0].type, 'turn_completed');
+  assert.equal(finished[0].stopReason, 'error');
   assert.equal(malformed[0].type, 'parse_error');
 });
 
