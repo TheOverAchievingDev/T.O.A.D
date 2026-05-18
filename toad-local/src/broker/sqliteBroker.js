@@ -346,6 +346,29 @@ export class SqliteBroker {
     return this.#getDeliveryAttempt(attemptId);
   }
 
+  // SP1a Stage 2 (whole-impl W4) — true iff this message has been
+  // committed-delivered to its runtime: a committed runtime_stdin/runtime_bridge
+  // attempt (Claude) OR a session_turn attempt terminally delivered
+  // (accepted_by_runtime / coalesced). Parked (queued_for_recipient), in-flight
+  // (delivering), failed, and offline_queue attempts are NOT committed.
+  // Used by boot reconciliation to skip already-delivered inbox messages.
+  hasCommittedRuntimeDelivery(messageId) {
+    const row = this.db.prepare(
+      `
+        SELECT 1 FROM delivery_attempts
+        WHERE message_id = ?
+          AND status = 'committed'
+          AND (
+            delivery_kind IN ('runtime_stdin', 'runtime_bridge')
+            OR (delivery_kind = 'session_turn'
+                AND response_state IN ('accepted_by_runtime', 'coalesced'))
+          )
+        LIMIT 1
+      `
+    ).get(messageId);
+    return !!row;
+  }
+
   // SP1a Stage 2 (whole-impl W3) — crash recovery. A session attempt left
   // `delivering` means the process died mid-turn; on restart it is undelivered
   // again. Reset stale session in-flight claims back to `queued_for_recipient`

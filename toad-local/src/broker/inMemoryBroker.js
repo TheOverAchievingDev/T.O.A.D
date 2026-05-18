@@ -183,6 +183,21 @@ export class InMemoryBroker {
     return next;
   }
 
+  // SP1a Stage 2 (whole-impl W4) — mirrors SqliteBroker: committed-delivered
+  // iff a committed runtime_stdin/runtime_bridge attempt OR a session_turn
+  // attempt terminally delivered (accepted_by_runtime / coalesced).
+  hasCommittedRuntimeDelivery(messageId) {
+    for (const attempt of this.#deliveryAttempts.values()) {
+      if (attempt.messageId !== messageId || attempt.status !== 'committed') continue;
+      if (attempt.deliveryKind === 'runtime_stdin' || attempt.deliveryKind === 'runtime_bridge') return true;
+      if (attempt.deliveryKind === 'session_turn'
+          && (attempt.responseState === 'accepted_by_runtime' || attempt.responseState === 'coalesced')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // SP1a Stage 2 (whole-impl W3) — crash recovery (mirrors SqliteBroker).
   resetStaleSessionInFlight() {
     let changes = 0;

@@ -803,9 +803,10 @@ export class LocalToadRuntime {
     }
     const runtimes = this.runtimeRegistry.listRuntimes({});
     const isCommitted = (messageId) => {
-      try { return this.broker.hasCommittedRuntimeDelivery
-        ? this.broker.hasCommittedRuntimeDelivery(messageId) === true
-        : false; } catch { return false; }
+      try {
+        return typeof this.broker.hasCommittedRuntimeDelivery === 'function'
+          && this.broker.hasCommittedRuntimeDelivery(messageId) === true;
+      } catch { return false; }
     };
     const pending = computeUndeliveredSessionMessages({
       runtimes,
