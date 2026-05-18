@@ -104,7 +104,6 @@ const PROVIDER_COMMANDS = Object.freeze({
     logoutArgs: ['providers', 'logout'],
     supported: true,
     apiOnly: true,
-    unsupportedReason: 'OpenCode is API-only — there is no subscription/plan auth flow. Use the API key tab.',
     statusMode: 'file',
     statusFile: path.join('~', '.local', 'share', 'opencode', 'auth.json'),
     parseFileStatus: parseOpencodeFileStatus,

@@ -163,8 +163,12 @@ async function captureOne(page, { capture, target, fullPage }) {
       await sleep(action.settleMs || 450);
     } catch (err) {
       const message = `action failed (${action.type}): ${err.message}`;
+      // BR8/D: a REQUIRED action failing means the screenshot would capture
+      // a broken UI state — fail loudly instead of silently degrading it to
+      // a warning (the old code pushed a warning in BOTH branches). Optional
+      // actions stay best-effort.
       if (action.optional) warnings.push(message);
-      else warnings.push(message);
+      else throw new Error(message);
     }
   }
 

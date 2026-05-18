@@ -47,7 +47,8 @@
       "../../scripts": "engine/scripts",
       "../../src": "engine/src",
       "../../package.json": "engine/package.json",
-      "../../node_modules/@lydell": "engine/node_modules/@lydell"
+      "../../node_modules/@lydell/node-pty": "engine/node_modules/@lydell/node-pty",
+      "../../node_modules/@lydell/node-pty-win32-x64": "engine/node_modules/@lydell/node-pty-win32-x64"
     },
     "externalBin": [],
     "copyright": "Copyright (c) 2026",
