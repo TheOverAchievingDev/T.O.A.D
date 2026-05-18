@@ -430,7 +430,7 @@ export class DriftEngine {
           teamId,
           idempotencyKey: `drift-gate-notify-${runId}`,
           from: { kind: 'system', id: 'drift-engine' },
-          to: { kind: 'team' },
+          to: { kind: 'team', teamId },
           kind: 'system',
           text,
           taskRefs: [],
