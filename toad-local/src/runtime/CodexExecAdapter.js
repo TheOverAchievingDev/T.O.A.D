@@ -12,7 +12,7 @@ import { normalizeCodexExecLine } from './codex/normalizeCodexExecLine.js';
  * yet) — acceptable for the end-to-end proof.
  */
 export class CodexExecAdapter extends RuntimeAdapter {
-  constructor({ runtimeId, teamId, agentId, cwd, systemPrompt = '', spawnImpl, resolveCliImpl } = {}) {
+  constructor({ runtimeId, teamId, agentId, cwd, systemPrompt = '', spawnImpl, resolveCliImpl, sessionStore, turnTimeoutMs } = {}) {
     super('openai');
     this.runtimeId = requireString(runtimeId, 'runtimeId');
     this.teamId = requireString(teamId, 'teamId');
@@ -21,10 +21,17 @@ export class CodexExecAdapter extends RuntimeAdapter {
     this.systemPrompt = typeof systemPrompt === 'string' ? systemPrompt : '';
     this.spawnImpl = typeof spawnImpl === 'function' ? spawnImpl : defaultSpawn;
     this.resolveCliImpl = typeof resolveCliImpl === 'function' ? resolveCliImpl : defaultResolveCli;
+    this.sessionStore = sessionStore && typeof sessionStore.get === 'function' ? sessionStore : null;
+    this.turnTimeoutMs = Number.isFinite(turnTimeoutMs) && turnTimeoutMs > 0
+      ? turnTimeoutMs
+      : 30 * 60_000; // 30 min — team turns are long autonomous runs (spec §8)
     this.child = null;
     this._queue = [];
     this._waiters = [];
     this._ended = false;
+    this._chain = Promise.resolve();   // FIFO per-agent turn serializer (Task 5)
+    this._pendingTexts = [];           // coalesced messages awaiting the next turn (Task 5)
+    this._turnStartedAt = null;        // ISO while a turn is in-flight (Task 11)
   }
 
   #push(event) {

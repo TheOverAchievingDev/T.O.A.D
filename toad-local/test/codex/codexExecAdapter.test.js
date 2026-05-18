@@ -86,3 +86,10 @@ test('approve() and sendToolResult() return structured not-applicable', async ()
 test('providerId is openai', () => {
   assert.equal(makeAdapter(fakeChild([])).providerId, 'openai');
 });
+
+test('constructor accepts optional sessionStore + turnTimeoutMs (defaults: no store, generous timeout)', () => {
+  const a = makeAdapter(fakeChild([]));
+  assert.equal(a.sessionStore, null);
+  assert.equal(typeof a.turnTimeoutMs, 'number');
+  assert.ok(a.turnTimeoutMs >= 600000);
+});

@@ -8,9 +8,12 @@ import { CodexExecAdapter } from './CodexExecAdapter.js';
  * byte-unchanged. `openai` returns the per-turn CodexExecAdapter
  * (no child; needs cwd + systemPrompt threaded via registerSessionAgent).
  */
-export function createAdapterForProvider({ runtimeId, teamId, agentId, child, providerId, cwd, systemPrompt }) {
+export function createAdapterForProvider({
+  runtimeId, teamId, agentId, child, providerId, cwd, systemPrompt,
+  sessionStore, turnTimeoutMs,
+}) {
   if (providerId === 'openai') {
-    return new CodexExecAdapter({ runtimeId, teamId, agentId, cwd, systemPrompt });
+    return new CodexExecAdapter({ runtimeId, teamId, agentId, cwd, systemPrompt, sessionStore, turnTimeoutMs });
   }
   return new ClaudeStreamJsonAdapter({ runtimeId, teamId, agentId, child });
 }

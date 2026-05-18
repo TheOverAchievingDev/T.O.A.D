@@ -36,6 +36,7 @@ import { readClaudeCredsStatusForPreflight } from '../providers/providerAuth.js'
 import { providerForCommand } from '../team/providerCommands.js';
 import { getAuthStatus as defaultGetAuthStatus } from '../providers/providerAuth.js';
 import { createAdapterForProvider } from '../runtime/adapterForProvider.js';
+import { makeRuntimeRegistrySessionStore } from '../runtime/codex/runtimeRegistrySessionStore.js';
 import { writeCodexProjectConfig, writeAgentsMd } from '../mcp/codexMcpConfig.js';
 import { spawn as nodeSpawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -133,6 +134,7 @@ export class LocalToadRuntime {
     stuckMonitor = null,
     stuckMonitorIntervalMs = parseIntervalEnv(process.env.TOAD_STUCK_MONITOR_INTERVAL_MS),
     stuckMonitorThresholdMs = parseIntervalEnv(process.env.TOAD_STUCK_MONITOR_THRESHOLD_MS),
+    codexTurnTimeoutMs = undefined,
   } = {}) {
     this.broker = broker || new SqliteBroker({ filePath: dbPath });
     this.taskBoard = taskBoard || new SqliteTaskBoard({ filePath: dbPath });
@@ -185,13 +187,22 @@ export class LocalToadRuntime {
     this.#authRelaunchState = new Map();
     this.dbPath = dbPath;
     this.sideEffectRetentionDays = sideEffectRetentionDays;
+    this.codexTurnTimeoutMs = Number.isFinite(codexTurnTimeoutMs) && codexTurnTimeoutMs > 0
+      ? codexTurnTimeoutMs
+      : undefined; // undefined ⇒ adapter's 30-min default
     this.supervisor =
       supervisor ||
       new RuntimeSupervisor({
         runtimeDirectory,
         runtimeRegistry: this.runtimeRegistry,
         ...(spawnProcess ? { spawnProcess } : {}),
-        createAdapter: createAdapter || createAdapterForProvider,
+        createAdapter: createAdapter || ((adapterArgs) => createAdapterForProvider({
+          ...adapterArgs,
+          sessionStore: this.runtimeRegistry
+            ? makeRuntimeRegistrySessionStore(this.runtimeRegistry)
+            : undefined,
+          turnTimeoutMs: this.codexTurnTimeoutMs,
+        })),
       });
     this.deliveryWorker =
       deliveryWorker ||
