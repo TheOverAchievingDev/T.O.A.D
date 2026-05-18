@@ -24,7 +24,7 @@ test('session_turn recipient with a registered adapter is woken via sendTurn and
   const directory = new RuntimeDirectory();
   directory.registerAgent({ teamId: 't1', agentId: 'dev-1', runtimeId: 'r-codex-1', deliveryMode: 'session_turn' });
   const seen = [];
-  const adapters = new Map([['r-codex-1', { async sendTurn(t) { seen.push(t); return { accepted: true, responseState: 'accepted_by_runtime', receipt: { written: true } }; } }]]);
+  const adapters = new Map([['r-codex-1', { async sendTurn(t) { seen.push(t); return { accepted: true, responseState: 'accepted_by_runtime', receipt: { written: true, runtimeId: 'r-codex-1' } }; } }]]);
   const worker = new DeliveryWorker({ broker, runtimeDirectory: directory, adapters });
 
   const msg = appended(broker, { kind: 'agent', teamId: 't1', agentId: 'dev-1' });
@@ -34,6 +34,8 @@ test('session_turn recipient with a registered adapter is woken via sendTurn and
   assert.equal(seen[0].message.messageId, msg.messageId);
   assert.equal(attempt.status, 'committed');
   assert.equal(attempt.responseState, 'accepted_by_runtime');
+  assert.equal(attempt.receipt.written, true);
+  assert.equal(attempt.receipt.runtimeId, 'r-codex-1');
 });
 
 test('session_turn recipient with NO registered adapter is durably queued (survives for reconciliation)', async () => {
@@ -47,4 +49,18 @@ test('session_turn recipient with NO registered adapter is durably queued (survi
 
   assert.equal(attempt.status, 'committed');
   assert.equal(attempt.responseState, 'queued_for_recipient');
+});
+
+test('session_turn recipient: a coalesced adapter receipt commits responseState:coalesced', async () => {
+  const broker = new InMemoryBroker();
+  const directory = new RuntimeDirectory();
+  directory.registerAgent({ teamId: 't1', agentId: 'dev-1', runtimeId: 'r-codex-1', deliveryMode: 'session_turn' });
+  const adapters = new Map([['r-codex-1', { async sendTurn() { return { accepted: true, responseState: 'coalesced', receipt: { written: true, runtimeId: 'r-codex-1' } }; } }]]);
+  const worker = new DeliveryWorker({ broker, runtimeDirectory: directory, adapters });
+
+  const msg = appended(broker, { kind: 'agent', teamId: 't1', agentId: 'dev-1' });
+  const attempt = await worker.deliverMessage(msg.messageId);
+
+  assert.equal(attempt.status, 'committed');
+  assert.equal(attempt.responseState, 'coalesced');
 });
