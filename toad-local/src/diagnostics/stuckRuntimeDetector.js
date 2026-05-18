@@ -19,6 +19,7 @@ export const DEFAULT_THRESHOLD_MS = 15 * 60_000;
 export function detectStuckRuntimes({
   runtimes,
   latestEventByRuntime,
+  sessionInFlight,
   now,
   thresholdMs = DEFAULT_THRESHOLD_MS,
 } = {}) {
@@ -26,12 +27,34 @@ export function detectStuckRuntimes({
   if (!latestEventByRuntime || typeof latestEventByRuntime.get !== 'function') {
     latestEventByRuntime = new Map();
   }
+  const inFlight = sessionInFlight && typeof sessionInFlight.get === 'function' ? sessionInFlight : new Map();
   const nowMs = Date.parse(now);
   if (!Number.isFinite(nowMs)) return [];
 
   const stuck = [];
   for (const r of runtimes) {
     if (!r || r.status !== 'running') continue;
+
+    if (r.deliveryMode === 'session_turn') {
+      // Idle between turns is NORMAL for a session agent — only an
+      // in-flight turn can be "stuck" (spec §8). The in-flight signal
+      // is the turn-start timestamp supplied by the monitor.
+      const turnStartedAt = inFlight.get(r.runtimeId);
+      if (typeof turnStartedAt !== 'string') continue; // not in a turn ⇒ never stuck
+      const startMs = Date.parse(turnStartedAt);
+      if (!Number.isFinite(startMs)) continue;
+      const lastEv = latestEventByRuntime.get(r.runtimeId);
+      const lastEvMs = typeof lastEv === 'string' ? Date.parse(lastEv) : NaN;
+      // Reference = the later of (turn start) and (last --json progress).
+      const refMs = Number.isFinite(lastEvMs) && lastEvMs > startMs ? lastEvMs : startMs;
+      const silentMs = nowMs - refMs;
+      if (silentMs > thresholdMs) {
+        stuck.push({ runtimeId: r.runtimeId, teamId: r.teamId, agentId: r.agentId,
+          taskId: r.taskId || null, lastEventAt: new Date(refMs).toISOString(), silentMs, thresholdMs });
+      }
+      continue;
+    }
+
     const ref = latestEventByRuntime.get(r.runtimeId) || r.startedAt;
     if (typeof ref !== 'string') continue;
     const refMs = Date.parse(ref);
