@@ -23,16 +23,21 @@ flowchart LR
   Supervisor --> Adapters["runtime-adapters<br/>(one per CLI runtime)"]
   Adapters --> Claude["Claude · working"]
   Adapters --> Codex["Codex · working"]
-  Adapters --> Gemini["Gemini · unverified"]
+  Adapters --> Gemini["Gemini · grounded 0.42.0"]
   Adapters --> Opencode["OpenCode · unverified"]
 ```
 
 Provider status as of this revision: Claude and Codex are whole-impl
-reviewed and grounded; Gemini and OpenCode are structurally complete but
-their CLI invocation contracts + stream-JSON event vocabularies are **not
-yet grounded** against the real CLIs (tracked follow-up — see the bundle
-whole-impl review doc under `docs/superpowers/`). The adapter seam is
-provider-agnostic; un-grounded providers are wired but not production-trusted.
+reviewed and grounded. **Gemini is grounded against gemini 0.42.0 (SP1b** —
+`docs/superpowers/grounding/2026-05-18-gemini-cli.md`): contract + stream-JSON
+vocabulary captured from the real CLI, adapter/normalizer corrected (the
+broken `--resume <uuid>` model fixed to `--session-id`/`--resume latest`),
+scripted e2e green in the root gate; residuals (cross-restart resume,
+`tool_use`/`error` event shapes, the cross-cutting A4 MCP-visibility probe)
+are documented and tracked. **OpenCode** is structurally complete but its
+CLI contract + event vocabulary are **not yet grounded** (SP1c, pending).
+The adapter seam is provider-agnostic; un-grounded providers are wired but
+not production-trusted.
 
 ## Components
 

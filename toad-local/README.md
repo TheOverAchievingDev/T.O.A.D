@@ -55,14 +55,22 @@ every adapter implements the same `RuntimeAdapter` contract.
 | --- | --- | --- | --- |
 | Anthropic (Claude) | `ClaudeStreamJsonAdapter` | persistent child | **Working** — whole-impl reviewed, full suite green |
 | OpenAI (Codex) | `CodexExecAdapter` | session / per-turn (`codex exec [resume]`) | **Working** — SP1a Stage 1+2 reviewed, grounded against codex-cli 0.130 |
-| Google (Gemini) | `GeminiExecAdapter` | session / per-turn | **Present, unverified** — structurally complete; CLI flags + event vocabulary not yet grounded against the real CLI |
-| OpenCode | `OpencodeExecAdapter` | session / per-turn | **Present, unverified** — same as Gemini |
+| Google (Gemini) | `GeminiExecAdapter` | session / per-turn (`--session-id` / `--resume latest`) | **Grounded (gemini 0.42.0)** — SP1b: contract + stream-JSON vocabulary captured from the real CLI, adapter/normalizer corrected, scripted e2e green in the root gate. Residuals below. |
+| OpenCode | `OpencodeExecAdapter` | session / per-turn | **Present, unverified** — CLI contract + event vocabulary not yet grounded (SP1c, pending) |
 
-> Gemini and OpenCode are not production-trusted yet: their CLI invocation
-> contracts and stream-JSON event shapes are unverified assumptions pending a
-> grounding pass against the installed CLIs plus a scripted end-to-end proof,
-> and there is no first-turn MCP-tool visibility probe across session adapters.
-> Use Claude or Codex for real team runs until that grounding lands.
+> **Gemini (SP1b, grounded 2026-05-18):** the CLI invocation contract and
+> `--output-format stream-json` event vocabulary are now grounded against the
+> real gemini 0.42.0 (grounding doc `docs/superpowers/grounding/2026-05-18-gemini-cli.md`),
+> the adapter's broken `--resume <uuid>` model was corrected to the ratified
+> `--session-id <uuid>` (first turn) / `--resume latest` model, and a
+> front-loaded scripted e2e proves the real adapter→normalizer→ingestor→broker
+> seam. **Documented residuals (not yet live-proven):** cross-process-restart
+> resume; `tool_use`/`error` event shapes (preserved as safe degradation —
+> not observed in the single grounding turn); and there is still no first-turn
+> MCP-tool visibility probe across session adapters (cross-cutting A4, deferred).
+>
+> **OpenCode** remains unverified pending SP1c. Use Claude or Codex for the
+> highest-assurance team runs; Gemini is usable with the residuals understood.
 
 ## Screenshots
 
