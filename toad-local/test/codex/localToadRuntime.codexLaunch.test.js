@@ -49,3 +49,15 @@ test('claude launch does NOT enter the codex branch (still spawns a child)', asy
   }).catch(() => {});
   assert.equal(spawned, true);
 });
+
+test('explicit providerId:openai routes to the Codex branch even with a non-canonical command', async () => {
+  const rt = makeRuntime();
+  const out = await rt.launchAgent({
+    teamId: 't1', agentId: 'dev-1', runtimeId: 'r-codex-custom',
+    providerId: 'openai', command: 'codex.cmd', // custom command providerForCommand() would NOT match
+    cwd: process.cwd(), systemPrompt: 'You are dev-1.',
+  });
+  assert.equal(out.runtimeId, 'r-codex-custom');
+  const ad = rt.adapters.get('r-codex-custom');
+  assert.ok(ad && ad.providerId === 'openai'); // CodexExecAdapter, NOT Claude
+});

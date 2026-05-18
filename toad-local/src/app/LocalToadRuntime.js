@@ -540,7 +540,16 @@ export class LocalToadRuntime {
       }),
     };
     let runtime;
-    if (providerForCommand(input && input.command) === 'openai') {
+    // RATIFIED hardening: prefer the authoritative providerId the
+    // caller already supplies (localToolFacade sets input.providerId);
+    // fall back to exact-match command derivation only when absent.
+    // Closes the documented "Codex command → Claude adapter" foot-gun
+    // for the realistic (UI/team_launch) path. Residual: a launch with
+    // NO providerId AND a non-canonical command still command-derives
+    // (Stage-2 / provider-plumbing hardens dispatch fully).
+    const __isCodexLaunch = (input && input.providerId === 'openai')
+      || (providerForCommand(input && input.command) === 'openai');
+    if (__isCodexLaunch) {
       runtime = await this.#prepareCodexRuntime(scrubbedInput);
     } else {
       const launchInput = this.#withToadMcpConfig(scrubbedInput);

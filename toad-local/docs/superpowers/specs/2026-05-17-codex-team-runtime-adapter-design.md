@@ -123,6 +123,12 @@ TDD throughout (project discipline). Backend-only — **no UI in SP1a** (the pro
 - ⚠️ **`--json` vocabulary — PARTIALLY VERIFIED (residual risk):** `thread.started`+`thread_id` (matches), `turn.started` (NEW → maps to `runtime_event`), `error`=`{type:'error',message}`, `turn.failed`=`{type:'turn.failed',error:{message}}` (**nested object, not a string**) are grounded. The happy-path items `item.completed`/`agent_message`, `turn.completed`, `command_execution`/`file_change`/`mcp_tool_call` were **NOT observed** (the probe hit a ChatGPT plan-usage cap before model output) — they remain the 0.117 documented assumption. Mitigation: the normalizer is **defensive/total** (unknown `type` → `runtime_event`, never throws), and the Stage-1 end-to-end proof uses the controlled `fake-codex` stand-in (no real-codex usage). **Open action:** re-confirm the happy-path vocabulary via a real `codex exec` smoke when Codex/ChatGPT plan usage resets (tracked; does not block Stage-1 since the proof is stand-in-driven and the normalizer degrades safely).
 - ✅ project-scoped `.codex/config.toml [mcp_servers.toad]` honored by `codex exec` for *trusted* projects; **no `required` key** (loud-fail = first-turn visibility probe); trust set non-interactively via `~/.codex/config.toml [projects.'<cwd>'] trust_level="trusted"`.
 - The real `RuntimeAdapter` contract + `ClaudeStreamJsonAdapter` shapes + `RuntimeSupervisor.createAdapter` call sites + `LocalToadRuntime` launch construction + `DeliveryWorker`/broker inbox API + `sqliteRuntimeRegistry` schema + `stuckRuntimeMonitor` assumptions + `providerAuth.parseCodexFileStatus`, each re-read before the step that touches it. The Claude path must be **provably byte-unchanged** (every change behind a non-`anthropic` branch).
+- **RATIFIED 2026-05-17 (whole-impl code-quality Important):** launch/adapter
+  dispatch prefers the authoritative `input.providerId`; it falls back to
+  exact-match `providerForCommand(command)` only when providerId is absent.
+  Residual (no providerId AND a non-canonical command, e.g. an operator
+  custom binary path) still command-derives — fully providerId-first
+  dispatch across all sites is Stage-2 / provider-plumbing scope.
 
 ## 11. Conventions
 
