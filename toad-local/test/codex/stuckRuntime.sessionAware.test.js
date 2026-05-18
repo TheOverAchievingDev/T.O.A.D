@@ -26,6 +26,7 @@ test('in-flight session turn with no progress past threshold IS flagged stuck', 
   assert.equal(out.length, 1);
   assert.equal(out[0].runtimeId, 'r-codex-1');
   assert.ok(out[0].silentMs > 15 * 60_000);
+  assert.equal(out[0].lastEventAt, T0); // refMs = startMs (no events); ISO round-trip is lossless
 });
 
 test('in-flight session turn making recent progress is NOT flagged', () => {
@@ -47,4 +48,18 @@ test('persistent (Claude) runtimes are unaffected by the session branch', () => 
   });
   assert.equal(out.length, 1);
   assert.equal(out[0].runtimeId, 'r-claude-1');
+});
+
+test('stale last event (from a prior turn, BEFORE turn-start) does NOT credit old progress — refMs is startMs, still flagged', () => {
+  const STALE_EV = '2026-05-17T23:59:00.000Z'; // 1 min BEFORE T0 (belongs to the previous turn)
+  const out = detectStuckRuntimes({
+    runtimes: [session()],
+    latestEventByRuntime: new Map([['r-codex-1', STALE_EV]]),
+    sessionInFlight: new Map([['r-codex-1', T0]]),
+    now: NOW, thresholdMs: 15 * 60_000,
+  });
+  assert.equal(out.length, 1);                 // stale event must NOT reset the staleness clock
+  assert.equal(out[0].runtimeId, 'r-codex-1');
+  assert.equal(out[0].lastEventAt, T0);        // refMs = startMs, NOT the stale event
+  assert.ok(out[0].silentMs > 15 * 60_000);
 });
