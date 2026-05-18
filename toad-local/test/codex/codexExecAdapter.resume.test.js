@@ -38,13 +38,19 @@ function makeAdapter(child, sessionStore) {
 
 test('first turn (no session id) uses first-turn argv + prepends systemPrompt; captures + persists thread_id', async () => {
   const store = memStore();
-  const a = makeAdapter(() => fakeChild([
-    JSON.stringify({ type: 'thread.started', thread_id: 'sess-xyz' }),
-    JSON.stringify({ type: 'turn.completed' }),
-  ]), store);
+  let writes;
+  const a = makeAdapter(() => {
+    const c = fakeChild([
+      JSON.stringify({ type: 'thread.started', thread_id: 'sess-xyz' }),
+      JSON.stringify({ type: 'turn.completed' }),
+    ]);
+    writes = c.writes;
+    return c;
+  }, store);
   const res = await a.sendTurn({ message: { text: 'do it' } });
   assert.equal(res.accepted, true);
   assert.deepEqual(a._spawns[0].args, ['exec', '--json', '--skip-git-repo-check', '-C', '/work', '--sandbox', 'workspace-write', '-c', 'approval_policy="never"', '-']);
+  assert.match(writes.join(''), /You are dev-1\.\n\ndo it/);
   assert.equal(store.get('r1'), 'sess-xyz');
 });
 
