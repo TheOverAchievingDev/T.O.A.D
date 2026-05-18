@@ -94,9 +94,13 @@ export class StuckRuntimeMonitor {
     if (this.#supervisor) {
       for (const r of runtimes) {
         if (r && r.deliveryMode === 'session_turn') {
-          const ad = this.#supervisor.getAdapter(r.runtimeId);
-          const at = ad && typeof ad.isTurnInFlight === 'function' && ad.isTurnInFlight() ? ad.turnStartedAt : null;
-          if (typeof at === 'string') sessionInFlight.set(r.runtimeId, at);
+          // Minor 8: one throwing adapter probe must not abort the whole
+          // pass (incl. detection of OTHER stalled agents + recovery).
+          try {
+            const ad = this.#supervisor.getAdapter(r.runtimeId);
+            const at = ad && typeof ad.isTurnInFlight === 'function' && ad.isTurnInFlight() ? ad.turnStartedAt : null;
+            if (typeof at === 'string') sessionInFlight.set(r.runtimeId, at);
+          } catch { /* skip this runtime's in-flight signal; continue the pass */ }
         }
       }
     }

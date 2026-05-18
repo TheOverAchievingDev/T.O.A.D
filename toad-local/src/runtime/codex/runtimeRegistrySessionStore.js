@@ -16,7 +16,15 @@ export function makeRuntimeRegistrySessionStore(registry) {
       }
     },
     set(runtimeId, cliSessionId) {
-      try { registry.setRuntimeCliSessionId({ runtimeId, cliSessionId }); } catch { /* best effort */ }
+      try {
+        // Minor 6: codex re-emits the SAME thread_id every resume turn —
+        // skip the redundant UPDATE (+ updated_at churn) when unchanged.
+        const row = registry.getRuntime(runtimeId);
+        const current = row && typeof row.cliSessionId === 'string' && row.cliSessionId.length > 0
+          ? row.cliSessionId : null;
+        if (current === (cliSessionId || null)) return;
+        registry.setRuntimeCliSessionId({ runtimeId, cliSessionId });
+      } catch { /* best effort */ }
     },
     clear(runtimeId) {
       try { registry.setRuntimeCliSessionId({ runtimeId, cliSessionId: null }); } catch { /* best effort */ }
