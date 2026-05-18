@@ -1015,21 +1015,36 @@ and store it (near where other injected impls are assigned in the constructor bo
       : ((opts) => defaultGetAuthStatus(opts));
 ```
 
-In `launchAgent(input)`, immediately AFTER the `scrubbedInput` is built (line 529, before `const launchInput = this.#withToadMcpConfig(scrubbedInput);` at line 530), add the Codex branch:
+**RATIFIED 2026-05-17 (controller, post-Task-5 grounding):** the post-`launchAgent` tail (real lines 573–end) is NOT just an event-consumer — it does `getAdapter` → `adapters.set` → **ingest events** → **deliver the launch prompt as the first turn** (`sendTurn`). A Codex session agent needs ALL of that (its first `codex exec` turn IS the launch-prompt delivery). So the correct, lowest-risk design is **NOT** a `#launchCodexSessionAgent` that returns early with a partial copy — it is: gate ONLY the *pre-launch* decision and **fall through to the existing shared tail byte-identically**. Concretely:
+
+Locate `const runtime = await this.supervisor.launchAgent(launchInput);` (the launch line, ~572) — note that the Claude-only `const launchInput = this.#withToadMcpConfig(scrubbedInput);` (~530) + the entire Claude auth-preflight block (~531–571) precede it. Restructure so the Claude-only prep + launch run only for non-Codex, and the Codex prep + `registerSessionAgent` produce `runtime` for Codex, then **both fall into the unchanged tail at the next line**:
+
+Replace from the `const launchInput = this.#withToadMcpConfig(scrubbedInput);` line through `const runtime = await this.supervisor.launchAgent(launchInput);` (inclusive — i.e. the Claude prep + preflight + launch, ~530–572) with:
 
 ```js
+    let runtime;
     if (providerForCommand(input && input.command) === 'openai') {
-      return await this.#launchCodexSessionAgent(scrubbedInput);
+      runtime = await this.#prepareCodexRuntime(scrubbedInput);
+    } else {
+      const launchInput = this.#withToadMcpConfig(scrubbedInput);
+      // <<< PASTE THE EXISTING CLAUDE AUTH-PREFLIGHT BLOCK HERE,
+      //     VERBATIM AND UNMODIFIED — the entire
+      //     `if (this.#authPreflightEnabled && isClaudeCommand(...)) { … }`
+      //     block currently at ~531–571. Do NOT alter a single line of
+      //     it; only its surrounding brace/indentation changes. >>>
+      runtime = await this.supervisor.launchAgent(launchInput);
     }
 ```
 
-Add the private method (place it near `#withToadMcpConfig`, line 676):
+Everything from the NEXT line onward (`const adapter = this.supervisor.getAdapter(runtime.runtimeId);` … the `adapters.set`, the event-ingest `Promise.resolve().then(() => this.eventIngestor.ingestFrom(adapter.events()))…`, the launch-prompt delivery via `sendTurn`, the `return` at the end of `launchAgent`) stays **byte-identical** and runs for BOTH paths. (`registerSessionAgent` returns the same runtime-snapshot shape `launchAgent` does, and `getAdapter` returns the `CodexExecAdapter`, whose `sendTurn` delivers the launch prompt as the first `codex exec` turn — exactly what a Codex team agent needs.) There is **no** `#consumeAdapterEvents` extraction and **no** partial copy of the tail — the tail is shared as-is. This is both lower-risk (the Claude statements are moved verbatim into an `else {}`, no logic change — proven by the existing tests staying green) and more correct (Codex gets its first-turn prompt).
+
+Add the private helper (place it near `#withToadMcpConfig`):
 
 ```js
-  async #launchCodexSessionAgent(input) {
+  async #prepareCodexRuntime(input) {
     // §4 isolation + env-scrub already applied by launchAgent before
-    // this branch. Codex file-based auth preflight — fail fast, never
-    // a doomed silent spawn (the auth-no-creds lesson, per-provider).
+    // this point. Codex file-based auth preflight — fail fast, never a
+    // doomed silent spawn (the auth-no-creds lesson, per-provider).
     const auth = await this.getCodexAuthStatusImpl({ providerId: 'openai' });
     if (!auth || auth.signedIn !== true) {
       throw new Error(
@@ -1051,7 +1066,7 @@ Add the private method (place it near `#withToadMcpConfig`, line 676):
     if (typeof input.systemPrompt === 'string' && input.systemPrompt.trim().length > 0) {
       writeAgentsMd({ projectCwd: cwd, content: input.systemPrompt });
     }
-    const runtime = this.supervisor.registerSessionAgent({
+    return this.supervisor.registerSessionAgent({
       teamId: input.teamId,
       agentId: input.agentId,
       runtimeId: input.runtimeId,
@@ -1061,25 +1076,19 @@ Add the private method (place it near `#withToadMcpConfig`, line 676):
       taskId: input.taskId,
       restartPolicy: input.restartPolicy,
     });
-    const adapter = this.supervisor.getAdapter(runtime.runtimeId);
-    if (adapter) {
-      this.adapters.set(runtime.runtimeId, adapter);
-      this.#consumeAdapterEvents(runtime.runtimeId, adapter);
-    }
-    return runtime;
   }
 ```
 
 > **Grounding pins for Step 3 (re-read before writing):**
-> - `resolveLaunchRole(input)` is already used by `#withToadMcpConfig` (line 692) — reuse the existing helper in this file.
-> - The event-consumer wiring at lines 573-579+ (the Claude path's `this.adapters.set(...)` + auto-consume into the ingestor) — extract/reuse that exact loop as `#consumeAdapterEvents(runtimeId, adapter)` (a pure refactor: move the existing inline consumer into a private method, call it from BOTH the Claude path and `#launchCodexSessionAgent`; the Claude path's behavior must be byte-identical — verify by diff). If a shared helper already exists, call it.
+> - `resolveLaunchRole(input)` is already used by `#withToadMcpConfig` (~line 692) — reuse the existing helper in this file.
+> - **RATIFIED:** do NOT extract `#consumeAdapterEvents`. The post-launch tail (getAdapter → adapters.set → event-ingest → launch-prompt `sendTurn` → return) is shared **byte-identically** by both paths via the fall-through restructure above (the Claude statements move verbatim into an `else {}`; only braces/indentation change — no logic edit). Verify by `git diff` that every Claude statement in 530–end is character-identical aside from indentation, and by the existing `localToadRuntime.test.js` (+ any team_launch suite) staying green.
 > - `requireLaunchCwd(input)` — the §4 "cwd required when isolated" assertion at lines 513-521 already guarantees `input.cwd` when isolated; for the non-isolated test path use `input.cwd || process.cwd()`. Implement `requireLaunchCwd` as: `return (typeof input.cwd === 'string' && input.cwd.length > 0) ? input.cwd : process.cwd();` (a small local helper in this file).
 > - `this.dbPath`, `this.adapters`, `this.supervisor` are existing members (used by `#withToadMcpConfig`/launchAgent).
 
 - [ ] **Step 4: Run it — verify it passes + Claude regression**
 
 Run: `cd /c/Project-TOAD/toad-local && node --test test/codex/localToadRuntime.codexLaunch.test.js test/localToadRuntime.test.js`
-Expected: new suite PASS; **`localToadRuntime.test.js` stays green** (the Codex branch is only taken for `command:'codex'`; the extracted `#consumeAdapterEvents` is behavior-identical for Claude — confirm via `git diff` that the Claude path is logically unchanged).
+Expected: new suite PASS; **`localToadRuntime.test.js` stays green** (the Codex branch is only taken for `command:'codex'`; the Claude prep+launch+tail statements are moved verbatim into the `else {}`/shared tail with zero logic change — confirm via `git diff` that every Claude statement is character-identical aside from indentation/braces).
 
 - [ ] **Step 5: Commit**
 
