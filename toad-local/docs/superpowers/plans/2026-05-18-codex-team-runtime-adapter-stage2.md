@@ -562,7 +562,23 @@ git -C /c/Project-TOAD -c commit.gpgsign=false commit -m "feat(codex): first-tur
 
 ### Task 5: FIFO per-agent turn serialization + concurrent-message coalescing
 
-Spec §4: "turns serialized per agent (FIFO, one in-flight `codex exec resume` per `runtimeId`)". Spec §5: "mid-turn: enqueue; the next turn drains the inbox — multiple queued messages batch into one resume turn". Implement by wrapping the per-turn work in a serialized chain; calls arriving while a turn is in-flight have their message text appended to `_pendingTexts` and are satisfied by one coalesced follow-up turn.
+> **RATIFIED 2026-05-18 (controller, mid-execution):** the original Step-1
+> test over-specified a microtask-timing detail — it issued three
+> *synchronous* `sendTurn` calls and asserted "turn 1 = first; turn 2 =
+> second+third (exactly 2 children)". That partition is **not** spec-mandated:
+> spec §5 says a burst of pending messages is *batched into one resume turn*,
+> so a synchronous burst coalescing into a single turn is spec-correct. The
+> pure `_chain` serializer in Step 3 is correct and **race-free**; do **not**
+> add a `_turnInFlight` "start turn 1 synchronously" shortcut to satisfy the
+> old test — that shortcut lets a `sendTurn` arriving in the microtask gap
+> between a turn's completion and the next queued drain take the fast path,
+> **overwrite `_chain` (orphaning queued drains) and double-spawn**, an
+> overlapping `codex exec` on one runtime that spec §4 explicitly says
+> "corrupts continuity". The ratified test below is **staggered** (messages
+> arrive *mid-turn*, the spec's actual model) so it is deterministic against
+> the pure design, plus a burst test pinning the coalesce-into-one behaviour.
+
+Spec §4: "turns serialized per agent (FIFO, one in-flight `codex exec resume` per `runtimeId`)". Spec §5: "mid-turn: enqueue; the next turn drains the inbox — multiple queued messages batch into one resume turn". Implement by wrapping the per-turn work in a serialized chain; calls arriving while a turn is in-flight have their message text appended to `_pendingTexts` and are satisfied by one coalesced follow-up turn. **No `_turnInFlight` flag / Path-A shortcut — pure `_chain` only (see RATIFIED note).**
 
 **Files:**
 - Modify: `src/runtime/CodexExecAdapter.js` (`sendTurn` becomes a thin enqueue wrapper around the existing per-turn body, now `#runTurn`)
@@ -595,44 +611,68 @@ function gatedChild() {
   return child;
 }
 
-test('overlapping sendTurn calls run one-at-a-time (FIFO); messages mid-turn coalesce into a single follow-up turn', async () => {
-  const children = [];
-  const a = new CodexExecAdapter({
+function makeFifoAdapter(children) {
+  return new CodexExecAdapter({
     runtimeId: 'r1', teamId: 't1', agentId: 'a1', cwd: '/w', systemPrompt: '',
     spawnImpl: () => { const c = gatedChild(); children.push(c); return c; },
     resolveCliImpl: (n) => n,
     sessionStore: { get: () => null, set: () => {}, clear: () => {} },
   });
+}
 
+test('FIFO: a turn runs alone; messages arriving MID-TURN coalesce into exactly ONE follow-up turn (no overlap)', async () => {
+  const children = [];
+  const a = makeFifoAdapter(children);
+
+  // Turn 1 starts and is in-flight (child spawned, not released).
   const p1 = a.sendTurn({ message: { text: 'first' } });
-  const p2 = a.sendTurn({ message: { text: 'second' } });
-  const p3 = a.sendTurn({ message: { text: 'third' } });
-
-  // Only the first turn's child has spawned (FIFO — others wait).
   await new Promise((r) => setImmediate(r));
   assert.equal(children.length, 1);
+
+  // These arrive WHILE turn 1 is in-flight → queue + coalesce into the next turn.
+  const p2 = a.sendTurn({ message: { text: 'second' } });
+  const p3 = a.sendTurn({ message: { text: 'third' } });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(children.length, 1); // NO overlap — turn 2 has not started while turn 1 is in-flight
 
   children[0].release();
   const r1 = await p1;
   assert.equal(r1.accepted, true);
 
-  // The remaining queued messages ('second','third') coalesce into ONE
-  // follow-up turn, not two.
   await new Promise((r) => setImmediate(r));
-  assert.equal(children.length, 2);
+  assert.equal(children.length, 2); // exactly one coalesced follow-up turn
+  assert.match(children[1].writes.join(''), /second[\s\S]*third/);
   children[1].release();
   const [r2, r3] = await Promise.all([p2, p3]);
   assert.equal(r2.accepted, true);
   assert.equal(r3.accepted, true);
-  assert.equal(children.length, 2); // exactly two turns total (1 + 1 coalesced)
-  assert.match(children[1].writes.join(''), /second[\s\S]*third|second\nthird/);
+  assert.equal(children.length, 2); // 1 + 1 coalesced, never overlapping
+});
+
+test('a SYNCHRONOUS burst coalesces into a single turn carrying all messages (spec §5 batch; no overlap; all accepted)', async () => {
+  const children = [];
+  const a = makeFifoAdapter(children);
+
+  const ps = [
+    a.sendTurn({ message: { text: 'a' } }),
+    a.sendTurn({ message: { text: 'b' } }),
+    a.sendTurn({ message: { text: 'c' } }),
+  ];
+  await new Promise((r) => setImmediate(r));
+  assert.equal(children.length, 1); // burst batched into ONE in-flight turn (spec §5: carry the pending message(s))
+  assert.match(children[0].writes.join(''), /a[\s\S]*b[\s\S]*c/);
+
+  children[0].release();
+  const rs = await Promise.all(ps);
+  assert.ok(rs.every((r) => r.accepted === true)); // every caller satisfied — no message lost
+  assert.equal(children.length, 1); // exactly one turn for the whole burst
 });
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `node --test test/codex/codexExecAdapter.fifo.test.js`
-Expected: FAIL — without serialization all three children spawn immediately (`children.length === 3` after the first `setImmediate`), so the `assert.equal(children.length, 1)` fails.
+Expected: FAIL — without the `_chain` serializer, the FIFO test's mid-turn `p2`/`p3` each spawn their own child immediately while turn 1 is in-flight, so `children.length === 3` at the post-`p2`/`p3` `setImmediate`, failing `assert.equal(children.length, 1)` (the no-overlap assertion); the burst test likewise spawns 3 children, failing its `children.length === 1`.
 
 - [ ] **Step 3: Refactor `sendTurn` into an enqueue wrapper + `#runTurn`**
 
@@ -660,7 +700,12 @@ Add the new public `sendTurn` as the FIFO + coalescing wrapper:
   }
 ```
 
-Behaviour: the first call sets `_pendingTexts=['first']`, its chained job drains the batch (`['first']`) and runs the turn. While that turn is in-flight, calls 2 and 3 push `'second'`,`'third'` and chain a second job. When turn 1 finishes, the second job drains `['second','third']` into one coalesced turn; the third chained job then finds `_pendingTexts` empty and resolves immediately as `coalesced` — so callers 2 and 3 both get an `accepted` receipt from exactly two real turns.
+Behaviour (pure `_chain`, race-free): every `sendTurn` pushes its text and chains a drain slot onto `_chain`; the first slot to run drains *whatever is currently pending* into one `#runTurn`, later slots that find `_pendingTexts` empty resolve immediately as `coalesced`. Two regimes, both spec-correct:
+
+- **Staggered (the spec's model — messages arrive mid-turn):** call 1's slot runs first and drains `['first']` → turn 1. While turn 1 is in-flight, calls 2 & 3 push `'second'`/`'third'`; their slots are chained *after* turn 1. When turn 1 finishes, slot 2 drains `['second','third']` into ONE coalesced turn; slot 3 finds nothing → `coalesced`. Exactly two turns; no overlap (turn 2 cannot start until turn 1's slot settled — `_chain` guarantees it).
+- **Synchronous burst:** all three push before any microtask drain runs, so the first slot drains `['a','b','c']` into ONE turn carrying all three; slots 2 & 3 → `coalesced`. One turn for the whole burst. This is spec §5 ("batch … into one resume turn"), **not** a defect — do not contort the design to split a synchronous burst.
+
+In both regimes there is never more than one `#runTurn` in flight (FIFO per spec §4) and every caller gets an `accepted` receipt (no lost message). The `_chain = run.then(()=>{}, ()=>{})` tail keeps the serializer alive even if a turn rejects (it shouldn't — `#runTurn` resolves `{accepted:false}` rather than throwing).
 
 - [ ] **Step 4: Run the test to verify it passes**
 
