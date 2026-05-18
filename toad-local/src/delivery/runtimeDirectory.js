@@ -3,6 +3,10 @@ const DELIVERY_MODES = new Set([
   'runtime_bridge',
   'pollable_inbox',
   'offline_queue',
+  // SP1a: per-turn Codex (CodexExecAdapter) session agents. Not a live
+  // stdin — DeliveryWorker (RUNTIME_DELIVERY_MODES) correctly queues it
+  // (queued_for_recipient); Stage-2 wake-on-message owns its routing.
+  'session_turn',
 ]);
 
 export class RuntimeDirectory {
