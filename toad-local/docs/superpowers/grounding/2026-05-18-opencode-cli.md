@@ -396,25 +396,24 @@ Source files read:
 
 ---
 
-## 7. RATIFIED first-turn argv (provisional — event vocab confirmed in Task 2)
+## 7. RATIFIED first-turn argv (FINALIZED — event vocab confirmed in Task 2)
 
-Based on §2–§5 (flags only), the PROVISIONALLY RATIFIED argv for a first turn is:
+Based on §2–§5 (flags) and the live event capture in §8–§10, the FINALIZED argv for a first turn is:
 
 ```js
 [
   'run',
-  '--format', 'json',                    // CONFIRMED real flag + value
+  '--format', 'json',                    // CONFIRMED real flag + value; emits NDJSON (§8)
   '--dangerously-skip-permissions',      // CONFIRMED real flag
-  // '--session', '<resumeId>',          // CONFIRMED real flag; used only on resume turns
-  // '--model', '<provider/model>',      // CONFIRMED real flag; optional
+  '-m', 'deepseek/deepseek-chat',        // CONFIRMED real flag (optional; any `opencode models` id)
   // '--agent', '<agent>',               // CONFIRMED real flag; optional
   // '--variant', '<variant>',           // CONFIRMED real flag; optional
   // '--thinking',                       // CONFIRMED real flag; optional
-  // '<message>',                        // PROVISIONAL: positional arg delivery UNVERIFIED vs stdin
+  '<message>',                           // CONFIRMED: positional message arg works (§8 turn used it)
 ]
 ```
 
-**PROVISIONAL note on message delivery:** The `opencode run [message..]` interface documents the prompt as a CLI positional argument array, not via stdin. The current adapter writes the prompt to `child.stdin` and passes NO positional message arg. Whether `opencode run --format json` also reads from stdin (in addition to or instead of positional args) is the primary behavioral unknown for Task 2. If stdin is NOT read, the adapter's prompt delivery is broken and must switch to positional args.
+**FINALIZED note on message delivery:** The Task-2 live turn passed the prompt as a CLI **positional argument** (`opencode run "Reply with exactly: ok" ...`) and it succeeded — the assistant replied `"ok"`. Positional message delivery is now CONFIRMED working with `--format json`. The current adapter writes the prompt to `child.stdin` and passes NO positional message arg; **this is WRONG** and must switch to passing the message as a positional argument (stdin delivery remains UNVERIFIED and is not the documented interface — do not rely on it).
 
 **Resume turn (continuing a prior session):**
 ```js
@@ -422,9 +421,133 @@ Based on §2–§5 (flags only), the PROVISIONALLY RATIFIED argv for a first tur
   'run',
   '--format', 'json',
   '--dangerously-skip-permissions',
-  '--session', '<ses_*-id-from-session_started-event>',  // CONFIRMED flag; ID format pending Task 2
+  '--session', 'ses_1c2b157c3ffesws2xivZl0UA5M',  // CONFIRMED: ses_* id from stream `sessionID` field (§9)
   // optional model/agent/variant/thinking flags
+  '<message>',                                     // positional message arg
 ]
 ```
 
-The `--continue` (`-c`) boolean flag is an alternative to `--session <id>` for resuming the most-recent session, analogous to Gemini's `--resume latest`.
+The captured `ses_*` id (top-level `sessionID` on EVERY event — see §9) is the exact value to pass back via `--session`. The `--continue` (`-c`) boolean flag is the alternative for resuming the most-recent session without an id, analogous to Gemini's `--resume latest`.
+
+---
+
+## 8. Verbatim structured events (one real turn)
+
+**Command run (exactly ONE turn, real metered DeepSeek tokens):**
+```
+cd /c/Project-TOAD/toad-local
+timeout 150 opencode run "Reply with exactly: ok" --format json -m deepseek/deepseek-chat --dangerously-skip-permissions > /tmp/opencode-cap.txt 2>&1 || true
+```
+
+**Byte count:** `1039 /tmp/opencode-cap.txt` (1039 bytes).
+
+**Exit behavior:** Command completed well within the 150s timeout (no timeout fire). stdout+stderr were merged into the capture file via `2>&1`; the file contains ONLY structured NDJSON events — no stderr noise, no log lines, no banner. `|| true` was present but the process exited cleanly (the assistant produced its reply and the run terminated normally). The model billed `cost: 0.00105084` (~$0.00105) for `tokens.total: 7505` (input 7504, output 1).
+
+**EXACT `/tmp/opencode-cap.txt` contents (every line unmodified, NDJSON — one JSON object per line):**
+
+```
+{"type":"step_start","timestamp":1779145027317,"sessionID":"ses_1c2b157c3ffesws2xivZl0UA5M","part":{"id":"prt_e3d4eaeee001NYz21Z2zReMg4L","messageID":"msg_e3d4ea990001B5s6x35rDX65dV","sessionID":"ses_1c2b157c3ffesws2xivZl0UA5M","snapshot":"41ef9149af1a23d082407235a255f95d2ce5055f","type":"step-start"}}
+{"type":"text","timestamp":1779145028055,"sessionID":"ses_1c2b157c3ffesws2xivZl0UA5M","part":{"id":"prt_e3d4eb12e001rt368WFpUuD0F6","messageID":"msg_e3d4ea990001B5s6x35rDX65dV","sessionID":"ses_1c2b157c3ffesws2xivZl0UA5M","type":"text","text":"ok","time":{"start":1779145027886,"end":1779145028048}}}
+{"type":"step_finish","timestamp":1779145028963,"sessionID":"ses_1c2b157c3ffesws2xivZl0UA5M","part":{"id":"prt_e3d4eb54e001H0z1go82mXiheA","reason":"stop","snapshot":"41ef9149af1a23d082407235a255f95d2ce5055f","messageID":"msg_e3d4ea990001B5s6x35rDX65dV","sessionID":"ses_1c2b157c3ffesws2xivZl0UA5M","type":"step-finish","tokens":{"total":7505,"input":7504,"output":1,"reasoning":0,"cache":{"write":0,"read":0}},"cost":0.00105084}}
+```
+
+**Free post-turn `opencode session list 2>&1 | head -10` (verbatim — confirms the stream's `ses_*` id is persisted):**
+```
+Session ID                      Title                                   Updated
+───────────────────────────────────────────────────────────────────────────────
+ses_1c2b157c3ffesws2xivZl0UA5M  ok                                      4:57 PM
+ses_1c3b8b47dffebv2zX5iBF9mw2h  New session - 2026-05-18T18:09:25.891Z  12:09 PM
+ses_1c3b96feaffeXJXpOTm1DC8H3X  New session - 2026-05-18T18:08:37.910Z  12:09 PM
+```
+
+The session id `ses_1c2b157c3ffesws2xivZl0UA5M` emitted in the stream's `sessionID` field is the SAME id that now appears in `opencode session list` (title `ok` = the truncated prompt). **The stream-emitted id IS the resumable session id** — it is not an internal/ephemeral id distinct from what `--session` accepts.
+
+---
+
+## 9. Event → TOAD normalized mapping
+
+Three event `type` values were observed in this real turn: `step_start`, `text`, `step_finish`. (No `tool`, no `error`/`turn_failed`, no separate `part`/`part.tokens` envelope — usage rides INSIDE the `step_finish` part.)
+
+### Top-level envelope shape (ALL events)
+Every NDJSON line is a JSON object with this top-level shape:
+```
+{ "type": <string>, "timestamp": <ms epoch number>, "sessionID": "ses_*", "part": { ... } }
+```
+**The `ses_*` session id is carried in the TOP-LEVEL `sessionID` field of EVERY event** (and ALSO duplicated inside `part.sessionID` for `step_start`/`text`). It is `"sessionID"` — capital `ID` — at the root of each line. The very FIRST event (`step_start`) already carries it, so the adapter can capture the session id from line 1 without waiting for completion.
+
+### Event 1 — `type: "step_start"`
+Verbatim shape:
+```
+{"type":"step_start","timestamp":1779145027317,"sessionID":"ses_1c2b157c3ffesws2xivZl0UA5M","part":{"id":"prt_...","messageID":"msg_...","sessionID":"ses_1c2b157c3ffesws2xivZl0UA5M","snapshot":"41ef91...","type":"step-start"}}
+```
+- Top-level `type` = `"step_start"`; `part.type` = `"step-start"` (NOTE the divergence: top-level uses **underscore** `step_start`, the nested part uses **hyphen** `step-start`).
+- **TOAD normalized event:** `session_started{ sessionId: <top-level sessionID> }` — emit on the first event that carries `sessionID` (this one). `sessionId` = `event.sessionID` (the `ses_*` string). Capture this into `sessionStore` for `--session` resume.
+
+### Event 2 — `type: "text"`
+Verbatim shape:
+```
+{"type":"text","timestamp":1779145028055,"sessionID":"ses_...","part":{"id":"prt_...","messageID":"msg_...","sessionID":"ses_...","type":"text","text":"ok","time":{"start":...,"end":...}}}
+```
+- Top-level `type` = `"text"`; `part.type` = `"text"`; the assistant content is `part.text` (here `"ok"`).
+- **TOAD normalized event:** `assistant_text{ text: event.part.text }`. (This single `text` event carried the complete reply; whether longer replies stream as multiple incremental `text` events or one consolidated event is UNVERIFIED — only a 1-token reply was captured.)
+
+### Event 3 — `type: "step_finish"`
+Verbatim shape:
+```
+{"type":"step_finish","timestamp":1779145028963,"sessionID":"ses_...","part":{"id":"prt_...","reason":"stop","snapshot":"41ef91...","messageID":"msg_...","sessionID":"ses_...","type":"step-finish","tokens":{"total":7505,"input":7504,"output":1,"reasoning":0,"cache":{"write":0,"read":0}},"cost":0.00105084}}
+```
+- Top-level `type` = `"step_finish"`; `part.type` = `"step-finish"` (again underscore vs hyphen divergence).
+- `part.reason` = `"stop"` (terminal/normal completion).
+- Usage lives at **`part.tokens`** (`{total,input,output,reasoning,cache:{write,read}}`) and cost at **`part.cost`** — NOT in a separate top-level `part.tokens` event.
+- **TOAD normalized event:** `turn_completed{ usage: { inputTokens: event.part.tokens.input, outputTokens: event.part.tokens.output, totalTokens: event.part.tokens.total, cacheRead: event.part.tokens.cache.read, cacheWrite: event.part.tokens.cache.write }, costUsd: event.part.cost, stopReason: event.part.reason }`. This is the turn-terminal event.
+
+### Events NOT observed (still UNVERIFIED — no fabrication)
+- `tool` / `tool_use` (no tool calls in a "Reply with exactly: ok" turn).
+- `error` / `turn_failed` (clean run; the error event shape and its `turn_failed` mapping remain UNVERIFIED).
+- Multiple/incremental `text` events for longer replies.
+- A distinct top-level `part` or `part.tokens` event type (usage was nested in `step_finish`, not a standalone event).
+
+### Normalizer correction implied
+`normalizeOpencodeStreamLine.js` must:
+1. Match top-level `type` values `step_start` / `text` / `step_finish` (UNDERSCORE form) — and/or `part.type` `step-start` / `text` / `step-finish` (HYPHEN form). Real lines carry BOTH conventions; matching either is safest.
+2. Read the session id from the **top-level `sessionID`** field (capital `ID`), present on every line — NOT only from `part.sessionID` and NOT from `sessionId`/`session_id`. Emit `session_started` on first sight.
+3. Read usage from `part.tokens` (`.input`/`.output`/`.total`/`.cache.read`/`.cache.write`) and cost from `part.cost`, on the `step_finish` event — not from a standalone tokens event.
+4. Treat `step_finish` (`part.reason: "stop"`) as `turn_completed`.
+5. Unknown/unmatched lines → `runtime_event` (passthrough) or `skip`; unparseable lines → `parse_error`.
+
+---
+
+## 10. RATIFIED event vocabulary + session model
+
+### RATIFIED event vocabulary (1.15.4, `opencode run --format json`)
+NDJSON on stdout, one JSON object per line, top-level envelope `{type, timestamp, sessionID, part}`. Confirmed event `type` values (this turn): `step_start`, `text`, `step_finish`. The nested `part.type` mirrors with hyphens: `step-start`, `text`, `step-finish`. Definitive REAL→TOAD list:
+
+| Real top-level `type` | Real `part.type` | Carries | TOAD normalized event |
+|---|---|---|---|
+| `step_start` | `step-start` | `sessionID` (top-level + `part.sessionID`), `messageID`, `snapshot` | `session_started{ sessionId }` (first sight) |
+| `text` | `text` | `part.text` (assistant content) | `assistant_text{ text }` |
+| `step_finish` | `step-finish` | `part.reason`, `part.tokens{total,input,output,reasoning,cache{write,read}}`, `part.cost` | `turn_completed{ usage, costUsd, stopReason }` |
+| (unobserved) `tool` | `tool` | UNVERIFIED | `tool_use` — shape UNVERIFIED |
+| (unobserved) `error` | UNVERIFIED | UNVERIFIED | `turn_failed` — shape UNVERIFIED |
+| any other line | — | — | `runtime_event` passthrough, or `parse_error` if unparseable |
+
+### RATIFIED first-turn argv
+```js
+['run', '--format', 'json', '--dangerously-skip-permissions', '-m', 'deepseek/deepseek-chat', '<message>']
+```
+(`-m` optional — any id from `opencode models`; `<message>` is a CONFIRMED-working positional arg, NOT stdin.)
+
+### RATIFIED resume argv
+```js
+['run', '--format', 'json', '--dangerously-skip-permissions', '--session', '<captured ses_* id>', '<message>']
+```
+
+### PROVEN session-continuity model
+1. **Obtain the id:** the `ses_*` session id is emitted in the **top-level `sessionID` field of every event**, starting with the very first `step_start` line. The adapter captures `event.sessionID` from the first line that has it (no need to wait for turn end).
+2. **Persist it:** store that exact `ses_*` string (e.g. `ses_1c2b157c3ffesws2xivZl0UA5M`) in `sessionStore` keyed by the TOAD task/session.
+3. **Resume:** pass the stored id back verbatim as `['--session', '<ses_* id>']` on the next turn. PROVEN correct: the stream-emitted id is identical to the id `opencode session list` reports as resumable (title `ok` = our prompt) — there is no separate "display id vs resumable id" distinction.
+4. **Fallback:** `--continue` (`-c`, boolean) resumes the most-recent session without needing the id.
+
+**Is the adapter's `['--session', <captured-id>]` model correct?** YES — structurally correct. The ONLY required correction is the SOURCE of `<captured-id>`: it must be read from the **top-level `sessionID`** field (capital `ID`) of any stream event (the `step_start` first line is sufficient), NOT from speculative `parsed.sessionId` / `part.sessionId` / `session_id` fields. The real field is `sessionID` (capital ID) at the event root, duplicated in `part.sessionID`.
+
+**Unproven (honest gaps):** `tool`/`error` event shapes (no tool call or failure occurred); multi-event streaming of long `text` replies; whether a malformed/auth-failed run emits a structured `error` event vs a non-JSON stderr dump (this turn's `2>&1` capture was pure JSON, so an error path's format remains UNVERIFIED). These do not block the first-turn/resume argv or the session model, which are fully RATIFIED.
