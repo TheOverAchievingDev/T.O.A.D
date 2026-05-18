@@ -54,13 +54,23 @@ export class CodexExecAdapter extends RuntimeAdapter {
 
   async sendTurn(input) {
     const text = requireString(input && input.message && input.message.text, 'message.text');
-    const prompt = this.systemPrompt.trim().length > 0 ? `${this.systemPrompt}\n\n${text}` : text;
-    // RATIFIED (codex-cli 0.130.0, grounding d1e58e1): `--ask-for-approval`
-    // is NOT a `codex exec` flag (→ exit 2). `approval_policy="never"` via
-    // `-c` keeps the workspace-write sandbox AND runs non-interactively.
-    // NOT `--dangerously-bypass-approvals-and-sandbox` (strips the sandbox).
-    const args = ['exec', '--json', '--skip-git-repo-check', '-C', this.cwd,
-      '--sandbox', 'workspace-write', '-c', 'approval_policy="never"', '-'];
+    const resumeId = this.sessionStore ? this.sessionStore.get(this.runtimeId) : null;
+    const isResume = typeof resumeId === 'string' && resumeId.length > 0;
+    // First turn: prepend systemPrompt (codex exec has no append-system-prompt
+    // flag; conventions live in AGENTS.md). Resume: prior convo + instructions
+    // are on disk — send the message only (grounding §10).
+    const prompt = isResume
+      ? text
+      : (this.systemPrompt.trim().length > 0 ? `${this.systemPrompt}\n\n${text}` : text);
+    // RATIFIED argv: first-turn keeps the Stage-1 sandbox argv. Resume
+    // (grounding §10, real codex 0.130) rejects -C/--sandbox (session-stored
+    // cwd is authoritative; process is spawned with cwd=this.cwd) but accepts
+    // --skip-git-repo-check (worktrees may not be git repos); `-` reads the
+    // prompt from stdin (accepted on resume in 0.130).
+    const args = isResume
+      ? ['exec', 'resume', '--json', '--skip-git-repo-check', resumeId, '-']
+      : ['exec', '--json', '--skip-git-repo-check', '-C', this.cwd,
+        '--sandbox', 'workspace-write', '-c', 'approval_policy="never"', '-'];
     const resolved = this.resolveCliImpl('codex');
     const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(String(resolved));
     const child = this.spawnImpl(resolved, args, {
@@ -83,6 +93,10 @@ export class CodexExecAdapter extends RuntimeAdapter {
           lineBuf = lineBuf.slice(nl + 1);
           for (const ev of normalizeCodexExecLine(line, ctx)) {
             this.#push(ev);
+            if (ev.type === 'session_started' && typeof ev.sessionId === 'string'
+                && ev.sessionId.length > 0 && this.sessionStore) {
+              this.sessionStore.set(this.runtimeId, ev.sessionId);
+            }
             if (ev.type === 'turn_completed' && !settled) {
               settled = true;
               cleanup();
