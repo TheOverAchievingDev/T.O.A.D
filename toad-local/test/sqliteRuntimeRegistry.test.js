@@ -250,3 +250,27 @@ test('cliSessionId defaults null, persists via setRuntimeCliSessionId, survives 
     assert.equal(registry.setRuntimeCliSessionId({ runtimeId: 'r-codex-1', cliSessionId: null }).cliSessionId, null);
   });
 });
+
+test('cliSessionId survives a registry close + reopen on the same db file (spec §4 restart-survival)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'toad-runtime-registry-'));
+  const filePath = join(dir, 'toad.db');
+  try {
+    const r1 = new SqliteRuntimeRegistry({ filePath });
+    r1.upsertRuntime({
+      runtimeId: 'r-codex-2', teamId: 'team-a', agentId: 'dev-1',
+      providerId: 'openai', command: 'codex', deliveryMode: 'session_turn',
+      status: 'running', startedAt: '2026-05-18T00:00:00.000Z',
+    });
+    r1.setRuntimeCliSessionId({ runtimeId: 'r-codex-2', cliSessionId: 'sess-persist' });
+    r1.close();
+
+    const r2 = new SqliteRuntimeRegistry({ filePath });
+    try {
+      assert.equal(r2.getRuntime('r-codex-2').cliSessionId, 'sess-persist');
+    } finally {
+      r2.close();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
