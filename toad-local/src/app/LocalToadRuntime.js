@@ -759,6 +759,7 @@ export class LocalToadRuntime {
       writeAgentsMd({ projectCwd: cwd, content: input.systemPrompt });
     }
     return this.supervisor.registerSessionAgent({
+      providerId: input.providerId || 'openai',
       teamId: input.teamId,
       agentId: input.agentId,
       runtimeId: input.runtimeId,
@@ -791,6 +792,7 @@ export class LocalToadRuntime {
       writeGeminiMd({ projectCwd: cwd, content: input.systemPrompt });
     }
     return this.supervisor.registerSessionAgent({
+      providerId: input.providerId || 'gemini',
       teamId: input.teamId,
       agentId: input.agentId,
       runtimeId: input.runtimeId,
@@ -823,6 +825,7 @@ export class LocalToadRuntime {
       writeOpencodeInstructions({ projectCwd: cwd, content: input.systemPrompt });
     }
     return this.supervisor.registerSessionAgent({
+      providerId: input.providerId || 'opencode',
       teamId: input.teamId,
       agentId: input.agentId,
       runtimeId: input.runtimeId,

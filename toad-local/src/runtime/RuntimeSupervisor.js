@@ -238,7 +238,7 @@ export class RuntimeSupervisor {
     }
     const adapter = this.createAdapter({
       runtimeId, teamId, agentId, child: null,
-      providerId: providerForCommand(command) || 'openai',
+      providerId: input.providerId || providerForCommand(command) || 'openai',
       cwd: input.cwd, systemPrompt: input.systemPrompt, args: input.args,
     });
     const args = Array.isArray(input.args) ? input.args.map((entry) => String(entry)) : [];
