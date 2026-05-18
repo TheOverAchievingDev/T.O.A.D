@@ -3,6 +3,8 @@ import { RuntimeAdapter, RuntimeAdapterError } from './RuntimeAdapter.js';
 import { resolveCli as defaultResolveCli } from '../foundry/providers/resolveCli.js';
 import { normalizeCodexExecLine } from './codex/normalizeCodexExecLine.js';
 
+const UNKNOWN_SESSION_RE = /unknown session|session not found|no (such )?session|session id .* not found|invalid session/i;
+
 /**
  * SP1a Stage 1 — minimal FIRST-TURN Codex team adapter. Same
  * RuntimeAdapter surface as ClaudeStreamJsonAdapter; per-turn internal
@@ -94,82 +96,99 @@ export class CodexExecAdapter extends RuntimeAdapter {
       ? ['exec', 'resume', '--json', '--skip-git-repo-check', resumeId, '-']
       : ['exec', '--json', '--skip-git-repo-check', '-C', this.cwd,
         '--sandbox', 'workspace-write', '-c', 'approval_policy="never"', '-'];
-    const resolved = this.resolveCliImpl('codex');
-    const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(String(resolved));
-    const child = this.spawnImpl(resolved, args, {
-      stdio: ['pipe', 'pipe', 'pipe'], shell: needsShell, windowsHide: true, cwd: this.cwd,
-    });
-    this.child = child;
 
-    return await new Promise((resolve) => {
-      let settled = false;
-      let lineBuf = '';
-      let stderrBuf = '';
-      const STDERR_CAP = 8 * 1024;
-      const ctx = { runtimeId: this.runtimeId, teamId: this.teamId, agentId: this.agentId };
+    const attempt = (argv, stdinPrompt) => {
+      const resolved = this.resolveCliImpl('codex');
+      const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(String(resolved));
+      const child = this.spawnImpl(resolved, argv, {
+        stdio: ['pipe', 'pipe', 'pipe'], shell: needsShell, windowsHide: true, cwd: this.cwd,
+      });
+      this.child = child;
 
-      let timedOut = false;
-      const timeoutTimer = setTimeout(() => {
-        if (settled) return;
-        timedOut = true;
-        try { if (child && typeof child.kill === 'function' && !child.killed) child.kill('SIGTERM'); } catch { /* ignore */ }
-      }, this.turnTimeoutMs);
+      return new Promise((resolve) => {
+        let settled = false;
+        let lineBuf = '';
+        let stderrBuf = '';
+        const STDERR_CAP = 8 * 1024;
+        const ctx = { runtimeId: this.runtimeId, teamId: this.teamId, agentId: this.agentId };
 
-      const onData = (chunk) => {
-        lineBuf += Buffer.from(chunk).toString('utf8');
-        let nl;
-        while ((nl = lineBuf.indexOf('\n')) !== -1) {
-          const line = lineBuf.slice(0, nl);
-          lineBuf = lineBuf.slice(nl + 1);
-          for (const ev of normalizeCodexExecLine(line, ctx)) {
-            this.#push(ev);
-            if (ev.type === 'session_started' && typeof ev.sessionId === 'string'
-                && ev.sessionId.length > 0 && this.sessionStore) {
-              this.sessionStore.set(this.runtimeId, ev.sessionId);
-            }
-            if (ev.type === 'turn_completed' && !settled) {
-              settled = true;
-              cleanup();
-              resolve({ accepted: true, responseState: 'accepted_by_runtime', receipt: { written: true, runtimeId: this.runtimeId } });
+        let timedOut = false;
+        const timeoutTimer = setTimeout(() => {
+          if (settled) return;
+          timedOut = true;
+          try { if (child && typeof child.kill === 'function' && !child.killed) child.kill('SIGTERM'); } catch { /* ignore */ }
+        }, this.turnTimeoutMs);
+
+        const onData = (chunk) => {
+          lineBuf += Buffer.from(chunk).toString('utf8');
+          let nl;
+          while ((nl = lineBuf.indexOf('\n')) !== -1) {
+            const line = lineBuf.slice(0, nl);
+            lineBuf = lineBuf.slice(nl + 1);
+            for (const ev of normalizeCodexExecLine(line, ctx)) {
+              this.#push(ev);
+              if (ev.type === 'session_started' && typeof ev.sessionId === 'string'
+                  && ev.sessionId.length > 0 && this.sessionStore) {
+                this.sessionStore.set(this.runtimeId, ev.sessionId);
+              }
+              if (ev.type === 'turn_completed' && !settled) {
+                settled = true;
+                cleanup();
+                resolve({ accepted: true, responseState: 'accepted_by_runtime', receipt: { written: true, runtimeId: this.runtimeId } });
+              }
             }
           }
-        }
-      };
-      const onStderr = (c) => {
-        if (stderrBuf.length < STDERR_CAP) stderrBuf += Buffer.from(c).toString('utf8').slice(0, STDERR_CAP - stderrBuf.length);
-      };
-      const onClose = (code) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        this.#push({ ...ctx, type: 'turn_failed', error: timedOut
-          ? `codex exec turn timeout after ${this.turnTimeoutMs}ms`
-          : `codex exec exited (code=${code})${stderrBuf ? ` — ${stderrBuf.trim()}` : ''}` });
-        resolve({ accepted: false, responseState: 'turn_failed', receipt: { written: true, runtimeId: this.runtimeId } });
-      };
-      const onErr = (err) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        this.#push({ ...ctx, type: 'turn_failed', error: timedOut
-          ? `codex exec turn timeout after ${this.turnTimeoutMs}ms`
-          : (err && err.message ? err.message : String(err)) });
-        resolve({ accepted: false, responseState: 'turn_failed', receipt: { written: false, runtimeId: this.runtimeId } });
-      };
-      const cleanup = () => {
-        clearTimeout(timeoutTimer);
-        child.stdout && child.stdout.removeListener && child.stdout.removeListener('data', onData);
-        child.stderr && child.stderr.removeListener && child.stderr.removeListener('data', onStderr);
-        child.removeListener && child.removeListener('close', onClose);
-        child.removeListener && child.removeListener('error', onErr);
-      };
+        };
+        const onStderr = (c) => {
+          if (stderrBuf.length < STDERR_CAP) stderrBuf += Buffer.from(c).toString('utf8').slice(0, STDERR_CAP - stderrBuf.length);
+        };
+        const onClose = (code) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          this.#push({ ...ctx, type: 'turn_failed', error: timedOut
+            ? `codex exec turn timeout after ${this.turnTimeoutMs}ms`
+            : `codex exec exited (code=${code})${stderrBuf ? ` — ${stderrBuf.trim()}` : ''}` });
+          resolve({ accepted: false, responseState: 'turn_failed', receipt: { written: true, runtimeId: this.runtimeId }, __stderr: stderrBuf });
+        };
+        const onErr = (err) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          this.#push({ ...ctx, type: 'turn_failed', error: timedOut
+            ? `codex exec turn timeout after ${this.turnTimeoutMs}ms`
+            : (err && err.message ? err.message : String(err)) });
+          resolve({ accepted: false, responseState: 'turn_failed', receipt: { written: false, runtimeId: this.runtimeId }, __stderr: String(err && err.message || err) });
+        };
+        const cleanup = () => {
+          clearTimeout(timeoutTimer);
+          child.stdout && child.stdout.removeListener && child.stdout.removeListener('data', onData);
+          child.stderr && child.stderr.removeListener && child.stderr.removeListener('data', onStderr);
+          child.removeListener && child.removeListener('close', onClose);
+          child.removeListener && child.removeListener('error', onErr);
+        };
 
-      child.stdout && child.stdout.on('data', onData);
-      child.stderr && child.stderr.on('data', onStderr);
-      child.on('close', onClose);
-      child.on('error', onErr);
-      try { child.stdin.write(prompt); child.stdin.end(); } catch { /* onClose/onErr surface it */ }
-    });
+        child.stdout && child.stdout.on('data', onData);
+        child.stderr && child.stderr.on('data', onStderr);
+        child.on('close', onClose);
+        child.on('error', onErr);
+        try { child.stdin.write(stdinPrompt); child.stdin.end(); } catch { /* onClose/onErr surface it */ }
+      });
+    };
+
+    const firstTurnArgs = ['exec', '--json', '--skip-git-repo-check', '-C', this.cwd,
+      '--sandbox', 'workspace-write', '-c', 'approval_policy="never"', '-'];
+    const firstTurnPrompt = this.systemPrompt.trim().length > 0 ? `${this.systemPrompt}\n\n${text}` : text;
+
+    let result = await attempt(args, prompt);
+    if (result.accepted !== true && isResume && UNKNOWN_SESSION_RE.test(result.__stderr || '')) {
+      if (this.sessionStore) this.sessionStore.clear(this.runtimeId);
+      this.#push({ runtimeId: this.runtimeId, teamId: this.teamId, agentId: this.agentId,
+        type: 'runtime_event', note: 'codex_session_reset',
+        detail: 'codex resume session unknown — restarting as a fresh session' });
+      result = await attempt(firstTurnArgs, firstTurnPrompt);
+    }
+    return result;
   }
 
   async sendToolResult() {
