@@ -27,7 +27,8 @@ export class DeliveryWorker {
       payloadHash: hashDeliveryPayload({ message, resolved }),
       deliveryKind: resolved.deliveryMode,
     });
-    if (!begin.inserted && begin.attempt.status === 'committed') {
+    if (!begin.inserted && begin.attempt.status === 'committed'
+        && begin.attempt.responseState !== 'queued_for_recipient') {
       return begin.attempt;
     }
 
