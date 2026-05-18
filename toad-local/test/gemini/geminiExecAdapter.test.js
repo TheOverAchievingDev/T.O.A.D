@@ -25,6 +25,8 @@ function fakeChild(scriptLines, { exitCode = 0, stderr = '' } = {}) {
   return child;
 }
 
+const DETERMINISTIC_UUID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+
 function makeAdapter(child, opts = {}) {
   const store = opts.sessionStore ?? { get: () => null, set: () => {}, clear: () => {} };
   return new GeminiExecAdapter({
@@ -40,6 +42,7 @@ function makeAdapter(child, opts = {}) {
     resolveCliImpl: (n) => n,
     sessionStore: store,
     turnTimeoutMs: opts.turnTimeoutMs,
+    uuidImpl: opts.uuidImpl ?? (() => DETERMINISTIC_UUID),
   });
 }
 
@@ -55,11 +58,15 @@ test('first sendTurn spawns Gemini headless stream-json with prompt on stdin', a
 
   assert.equal(res.accepted, true);
   assert.equal(res.responseState, 'accepted_by_runtime');
+  // GROUNDED §7/§10: the first turn passes `--session-id <generated-uuid>`
+  // (the OLD expectation here — no --session-id — was an UNVERIFIED guess
+  // and was never real for gemini 0.42.0).
   assert.deepEqual(makeAdapter._last.args, [
     '--output-format', 'stream-json',
     '--approval-mode', 'yolo',
     '--skip-trust',
     '--allowed-mcp-server-names', 'toad-local',
+    '--session-id', DETERMINISTIC_UUID,
     '-p', 'Follow the instructions above.',
   ]);
   assert.match(child.writes.join(''), /You are dev-1\.\n\ndo the task/);
@@ -82,14 +89,20 @@ test('session id is persisted and resume sends only the follow-up message', asyn
   const res = await adapter.sendTurn({ message: { text: 'second turn' } });
 
   assert.equal(res.accepted, true);
+  // GROUNDED §10: the sessionStore drives first-turn-vs-resume dispatch, but
+  // the `--resume` ARGUMENT is the literal `latest` — NEVER the stored UUID
+  // (`--resume` rejects a UUID; the OLD `--resume g-existing` expectation was
+  // an UNVERIFIED guess and was never real for gemini 0.42.0).
   assert.deepEqual(makeAdapter._last.args, [
     '--output-format', 'stream-json',
     '--approval-mode', 'yolo',
     '--skip-trust',
     '--allowed-mcp-server-names', 'toad-local',
-    '--resume', 'g-existing',
+    '--resume', 'latest',
     '-p', 'Follow the instructions above.',
   ]);
+  assert.ok(!makeAdapter._last.args.includes('g-existing'),
+    'stored UUID must never be passed as a CLI argument on resume');
   assert.equal(child.writes.join(''), 'second turn');
   assert.deepEqual(calls, [['set', 'r1', 'g-existing']]);
 });

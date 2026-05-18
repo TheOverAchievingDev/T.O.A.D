@@ -1,4 +1,5 @@
 import { spawn as defaultSpawn } from 'node:child_process';
+import { randomUUID as defaultRandomUUID } from 'node:crypto';
 import { RuntimeAdapter, RuntimeAdapterError } from './RuntimeAdapter.js';
 import { resolveCli as defaultResolveCli } from '../foundry/providers/resolveCli.js';
 import { normalizeGeminiStreamLine } from './gemini/normalizeGeminiStreamLine.js';
@@ -7,7 +8,7 @@ const GEMINI_PROMPT_ARG = 'Follow the instructions above.';
 const UNKNOWN_SESSION_RE = /unknown session|session not found|no (such )?session|session id .* not found|invalid session/i;
 
 export class GeminiExecAdapter extends RuntimeAdapter {
-  constructor({ runtimeId, teamId, agentId, cwd, systemPrompt = '', spawnImpl, resolveCliImpl, sessionStore, turnTimeoutMs } = {}) {
+  constructor({ runtimeId, teamId, agentId, cwd, systemPrompt = '', spawnImpl, resolveCliImpl, sessionStore, turnTimeoutMs, uuidImpl } = {}) {
     super('gemini');
     this.runtimeId = requireString(runtimeId, 'runtimeId');
     this.teamId = requireString(teamId, 'teamId');
@@ -15,6 +16,7 @@ export class GeminiExecAdapter extends RuntimeAdapter {
     this.cwd = requireString(cwd, 'cwd');
     this.systemPrompt = typeof systemPrompt === 'string' ? systemPrompt : '';
     this.spawnImpl = typeof spawnImpl === 'function' ? spawnImpl : defaultSpawn;
+    this.uuidImpl = typeof uuidImpl === 'function' ? uuidImpl : defaultRandomUUID;
     this.resolveCliImpl = typeof resolveCliImpl === 'function' ? resolveCliImpl : defaultResolveCli;
     this.sessionStore = sessionStore && typeof sessionStore.get === 'function' ? sessionStore : null;
     this.turnTimeoutMs = Number.isFinite(turnTimeoutMs) && turnTimeoutMs > 0 ? turnTimeoutMs : 30 * 60_000;
@@ -70,12 +72,18 @@ export class GeminiExecAdapter extends RuntimeAdapter {
   }
 
   async #runTurn(text) {
-    const resumeId = this.sessionStore ? this.sessionStore.get(this.runtimeId) : null;
-    const isResume = typeof resumeId === 'string' && resumeId.length > 0;
+    // GROUNDED §10 (RATIFIED Option 3): the sessionStore only answers
+    // "do we already have a session?" — it drives first-turn-vs-resume
+    // dispatch. The resume ARGUMENT is ALWAYS the literal `latest`, NEVER
+    // the stored UUID (`--resume` rejects a UUID — grounding §7/§10). On the
+    // first turn the adapter generates a UUID and passes `--session-id <uuid>`;
+    // the `init` event echoes it back and we store it as confirmation only.
+    const storedId = this.sessionStore ? this.sessionStore.get(this.runtimeId) : null;
+    const isResume = typeof storedId === 'string' && storedId.length > 0;
     const stdinPrompt = isResume
       ? text
       : (this.systemPrompt.trim().length > 0 ? `${this.systemPrompt}\n\n${text}` : text);
-    let result = await this.#attemptTurn({ resumeId: isResume ? resumeId : null, stdinPrompt });
+    let result = await this.#attemptTurn({ isResume, stdinPrompt });
     if (result.accepted !== true && isResume && UNKNOWN_SESSION_RE.test(result.__failError || '')) {
       if (this.sessionStore) this.sessionStore.clear(this.runtimeId);
       this.#push({
@@ -87,7 +95,7 @@ export class GeminiExecAdapter extends RuntimeAdapter {
         detail: 'gemini resume session unknown - restarting as a fresh session',
       });
       const firstTurnPrompt = this.systemPrompt.trim().length > 0 ? `${this.systemPrompt}\n\n${text}` : text;
-      result = await this.#attemptTurn({ resumeId: null, stdinPrompt: firstTurnPrompt });
+      result = await this.#attemptTurn({ isResume: false, stdinPrompt: firstTurnPrompt });
     }
     if (result.accepted !== true && typeof result.__failError === 'string' && result.__pushedFailure !== true) {
       this.#push({ runtimeId: this.runtimeId, teamId: this.teamId, agentId: this.agentId, type: 'turn_failed', error: result.__failError });
@@ -95,13 +103,21 @@ export class GeminiExecAdapter extends RuntimeAdapter {
     return result;
   }
 
-  async #attemptTurn({ resumeId, stdinPrompt }) {
+  async #attemptTurn({ isResume, stdinPrompt }) {
+    // §7 RATIFIED argv. First turn: `--session-id <generated-uuid>` (a
+    // caller-controlled UUID so the session is identifiable; the `init`
+    // event echoes it back). Resume turn: `--resume latest` — the literal
+    // string `latest`, NEVER the stored UUID (§10: `--resume` accepts only
+    // `latest` or a 1-based index, not a UUID).
+    const sessionArgs = isResume
+      ? ['--resume', 'latest']
+      : ['--session-id', this.uuidImpl()];
     const args = [
       '--output-format', 'stream-json',
       '--approval-mode', 'yolo',
       '--skip-trust',
       '--allowed-mcp-server-names', 'toad-local',
-      ...(resumeId ? ['--resume', resumeId] : []),
+      ...sessionArgs,
       '-p', GEMINI_PROMPT_ARG,
     ];
     const resolved = this.resolveCliImpl('gemini');
