@@ -47,4 +47,6 @@ test('resume with an unknown session id clears it, emits codex_session_reset, re
   assert.notEqual(spawns[1][1], 'resume');
   assert.equal(store.get('r1'), 'fresh-sess');
   assert.ok(events.some((e) => e.type === 'runtime_event' && e.note === 'codex_session_reset'));
+  assert.equal(events.filter((e) => e.type === 'turn_failed').length, 0,
+    'a transparently-recovered session-loss must emit NO turn_failed');
 });

@@ -146,19 +146,17 @@ export class CodexExecAdapter extends RuntimeAdapter {
           if (settled) return;
           settled = true;
           cleanup();
-          this.#push({ ...ctx, type: 'turn_failed', error: timedOut
+          resolve({ accepted: false, responseState: 'turn_failed', receipt: { written: true, runtimeId: this.runtimeId }, __stderr: stderrBuf, __failError: timedOut
             ? `codex exec turn timeout after ${this.turnTimeoutMs}ms`
             : `codex exec exited (code=${code})${stderrBuf ? ` — ${stderrBuf.trim()}` : ''}` });
-          resolve({ accepted: false, responseState: 'turn_failed', receipt: { written: true, runtimeId: this.runtimeId }, __stderr: stderrBuf });
         };
         const onErr = (err) => {
           if (settled) return;
           settled = true;
           cleanup();
-          this.#push({ ...ctx, type: 'turn_failed', error: timedOut
+          resolve({ accepted: false, responseState: 'turn_failed', receipt: { written: false, runtimeId: this.runtimeId }, __stderr: String(err && err.message || err), __failError: timedOut
             ? `codex exec turn timeout after ${this.turnTimeoutMs}ms`
             : (err && err.message ? err.message : String(err)) });
-          resolve({ accepted: false, responseState: 'turn_failed', receipt: { written: false, runtimeId: this.runtimeId }, __stderr: String(err && err.message || err) });
         };
         const cleanup = () => {
           clearTimeout(timeoutTimer);
@@ -176,17 +174,20 @@ export class CodexExecAdapter extends RuntimeAdapter {
       });
     };
 
-    const firstTurnArgs = ['exec', '--json', '--skip-git-repo-check', '-C', this.cwd,
-      '--sandbox', 'workspace-write', '-c', 'approval_policy="never"', '-'];
-    const firstTurnPrompt = this.systemPrompt.trim().length > 0 ? `${this.systemPrompt}\n\n${text}` : text;
-
     let result = await attempt(args, prompt);
     if (result.accepted !== true && isResume && UNKNOWN_SESSION_RE.test(result.__stderr || '')) {
       if (this.sessionStore) this.sessionStore.clear(this.runtimeId);
       this.#push({ runtimeId: this.runtimeId, teamId: this.teamId, agentId: this.agentId,
         type: 'runtime_event', note: 'codex_session_reset',
         detail: 'codex resume session unknown — restarting as a fresh session' });
+      const firstTurnArgs = ['exec', '--json', '--skip-git-repo-check', '-C', this.cwd,
+        '--sandbox', 'workspace-write', '-c', 'approval_policy="never"', '-'];
+      const firstTurnPrompt = this.systemPrompt.trim().length > 0 ? `${this.systemPrompt}\n\n${text}` : text;
       result = await attempt(firstTurnArgs, firstTurnPrompt);
+    }
+    if (result.accepted !== true && typeof result.__failError === 'string') {
+      this.#push({ runtimeId: this.runtimeId, teamId: this.teamId, agentId: this.agentId,
+        type: 'turn_failed', error: result.__failError });
     }
     return result;
   }
