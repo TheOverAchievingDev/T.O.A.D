@@ -70,7 +70,17 @@ export class CodexExecAdapter extends RuntimeAdapter {
       const batch = this._pendingTexts;
       if (batch.length === 0) return { accepted: true, responseState: 'coalesced', receipt: { written: true, runtimeId: this.runtimeId } };
       this._pendingTexts = [];
-      return this.#runTurn(batch.join('\n\n'));
+      try {
+        return await this.#runTurn(batch.join('\n\n'));
+      } catch (err) {
+        // #runTurn only THROWS on a pre-spawn failure (synchronous spawnImpl
+        // throw) — nothing was delivered. Restore the batch at the front so
+        // the next chained slot re-drains it; otherwise later coalesced
+        // callers would report a false `coalesced` success for lost messages.
+        // (All post-spawn failures resolve {accepted:false}, never throw.)
+        this._pendingTexts = batch.concat(this._pendingTexts);
+        throw err;
+      }
     });
     // Keep the chain alive even if a turn rejects (#runTurn resolves
     // {accepted:false} rather than throwing — but be safe).
