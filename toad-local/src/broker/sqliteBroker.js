@@ -153,10 +153,19 @@ export class SqliteBroker {
               AND da.status = 'committed'
               AND da.delivery_kind IN ('runtime_stdin', 'runtime_bridge')
           )
-          AND EXISTS (
-            SELECT 1 FROM delivery_attempts da
-            WHERE da.message_id = m.message_id
-              AND da.delivery_kind = 'offline_queue'
+          AND (
+            EXISTS (
+              SELECT 1 FROM delivery_attempts da
+              WHERE da.message_id = m.message_id
+                AND da.delivery_kind = 'offline_queue'
+            )
+            OR EXISTS (
+              SELECT 1 FROM delivery_attempts da
+              WHERE da.message_id = m.message_id
+                AND da.delivery_kind = 'session_turn'
+                AND da.status = 'committed'
+                AND da.response_state = 'queued_for_recipient'
+            )
           )
         ORDER BY m.created_at ASC, m.message_id ASC
         LIMIT ?
