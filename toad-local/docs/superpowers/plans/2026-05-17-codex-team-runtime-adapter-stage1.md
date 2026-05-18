@@ -8,7 +8,9 @@
 
 **Tech Stack:** Node.js ESM, `node:test`, `node:child_process`. Reuses `CodexFoundryAdapter` invocation knowledge, `ClaudeStreamJsonAdapter`'s normalize/iterable pattern, `buildToadMcpConfig`.
 
-**Spec:** `docs/superpowers/specs/2026-05-17-codex-team-runtime-adapter-design.md` (committed `644a402`). This is **Stage 1** of SP1a (the spec's §1–§4/§6/§7/§9 first slice); Stage 2 (resume/multi-turn, wake-on-message, session-aware stuck-monitor, full edge matrix) is a separate plan.
+> **RATIFIED 2026-05-17 (controller, post-Task-1 grounding, codex-cli 0.130.0; grounding doc `d1e58e1`):** Task 1 is **DONE** (committed `d1e58e1`). Material corrections applied below: Task 3 argv uses `--sandbox workspace-write -c approval_policy="never"` (NOT `--ask-for-approval never`, which is invalid on `codex exec`; NOT `--dangerously-bypass-approvals-and-sandbox`, which strips the sandbox); Task 2 normalizer handles `turn.failed`'s **nested `error:{message}`** + tolerates the new `turn.started`; Task 5 drops the unsupported `required = true` and adds the non-interactive project-trust write (`~/.codex/config.toml [projects.'<cwd>'] trust_level="trusted"`). Happy-path `--json` items remain a documented residual risk (probe usage-capped) — normalizer is defensive/total; the Task-7 proof is stand-in-driven. Begin execution at **Task 2**.
+
+**Spec:** `docs/superpowers/specs/2026-05-17-codex-team-runtime-adapter-design.md` (committed `644a402`, ratified 2026-05-17). This is **Stage 1** of SP1a (the spec's §1–§4/§6/§7/§9 first slice); Stage 2 (resume/multi-turn, wake-on-message, session-aware stuck-monitor, full edge matrix) is a separate plan.
 
 **Commit model:** per-task commits (each task is independently testable); Task 7 is the integration/proof/wiring commit. Commit directly to `main`: `git -C /c/Project-TOAD`, `toad-local/`-prefixed paths, `git -c commit.gpgsign=false`, trailer `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>`. All node commands run from `C:\Project-TOAD\toad-local` (`cd /c/Project-TOAD/toad-local && …`).
 
@@ -147,11 +149,25 @@ test('turn.completed → turn_completed', () => {
   assert.equal(ev[0].type, 'turn_completed');
 });
 
-test('error item → turn_failed with message', () => {
+test('error (standalone string message) → turn_failed', () => {
   const ev = normalizeCodexExecLine(JSON.stringify({ type: 'error', message: 'boom' }), ctx);
   assert.equal(ev.length, 1);
   assert.equal(ev[0].type, 'turn_failed');
   assert.equal(ev[0].error, 'boom');
+});
+
+test('turn.failed (NESTED error:{message}) → turn_failed extracts the nested message (0.130 shape)', () => {
+  const ev = normalizeCodexExecLine(JSON.stringify({ type: 'turn.failed', error: { message: 'usage limit reached' } }), ctx);
+  assert.equal(ev.length, 1);
+  assert.equal(ev[0].type, 'turn_failed');
+  assert.equal(ev[0].error, 'usage limit reached');
+});
+
+test('turn.started (NEW in 0.130) → runtime_event, never throws', () => {
+  let ev;
+  assert.doesNotThrow(() => { ev = normalizeCodexExecLine(JSON.stringify({ type: 'turn.started' }), ctx); });
+  assert.equal(ev.length, 1);
+  assert.equal(ev[0].type, 'runtime_event');
 });
 
 test('non-JSON line → parse_error (never throws)', () => {
@@ -239,12 +255,19 @@ export function normalizeCodexExecLine(line, ctx) {
   }
 
   if (parsed.type === 'turn.failed' || parsed.type === 'error') {
+    // RATIFIED (0.130.0, grounding d1e58e1): `error` is
+    // {type:'error',message:'..'} (string); `turn.failed` is
+    // {type:'turn.failed',error:{message:'..'}} (NESTED OBJECT).
+    const nested = parsed.error && typeof parsed.error === 'object' && parsed.error !== null
+      ? parsed.error.message
+      : null;
     return [{
       ...evBase,
       type: 'turn_failed',
       error: typeof parsed.message === 'string'
         ? parsed.message
-        : (typeof parsed.error === 'string' ? parsed.error : 'codex exec turn failed'),
+        : (typeof nested === 'string' ? nested
+          : (typeof parsed.error === 'string' ? parsed.error : 'codex exec turn failed')),
     }];
   }
 
@@ -327,7 +350,7 @@ test('first sendTurn spawns codex exec with grounded argv + prompt on stdin', as
   assert.equal(res.accepted, true);
   assert.equal(res.responseState, 'accepted_by_runtime');
   const { args } = makeAdapter._last;
-  assert.deepEqual(args, ['exec', '--json', '--skip-git-repo-check', '-C', '/work', '--sandbox', 'workspace-write', '--ask-for-approval', 'never', '-']);
+  assert.deepEqual(args, ['exec', '--json', '--skip-git-repo-check', '-C', '/work', '--sandbox', 'workspace-write', '-c', 'approval_policy="never"', '-']);
   assert.match(child.writes.join(''), /You are dev-1\.\n\ndo the task/);
 });
 
@@ -435,8 +458,12 @@ export class CodexExecAdapter extends RuntimeAdapter {
   async sendTurn(input) {
     const text = requireString(input && input.message && input.message.text, 'message.text');
     const prompt = this.systemPrompt.trim().length > 0 ? `${this.systemPrompt}\n\n${text}` : text;
+    // RATIFIED (codex-cli 0.130.0, grounding d1e58e1): `--ask-for-approval`
+    // is NOT a `codex exec` flag (→ exit 2). `approval_policy="never"` via
+    // `-c` keeps the workspace-write sandbox AND runs non-interactively.
+    // NOT `--dangerously-bypass-approvals-and-sandbox` (strips the sandbox).
     const args = ['exec', '--json', '--skip-git-repo-check', '-C', this.cwd,
-      '--sandbox', 'workspace-write', '--ask-for-approval', 'never', '-'];
+      '--sandbox', 'workspace-write', '-c', 'approval_policy="never"', '-'];
     const resolved = this.resolveCliImpl('codex');
     const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(String(resolved));
     const child = this.spawnImpl(resolved, args, {
@@ -741,16 +768,16 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { buildCodexMcpConfigToml, writeCodexProjectConfig, writeAgentsMd } from '../../src/mcp/codexMcpConfig.js';
+import { buildCodexMcpConfigToml, writeCodexProjectConfig, writeAgentsMd, markCodexProjectTrusted } from '../../src/mcp/codexMcpConfig.js';
 
 const baseOpts = { dbPath: '/db/toad.sqlite', projectCwd: '/work', teamId: 't1', agentId: 'dev-1', role: 'developer', taskId: 'B-1', nodePath: '/usr/bin/node', serverPath: '/srv/stdioServer.js' };
 
-test('buildCodexMcpConfigToml mirrors buildToadMcpConfig, server key "toad", required=true', () => {
+test('buildCodexMcpConfigToml mirrors buildToadMcpConfig, server key "toad", NO required key (0.130 — ratified d1e58e1)', () => {
   const toml = buildCodexMcpConfigToml(baseOpts);
   assert.match(toml, /\[mcp_servers\.toad\]/);
   assert.match(toml, /command = "\/usr\/bin\/node"/);
   assert.match(toml, /args = \["--no-warnings", "\/srv\/stdioServer\.js"\]/);
-  assert.match(toml, /required = true/);
+  assert.doesNotMatch(toml, /required\s*=/); // codex 0.130 has no `required` MCP key
   assert.match(toml, /\[mcp_servers\.toad\.env\]/);
   assert.match(toml, /TOAD_DB_PATH = "\/db\/toad\.sqlite"/);
   assert.match(toml, /TOAD_TEAM_ID = "t1"/);
@@ -767,6 +794,21 @@ test('writeCodexProjectConfig writes <cwd>/.codex/config.toml', async () => {
     const body = await readFile(p, 'utf8');
     assert.match(body, /\[mcp_servers\.toad\]/);
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('markCodexProjectTrusted idempotently writes [projects."<cwd>"] trust_level="trusted" into the codex global config', async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'codexhome-'));
+  try {
+    const cfg = path.join(home, 'config.toml');
+    markCodexProjectTrusted('/work/proj', { codexConfigPath: cfg });
+    let body = await readFile(cfg, 'utf8');
+    assert.match(body, /\[projects\.'\/work\/proj'\]/);
+    assert.match(body, /trust_level = "trusted"/);
+    // idempotent: second call does not duplicate the block
+    markCodexProjectTrusted('/work/proj', { codexConfigPath: cfg });
+    body = await readFile(cfg, 'utf8');
+    assert.equal((body.match(/\[projects\.'\/work\/proj'\]/g) || []).length, 1);
+  } finally { await rm(home, { recursive: true, force: true }); }
 });
 
 test('writeAgentsMd writes <cwd>/AGENTS.md with the system prompt content', async () => {
@@ -789,8 +831,9 @@ Expected: FAIL — module not found.
 Create `src/mcp/codexMcpConfig.js`:
 
 ```js
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { buildToadMcpConfig, TOAD_MCP_SERVER_NAME } from './toadMcpConfig.js';
 
 /**
@@ -798,12 +841,11 @@ import { buildToadMcpConfig, TOAD_MCP_SERVER_NAME } from './toadMcpConfig.js';
  * `.codex/config.toml [mcp_servers.toad]` entry. Reuses
  * buildToadMcpConfig so the Codex agent points at the EXACT same
  * server (command/args/env) a Claude agent gets — DRY, no drift.
- * `required = true` ⇒ `codex exec` fails loudly if the rail can't
- * init (no silent mute agent).
  *
- * §8d: the TOML keys (`command`/`args`/`env`/`required`) and the
- * project-trust mechanism are pinned to Task 1's recorded grounding
- * doc; if the installed codex differs, adjust here per that doc.
+ * RATIFIED (codex-cli 0.130.0, grounding d1e58e1): codex 0.130 has
+ * NO `required` MCP key — the loud-fail guarantee is the first-turn
+ * MCP-tool visibility probe (Task 3/6), not config. `env` is a
+ * subtable of static literals (TOAD's values are literals → correct).
  */
 export function buildCodexMcpConfigToml(opts = {}) {
   const cfg = buildToadMcpConfig(opts).mcpServers[TOAD_MCP_SERVER_NAME];
@@ -811,20 +853,43 @@ export function buildCodexMcpConfigToml(opts = {}) {
   lines.push('[mcp_servers.toad]');
   lines.push(`command = ${tomlStr(cfg.command)}`);
   lines.push(`args = [${cfg.args.map(tomlStr).join(', ')}]`);
-  lines.push('required = true');
   lines.push('');
   lines.push('[mcp_servers.toad.env]');
   for (const [k, v] of Object.entries(cfg.env)) lines.push(`${k} = ${tomlStr(v)}`);
   return `${lines.join('\n')}\n`;
 }
 
-export function writeCodexProjectConfig({ projectCwd, ...opts } = {}) {
+export function writeCodexProjectConfig({ projectCwd, codexConfigPath, ...opts } = {}) {
   const cwd = requireNonEmpty(projectCwd, 'projectCwd');
   const dir = join(cwd, '.codex');
   mkdirSync(dir, { recursive: true });
   const p = join(dir, 'config.toml');
   writeFileSync(p, buildCodexMcpConfigToml({ ...opts, projectCwd: cwd }), 'utf8');
+  // RATIFIED: project-scoped .codex/config.toml only loads for TRUSTED
+  // projects. Mark this cwd trusted non-interactively (grounding d1e58e1
+  // §5). C:\Project-TOAD is already trusted; this is idempotent.
+  markCodexProjectTrusted(cwd, codexConfigPath ? { codexConfigPath } : undefined);
   return p;
+}
+
+/**
+ * Idempotently grant Codex project-trust by appending
+ * `[projects.'<cwd>']\ntrust_level = "trusted"` to the codex GLOBAL
+ * config (`~/.codex/config.toml`). Append-only (never rewrites the
+ * user's file); a no-op if a trust entry for this path already exists.
+ * `codexConfigPath` is injectable for tests.
+ */
+export function markCodexProjectTrusted(projectCwd, { codexConfigPath } = {}) {
+  const cwd = requireNonEmpty(projectCwd, 'projectCwd');
+  const cfgPath = codexConfigPath || join(homedir(), '.codex', 'config.toml');
+  const header = `[projects.'${cwd}']`;
+  let current = '';
+  if (existsSync(cfgPath)) current = readFileSync(cfgPath, 'utf8');
+  if (current.includes(header)) return cfgPath; // already trusted — idempotent
+  mkdirSync(join(cfgPath, '..'), { recursive: true });
+  const block = `${current && !current.endsWith('\n') ? '\n' : ''}\n${header}\ntrust_level = "trusted"\n`;
+  writeFileSync(cfgPath, current + block, 'utf8');
+  return cfgPath;
 }
 
 export function writeAgentsMd({ projectCwd, content } = {}) {
@@ -844,7 +909,7 @@ function requireNonEmpty(v, label) {
 }
 ```
 
-> **Trust step (§8d, Task-1-grounded):** project-scoped `.codex/config.toml` loads only for *trusted* projects. Task 1 Step 3 records the exact trust mechanism. Implement it here as a `markCodexProjectTrusted(projectCwd)` export ONLY if Task 1's doc shows a file/config-based mechanism (e.g. writing a `projects."<cwd>".trust_level = "trusted"` key to `~/.codex/config.toml`, or a documented `-c` override the launch passes). If trust is an interactive prompt with no headless path, record that as a **BLOCKED** finding for the controller (it changes the launch design) — do **not** invent a mechanism.
+> **Trust step — RATIFIED (grounding `d1e58e1` §5):** project-scoped `.codex/config.toml` loads only for *trusted* projects, and trust IS settable non-interactively by appending `[projects.'<cwd>'] trust_level = "trusted"` to `~/.codex/config.toml`. That is implemented above as `markCodexProjectTrusted(projectCwd,{codexConfigPath?})` (append-only, idempotent) and called by `writeCodexProjectConfig`. `C:\Project-TOAD` is already trusted (so for the real project this is a no-op); the per-agent cwd is trusted explicitly. No interactive path needed — not BLOCKED.
 
 - [ ] **Step 4: Run it — verify it passes**
 
@@ -1158,8 +1223,8 @@ Expected: the out-of-scope diff EMPTY; the 7 Stage-1 commits + the spec commit `
 **1. Spec coverage (spec §1–§4/§6/§7/§9, Stage-1 slice):**
 - §3 provider-routing seam (factory + launch-gating, Claude byte-unchanged) → Tasks 4, 6. ✓
 - §4 `CodexExecAdapter` internals + pure `normalizeCodexExecLine` core → Tasks 2, 3. ✓
-- §4/§6 MCP rail (`.codex/config.toml` reusing `buildToadMcpConfig`, `required=true`, trust) + AGENTS.md + first-turn system prompt → Tasks 5, 6. ✓
-- §7 governance (`--sandbox workspace-write --ask-for-approval never`; `approve()` not-applicable) + file-based auth preflight → Tasks 3, 6. ✓
+- §4/§6 MCP rail (`.codex/config.toml` reusing `buildToadMcpConfig`, **no `required`** — visibility probe is the guard, non-interactive trust write) + AGENTS.md + first-turn system prompt → Tasks 5, 6. ✓
+- §7 governance (`--sandbox workspace-write -c approval_policy="never"`; `approve()` not-applicable) + file-based auth preflight → Tasks 3, 6. ✓
 - §9 testing (pure-core TDD + epicenter mutation-kill; adapter injected-spawn; factory/registration; Claude regression; front-loaded end-to-end proof; suites wired) → Tasks 2–7. ✓
 - §10 §8d grounding (probe the installed codex, record, code against the artifact; CLI-drift caveat) → Task 1 + the pinned notes in Tasks 2/5/6. ✓
 - Stage-2 items (resume/session-id persistence, wake-on-message DeliveryWorker, session-aware stuck-monitor, full edge matrix) are explicitly **out of Stage 1** (stated in Tasks 3 + the header) → deferred to the Stage-2 plan, per the agreed staging. ✓
