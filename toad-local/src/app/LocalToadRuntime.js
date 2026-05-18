@@ -33,6 +33,10 @@ import { StuckRuntimeMonitor } from '../diagnostics/stuckRuntimeMonitor.js';
 import { SqliteFoundryStore } from '../foundry/sqliteFoundryStore.js';
 import { claudeAuthPreflight, defaultRefreshOnce } from '../runtime/authPreflight/index.js';
 import { readClaudeCredsStatusForPreflight } from '../providers/providerAuth.js';
+import { providerForCommand } from '../team/providerCommands.js';
+import { getAuthStatus as defaultGetAuthStatus } from '../providers/providerAuth.js';
+import { createAdapterForProvider } from '../runtime/adapterForProvider.js';
+import { writeCodexProjectConfig, writeAgentsMd } from '../mcp/codexMcpConfig.js';
 import { spawn as nodeSpawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -46,6 +50,10 @@ function isClaudeCommand(command) {
   if (typeof command !== 'string' || command.length === 0) return false;
   const base = command.split(/[\\/]/).pop().toLowerCase();
   return base === 'claude' || base === 'claude.cmd' || base === 'claude.exe' || base === 'claude.bat';
+}
+
+function requireLaunchCwd(input) {
+  return (input && typeof input.cwd === 'string' && input.cwd.length > 0) ? input.cwd : process.cwd();
 }
 
 /** Global foundry DB lives in the user's home directory, NOT inside any
@@ -95,6 +103,7 @@ export class LocalToadRuntime {
     installDir = null,
     spawnProcess,
     createAdapter,
+    getCodexAuthStatusImpl,
     supervisor = null,
     deliveryWorker = null,
     toolFacade = null,
@@ -147,6 +156,9 @@ export class LocalToadRuntime {
     this.claudeAuthPreflightImpl = claudeAuthPreflightImpl;
     this.refreshOnceImpl = refreshOnceImpl;
     this.readClaudeCredsStatus = readClaudeCredsStatus;
+    this.getCodexAuthStatusImpl = typeof getCodexAuthStatusImpl === 'function'
+      ? getCodexAuthStatusImpl
+      : ((opts) => defaultGetAuthStatus(opts));
     // CONTROLLER-RATIFIED (T7 grounding, §8d — hermetic-test +
     // inert/over-gate epicenter). `#authPreflightEnabled` is true iff
     // projectCwd is a non-empty string — the VERBATIM enable idiom
@@ -179,7 +191,7 @@ export class LocalToadRuntime {
         runtimeDirectory,
         runtimeRegistry: this.runtimeRegistry,
         ...(spawnProcess ? { spawnProcess } : {}),
-        ...(createAdapter ? { createAdapter } : {}),
+        createAdapter: createAdapter || createAdapterForProvider,
       });
     this.deliveryWorker =
       deliveryWorker ||
@@ -527,49 +539,54 @@ export class LocalToadRuntime {
         additions: (input && typeof input.env === 'object') ? input.env : {},
       }),
     };
-    const launchInput = this.#withToadMcpConfig(scrubbedInput);
-    if (this.#authPreflightEnabled && isClaudeCommand(input && input.command)) {
-      // CONTROLLER-RATIFIED (T7 grounding, §8d — hermetic-test +
-      // inert/over-gate epicenter). `#authPreflightEnabled` is true iff
-      // projectCwd is a non-empty string — the VERBATIM enable idiom
-      // every other production-only collaborator in this file already
-      // uses (worktreeManager / mergeChecker / mergeIntegrator /
-      // riskPolicy / remoteMergePolicy / riskPolicyStore). Rationale:
-      //   • Non-inert in production — EVERY real agent-launch path sets
-      //     projectCwd: scripts/dev-api-server.mjs ({projectCwd,
-      //     installDir}) and src/mcp/stdioRuntime.js createMcpRuntimeFromEnv
-      //     ({projectCwd: TOAD_PROJECT_CWD}). Spec §4.3's "run preflight
-      //     for every anthropic/claude launch" is fully preserved (in
-      //     production projectCwd is always set) — spec-faithful.
-      //   • Hermetic for the existing suite — test/localToadRuntime.test.js
-      //     constructs WITHOUT projectCwd and launches command:'claude'
-      //     12/12 times; this gate makes it a true no-op (no real
-      //     getAuthStatus / no real `claude --print` in unit tests).
-      // Serialize all Claude preflights in-process: concurrent team
-      // launches must not race `claude --print` on the single
-      // ~/.claude/.credentials.json (partial read / duplicate refresh).
-      // The second waiter re-reads status first, so a burst refreshes
-      // at most once. (Design §4.3.)
-      const credsPath = '~/.claude/.credentials.json';
-      const runPreflight = async () => this.claudeAuthPreflightImpl({
-        readCredsStatus: this.readClaudeCredsStatus,
-        refreshOnce: this.#resolveRefreshOnce(),
-        now: () => Date.now(),
-        relaunchState: this.#authRelaunchState,
-        credsPath,
-      });
-      const gate = this.#authPreflightMutex.then(runPreflight, runPreflight);
-      // Keep the chain alive regardless of this gate's outcome.
-      this.#authPreflightMutex = gate.then(() => {}, () => {});
-      const verdict = await gate;
-      if (verdict.decision === 'block') {
-        throw new Error(verdict.reason);
+    let runtime;
+    if (providerForCommand(input && input.command) === 'openai') {
+      runtime = await this.#prepareCodexRuntime(scrubbedInput);
+    } else {
+      const launchInput = this.#withToadMcpConfig(scrubbedInput);
+      if (this.#authPreflightEnabled && isClaudeCommand(input && input.command)) {
+        // CONTROLLER-RATIFIED (T7 grounding, §8d — hermetic-test +
+        // inert/over-gate epicenter). `#authPreflightEnabled` is true iff
+        // projectCwd is a non-empty string — the VERBATIM enable idiom
+        // every other production-only collaborator in this file already
+        // uses (worktreeManager / mergeChecker / mergeIntegrator /
+        // riskPolicy / remoteMergePolicy / riskPolicyStore). Rationale:
+        //   • Non-inert in production — EVERY real agent-launch path sets
+        //     projectCwd: scripts/dev-api-server.mjs ({projectCwd,
+        //     installDir}) and src/mcp/stdioRuntime.js createMcpRuntimeFromEnv
+        //     ({projectCwd: TOAD_PROJECT_CWD}). Spec §4.3's "run preflight
+        //     for every anthropic/claude launch" is fully preserved (in
+        //     production projectCwd is always set) — spec-faithful.
+        //   • Hermetic for the existing suite — test/localToadRuntime.test.js
+        //     constructs WITHOUT projectCwd and launches command:'claude'
+        //     12/12 times; this gate makes it a true no-op (no real
+        //     getAuthStatus / no real `claude --print` in unit tests).
+        // Serialize all Claude preflights in-process: concurrent team
+        // launches must not race `claude --print` on the single
+        // ~/.claude/.credentials.json (partial read / duplicate refresh).
+        // The second waiter re-reads status first, so a burst refreshes
+        // at most once. (Design §4.3.)
+        const credsPath = '~/.claude/.credentials.json';
+        const runPreflight = async () => this.claudeAuthPreflightImpl({
+          readCredsStatus: this.readClaudeCredsStatus,
+          refreshOnce: this.#resolveRefreshOnce(),
+          now: () => Date.now(),
+          relaunchState: this.#authRelaunchState,
+          credsPath,
+        });
+        const gate = this.#authPreflightMutex.then(runPreflight, runPreflight);
+        // Keep the chain alive regardless of this gate's outcome.
+        this.#authPreflightMutex = gate.then(() => {}, () => {});
+        const verdict = await gate;
+        if (verdict.decision === 'block') {
+          throw new Error(verdict.reason);
+        }
+        // proceed (with or without warn): the still-stale creds mean the
+        // next provider_auth_status poll already reports stale via Layer
+        // A — no extra marker plumbing (design §4.3/§5).
       }
-      // proceed (with or without warn): the still-stale creds mean the
-      // next provider_auth_status poll already reports stale via Layer
-      // A — no extra marker plumbing (design §4.3/§5).
+      runtime = await this.supervisor.launchAgent(launchInput);
     }
-    const runtime = await this.supervisor.launchAgent(launchInput);
     const adapter = this.supervisor.getAdapter(runtime.runtimeId);
     if (adapter) {
       this.adapters.set(runtime.runtimeId, adapter);
@@ -671,6 +688,41 @@ export class LocalToadRuntime {
     // Build the real default lazily here, never in the constructor.
     const safeCommand = resolveWindowsCommand('claude');
     return () => defaultRefreshOnce({ spawnImpl: nodeSpawn, command: safeCommand });
+  }
+
+  async #prepareCodexRuntime(input) {
+    // §4 isolation + env-scrub already applied by launchAgent before
+    // this point. Codex file-based auth preflight — fail fast, never a
+    // doomed silent spawn (the auth-no-creds lesson, per-provider).
+    const auth = await this.getCodexAuthStatusImpl({ providerId: 'openai' });
+    if (!auth || auth.signedIn !== true) {
+      throw new Error(
+        `Codex not authenticated — run \`codex login\`.${auth && auth.reason ? ` (${auth.reason})` : ''}`,
+      );
+    }
+    const cwd = requireLaunchCwd(input);
+    writeCodexProjectConfig({
+      projectCwd: cwd,
+      dbPath: this.dbPath,
+      teamId: input.teamId,
+      agentId: input.agentId,
+      role: resolveLaunchRole(input),
+      taskId: input.taskId,
+      runtimeId: input.runtimeId,
+    });
+    if (typeof input.systemPrompt === 'string' && input.systemPrompt.trim().length > 0) {
+      writeAgentsMd({ projectCwd: cwd, content: input.systemPrompt });
+    }
+    return this.supervisor.registerSessionAgent({
+      teamId: input.teamId,
+      agentId: input.agentId,
+      runtimeId: input.runtimeId,
+      command: input.command,
+      cwd,
+      systemPrompt: input.systemPrompt,
+      taskId: input.taskId,
+      restartPolicy: input.restartPolicy,
+    });
   }
 
   #withToadMcpConfig(input) {
