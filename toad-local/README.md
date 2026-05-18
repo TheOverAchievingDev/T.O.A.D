@@ -56,7 +56,7 @@ every adapter implements the same `RuntimeAdapter` contract.
 | Anthropic (Claude) | `ClaudeStreamJsonAdapter` | persistent child | **Working** — whole-impl reviewed, full suite green |
 | OpenAI (Codex) | `CodexExecAdapter` | session / per-turn (`codex exec [resume]`) | **Working** — SP1a Stage 1+2 reviewed, grounded against codex-cli 0.130 |
 | Google (Gemini) | `GeminiExecAdapter` | session / per-turn (`--session-id` / `--resume latest`) | **Grounded (gemini 0.42.0)** — SP1b: contract + stream-JSON vocabulary captured from the real CLI, adapter/normalizer corrected, scripted e2e green in the root gate. Residuals below. |
-| OpenCode | `OpencodeExecAdapter` | session / per-turn | **Present, unverified** — CLI contract + event vocabulary not yet grounded (SP1c, pending) |
+| OpenCode | `OpencodeExecAdapter` | session / per-turn (`run … --session <id>`) | **Grounded (opencode 1.15.4)** — SP1c: contract + `--format json` vocabulary captured from the real CLI, a real stdin→positional-arg defect fixed, adapter/normalizer corrected, scripted e2e green in the root gate. Residuals below. |
 
 > **Gemini (SP1b, grounded 2026-05-18):** the CLI invocation contract and
 > `--output-format stream-json` event vocabulary are now grounded against the
@@ -69,8 +69,22 @@ every adapter implements the same `RuntimeAdapter` contract.
 > not observed in the single grounding turn); and there is still no first-turn
 > MCP-tool visibility probe across session adapters (cross-cutting A4, deferred).
 >
-> **OpenCode** remains unverified pending SP1c. Use Claude or Codex for the
-> highest-assurance team runs; Gemini is usable with the residuals understood.
+> **OpenCode (SP1c, grounded 2026-05-18):** the `opencode run --format json`
+> contract + NDJSON event vocabulary are grounded against the real opencode
+> 1.15.4 (grounding doc `docs/superpowers/grounding/2026-05-18-opencode-cli.md`).
+> A real defect was found and fixed: the prompt was written to stdin, but
+> `opencode run` has no stdin path — it is now passed as the final positional
+> arg. Session id is captured from the top-level `sessionID` (line-1
+> `step_start`) and resumed via `--session <id>` (`--continue` fallback); a
+> front-loaded scripted e2e proves the real adapter→normalizer→ingestor→broker
+> seam. **Documented residuals (not yet live-proven):** multi-event streaming
+> of long replies; `tool`/`error` event shapes (unseen in the single grounding
+> turn — degrade to `runtime_event`); error-path JSON-vs-stderr format;
+> cross-process-restart resume; and the cross-cutting A4 first-turn MCP-tool
+> visibility probe (deferred, applies to all session adapters).
+>
+> Use Claude or Codex for the highest-assurance team runs; Gemini and OpenCode
+> are usable with their residuals understood.
 
 ## Screenshots
 

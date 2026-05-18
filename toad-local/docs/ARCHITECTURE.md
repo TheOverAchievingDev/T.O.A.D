@@ -24,7 +24,7 @@ flowchart LR
   Adapters --> Claude["Claude · working"]
   Adapters --> Codex["Codex · working"]
   Adapters --> Gemini["Gemini · grounded 0.42.0"]
-  Adapters --> Opencode["OpenCode · unverified"]
+  Adapters --> Opencode["OpenCode · grounded 1.15.4"]
 ```
 
 Provider status as of this revision: Claude and Codex are whole-impl
@@ -34,8 +34,14 @@ vocabulary captured from the real CLI, adapter/normalizer corrected (the
 broken `--resume <uuid>` model fixed to `--session-id`/`--resume latest`),
 scripted e2e green in the root gate; residuals (cross-restart resume,
 `tool_use`/`error` event shapes, the cross-cutting A4 MCP-visibility probe)
-are documented and tracked. **OpenCode** is structurally complete but its
-CLI contract + event vocabulary are **not yet grounded** (SP1c, pending).
+are documented and tracked. **OpenCode is grounded against opencode 1.15.4
+(SP1c** — `docs/superpowers/grounding/2026-05-18-opencode-cli.md`): `run
+--format json` contract + NDJSON vocabulary captured from the real CLI, a
+real stdin→positional-arg prompt defect fixed, adapter/normalizer corrected,
+scripted e2e green in the root gate; residuals (multi-event streaming of
+long replies, `tool`/`error` event shapes, error-path format, cross-restart
+resume, the cross-cutting A4 MCP-visibility probe) are documented and
+tracked.
 The adapter seam is provider-agnostic; un-grounded providers are wired but
 not production-trusted.
 
