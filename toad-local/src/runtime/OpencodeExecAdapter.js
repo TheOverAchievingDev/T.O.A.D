@@ -223,18 +223,26 @@ export class OpencodeExecAdapter extends RuntimeAdapter {
   isTurnInFlight() { return typeof this._turnStartedAt === 'string'; }
 }
 
+// BR5/A6: model/agent/variant values reach a `shell:true` spawn on Windows
+// .cmd resolution. Only plain provider/model identifiers are allowed through
+// — anything with a shell metacharacter (space, quote, &|;<>$`(), etc.) is
+// dropped before it can become an argument-injection vector (CVE-2024-27980).
+const SAFE_OPENCODE_ARG_VALUE = /^[\w./:@-]+$/;
+
 function normalizeOpencodeArgs(args) {
   const input = Array.isArray(args) ? args.map((entry) => String(entry)) : [];
   const out = [];
   for (let i = 0; i < input.length; i += 1) {
     const current = input[i];
     if (current === '--model' || current === '-m' || current === '--agent' || current === '--variant') {
-      if (typeof input[i + 1] === 'string' && input[i + 1].length > 0) {
-        out.push(current, input[i + 1]);
-        i += 1;
+      const value = input[i + 1];
+      if (typeof value === 'string' && value.length > 0) {
+        i += 1; // consume the value regardless (so a dropped value can't strand it)
+        if (SAFE_OPENCODE_ARG_VALUE.test(value)) out.push(current, value);
       }
     } else if (/^--(model|agent|variant)=.+/.test(current)) {
-      out.push(current);
+      const value = current.slice(current.indexOf('=') + 1);
+      if (SAFE_OPENCODE_ARG_VALUE.test(value)) out.push(current);
     } else if (current === '--thinking') {
       out.push(current);
     }
