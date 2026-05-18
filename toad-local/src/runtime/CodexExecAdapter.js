@@ -32,7 +32,6 @@ export class CodexExecAdapter extends RuntimeAdapter {
     this._chain = Promise.resolve();   // FIFO per-agent turn serializer (Task 5)
     this._pendingTexts = [];           // coalesced messages awaiting the next turn (Task 5)
     this._turnStartedAt = null;        // ISO while a turn is in-flight (Task 11)
-    this._turnInFlight = false;        // true while #runTurn is executing (Task 5)
   }
 
   #push(event) {
@@ -55,33 +54,24 @@ export class CodexExecAdapter extends RuntimeAdapter {
 
   async sendTurn(input) {
     const text = requireString(input && input.message && input.message.text, 'message.text');
-    // Spec §4/§5: turns serialized FIFO per-agent; messages that arrive while a
-    // turn is in-flight coalesce into ONE batched follow-up turn.
-    //
-    // When no turn is in-flight we start synchronously (spawnImpl called before
-    // this method returns), so callers 2+ that arrive on the same microtask tick
-    // see _turnInFlight=true and correctly queue themselves for the next drain.
-    if (!this._turnInFlight) {
-      this._turnInFlight = true;
-      const turnPromise = this.#runTurn(text);
-      // _chain advances past this turn; the flag resets when #runTurn settles.
-      this._chain = turnPromise.then(() => { this._turnInFlight = false; },
-                                     () => { this._turnInFlight = false; });
-      return turnPromise;
-    }
-    // Coalesce: if a turn is already in-flight (or queued), this message
-    // joins the pending batch and is satisfied by the next drain slot — spec §5
-    // (multiple queued messages batch into one resume turn).
+    // Spec §4/§5: turns serialized FIFO per-agent (one in-flight #runTurn per
+    // runtime); messages that arrive while a turn is in-flight coalesce into
+    // ONE batched follow-up turn. Pure _chain serializer — every call chains a
+    // drain slot; the first slot to run drains whatever is pending into one
+    // #runTurn, later slots that find nothing pending resolve as `coalesced`.
+    // A synchronous burst therefore batches into a single turn (spec §5,
+    // intentional). No _turnInFlight fast-path: it would let a call in the
+    // gap between turn-completion and the next drain overwrite _chain and
+    // double-spawn (overlap → session corruption, spec §4).
     this._pendingTexts.push(text);
     const run = this._chain.then(async () => {
       const batch = this._pendingTexts;
       if (batch.length === 0) return { accepted: true, responseState: 'coalesced', receipt: { written: true, runtimeId: this.runtimeId } };
-      this._turnInFlight = true;
       this._pendingTexts = [];
-      const result = await this.#runTurn(batch.join('\n\n'));
-      this._turnInFlight = false;
-      return result;
+      return this.#runTurn(batch.join('\n\n'));
     });
+    // Keep the chain alive even if a turn rejects (#runTurn resolves
+    // {accepted:false} rather than throwing — but be safe).
     this._chain = run.then(() => {}, () => {});
     return run;
   }
