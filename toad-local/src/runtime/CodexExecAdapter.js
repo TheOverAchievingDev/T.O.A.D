@@ -108,6 +108,13 @@ export class CodexExecAdapter extends RuntimeAdapter {
       const STDERR_CAP = 8 * 1024;
       const ctx = { runtimeId: this.runtimeId, teamId: this.teamId, agentId: this.agentId };
 
+      let timedOut = false;
+      const timeoutTimer = setTimeout(() => {
+        if (settled) return;
+        timedOut = true;
+        try { if (child && typeof child.kill === 'function' && !child.killed) child.kill('SIGTERM'); } catch { /* ignore */ }
+      }, this.turnTimeoutMs);
+
       const onData = (chunk) => {
         lineBuf += Buffer.from(chunk).toString('utf8');
         let nl;
@@ -135,7 +142,9 @@ export class CodexExecAdapter extends RuntimeAdapter {
         if (settled) return;
         settled = true;
         cleanup();
-        this.#push({ ...ctx, type: 'turn_failed', error: `codex exec exited (code=${code})${stderrBuf ? ` — ${stderrBuf.trim()}` : ''}` });
+        this.#push({ ...ctx, type: 'turn_failed', error: timedOut
+          ? `codex exec turn timeout after ${this.turnTimeoutMs}ms`
+          : `codex exec exited (code=${code})${stderrBuf ? ` — ${stderrBuf.trim()}` : ''}` });
         resolve({ accepted: false, responseState: 'turn_failed', receipt: { written: true, runtimeId: this.runtimeId } });
       };
       const onErr = (err) => {
@@ -146,6 +155,7 @@ export class CodexExecAdapter extends RuntimeAdapter {
         resolve({ accepted: false, responseState: 'turn_failed', receipt: { written: false, runtimeId: this.runtimeId } });
       };
       const cleanup = () => {
+        clearTimeout(timeoutTimer);
         child.stdout && child.stdout.removeListener && child.stdout.removeListener('data', onData);
         child.stderr && child.stderr.removeListener && child.stderr.removeListener('data', onStderr);
         child.removeListener && child.removeListener('close', onClose);
