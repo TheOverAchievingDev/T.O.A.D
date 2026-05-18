@@ -35,10 +35,11 @@ describe('SecretRegistry — Slice 2 substitution pipeline', () => {
     assert.equal(result, 'connection: postgres://secret and backup: postgres://secret');
   });
 
-  test('substitute leaves unknown tokens as-is', () => {
+  test('substitute fails CLOSED on unknown tokens by default; failOpen leaves as-is (BR7/C)', () => {
     const reg = new SecretRegistry();
     const text = 'value: {{MISSING_cafebabe}}';
-    assert.equal(reg.substitute(text), text);
+    assert.equal(reg.substitute(text), 'value: ', 'unknown token blanked (fail-closed default)');
+    assert.equal(reg.substitute(text, { failOpen: true }), text, 'failOpen opt-in preserves it');
   });
 
   test('substitute passes through non-string values unchanged', () => {
@@ -80,7 +81,10 @@ describe('SecretRegistry — Slice 2 substitution pipeline', () => {
     assert.equal(reg.size, 0);
     assert.equal(reg.resolve(token), null);
     const text = `use ${token}`;
-    assert.equal(reg.substitute(text), text); // token not resolved after clear
+    // After clear the token is unresolved: fail-closed default blanks it,
+    // failOpen proves it was specifically not resolved (left verbatim).
+    assert.equal(reg.substitute(text), 'use ');
+    assert.equal(reg.substitute(text, { failOpen: true }), text); // not resolved after clear
   });
 
   test('register throws on empty plaintext', () => {

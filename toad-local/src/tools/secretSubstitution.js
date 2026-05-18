@@ -1,4 +1,15 @@
 /**
+ * ⚠️ SCAFFOLDING — NOT WIRED IN (bundle review C / BR7). As of 2026-05-18
+ * nothing in production imports this module: no caller `register()`s a
+ * secret and no caller `substitute()`s before subprocess/env injection,
+ * and `globalSecretRegistry` is never populated. The "the agent never sees
+ * plaintext" guarantee below is therefore NOT in effect yet. Integration
+ * (wiring substitute() into the plugin tool-result/env path and
+ * redactForAudit() into the audit writer) is its OWN tracked slice. Until
+ * then this is hardened scaffolding, not an active security control. The
+ * live secret defense today is Slice 1 `secretRedactor.redactSecrets`
+ * (audit-log regex scrub), which IS wired (railwayTools.js).
+ *
  * Secret Redactor — Slice 2: Agent-Side Substitution Pipeline.
  *
  * Slice 1 (secretRedactor.js) strips secrets from the AUDIT LOG and UI
@@ -70,20 +81,28 @@ export class SecretRegistry {
 
   /**
    * Replace ALL `{{token}}` occurrences in a string with their plaintext
-   * values. Unknown tokens are left as-is (fail-open — better a broken
-   * placeholder than a crash during a tool call).
+   * values. Fails CLOSED by default: an unknown/expired token (after
+   * clear() or a sidecar restart) is replaced with '' so a stale reference
+   * can never be injected verbatim into a subprocess/env as a literal
+   * `{{NS_...}}` fragment. Each miss is reported via `onMissing(token)` so
+   * the caller can decide to abort. `failOpen:true` opts back into the old
+   * leave-as-is behaviour (the exception, not the default).
    *
    * Use this at the point where a plugin result reaches the runtime
    * executor (e.g. just before injecting an env-var into a subprocess).
    *
    * @param {string} text
+   * @param {{ failOpen?: boolean, onMissing?: (token:string)=>void }} [opts]
    * @returns {string}
    */
-  substitute(text) {
+  substitute(text, { failOpen = false, onMissing } = {}) {
     if (typeof text !== 'string') return text;
     return text.replace(TOKEN_RE, (match, key) => {
       const token = `{{${key}}}`;
-      return this.#store.get(token) ?? match;
+      const value = this.#store.get(token);
+      if (value !== undefined) return value;
+      if (typeof onMissing === 'function') onMissing(token);
+      return failOpen ? match : '';
     });
   }
 
@@ -97,15 +116,19 @@ export class SecretRegistry {
    * @param {string} text
    * @returns {string}
    */
-  redactForAudit(text) {
+  redactForAudit(text, { onShortSkip } = {}) {
     if (typeof text !== 'string') return text;
     let result = text;
-    for (const [plaintext, token] of this.#reverse.entries()) {
-      if (plaintext.length < 8) continue; // too short, skip
-      // Simple global replace — fine for audit-log scrubbing where
-      // performance is not on the hot path.
+    // Length-descending so a secret that is a SUBSTRING of another is
+    // redacted only after the longer one — otherwise the short replace
+    // corrupts the long secret's occurrences and leaks a plaintext tail.
+    const entries = [...this.#reverse.entries()].sort((a, b) => b[0].length - a[0].length);
+    let shortSkipped = 0;
+    for (const [plaintext, token] of entries) {
+      if (plaintext.length < 8) { shortSkipped += 1; continue; } // too short to scrub safely
       result = result.replaceAll(plaintext, token);
     }
+    if (shortSkipped > 0 && typeof onShortSkip === 'function') onShortSkip(shortSkipped);
     return result;
   }
 
@@ -125,9 +148,9 @@ export class SecretRegistry {
 }
 
 /**
- * Module-level singleton for production use. Runtime adapters that need
- * to register secrets import this and call `.register()`. The facade's
- * plugin tool handlers call `.substitute()` before passing values to
- * subprocesses. Tests construct their own `SecretRegistry` instance.
+ * Module-level singleton intended for production use once integrated.
+ * ⚠️ Currently NO production code registers/substitutes via this singleton
+ * (see the not-wired notice at the top of this file) — it exists for the
+ * future integration slice. Tests construct their own `SecretRegistry`.
  */
 export const globalSecretRegistry = new SecretRegistry();
