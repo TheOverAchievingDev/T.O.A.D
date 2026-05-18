@@ -48,15 +48,25 @@ const OPENCODE_OK = [
   JSON.stringify({ type: 'step_finish', sessionID: 'ses_1', part: { type: 'step-finish', reason: 'stop', tokens: { input: 5, output: 2 } } }),
 ];
 
-async function assertNoBatchLossOnSpawnThrow(AdapterClass, okLines) {
+// SP1c Task 4: the BR1 INVARIANT (no coalesced-batch loss across a sync
+// pre-spawn throw) is unchanged for both adapters. Only the delivery CHANNEL
+// the recovered batch lands in differs, per grounded reality:
+//   - Gemini  → stdin (SP1b grounding; byte-identical behavior, unchanged)
+//   - OpenCode → positional message argv (SP1c grounding §7/§10: `opencode
+//     run "<message>" ...` is the CONFIRMED interface; there is NO stdin/-p
+//     path — the pre-Task-4 stdin write was an ungrounded defect)
+// The `where` callback parameterizes the channel; the guarantee assertion is
+// identical for both.
+async function assertNoBatchLossOnSpawnThrow(AdapterClass, okLines, where) {
   let spawnCalls = 0;
   const children = [];
   const adapter = new AdapterClass({
     runtimeId: 'r1', teamId: 't1', agentId: 'dev-1', cwd: '/work', systemPrompt: 'sys',
-    spawnImpl: () => {
+    spawnImpl: (_cmd, args) => {
       spawnCalls += 1;
       if (spawnCalls === 1) throw new Error('EAGAIN'); // sync pre-spawn failure
       const c = fakeChild(okLines);
+      c.spawnArgs = args;
       children.push(c);
       return c;
     },
@@ -78,14 +88,17 @@ async function assertNoBatchLossOnSpawnThrow(AdapterClass, okLines) {
     }
   }
   assert.ok(children.length >= 1, 'a real turn must have run after the throw');
-  assert.match(children[0].writes.join(''), /alpha[\s\S]*beta/,
+  assert.match(where(children[0]), /alpha[\s\S]*beta/,
     'the recovered turn must carry the full coalesced batch');
 }
 
 test('GeminiExecAdapter does not lose the coalesced batch on a synchronous spawn throw', async () => {
-  await assertNoBatchLossOnSpawnThrow(GeminiExecAdapter, GEMINI_OK);
+  // Gemini delivers via stdin — assertion byte-identical to pre-Task-4.
+  await assertNoBatchLossOnSpawnThrow(GeminiExecAdapter, GEMINI_OK, (c) => c.writes.join(''));
 });
 
 test('OpencodeExecAdapter does not lose the coalesced batch on a synchronous spawn throw', async () => {
-  await assertNoBatchLossOnSpawnThrow(OpencodeExecAdapter, OPENCODE_OK);
+  // GROUNDED: OpenCode delivers the prompt as a positional argv arg, NOT
+  // stdin — the recovered batch must land in the recovered spawn's argv.
+  await assertNoBatchLossOnSpawnThrow(OpencodeExecAdapter, OPENCODE_OK, (c) => c.spawnArgs.join(''));
 });

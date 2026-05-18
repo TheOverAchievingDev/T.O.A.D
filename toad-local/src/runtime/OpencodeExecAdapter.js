@@ -72,10 +72,13 @@ export class OpencodeExecAdapter extends RuntimeAdapter {
   async #runTurn(text) {
     const resumeId = this.sessionStore ? this.sessionStore.get(this.runtimeId) : null;
     const isResume = typeof resumeId === 'string' && resumeId.length > 0;
-    const stdinPrompt = isResume
+    // GROUNDED (opencode 1.15.4 §7/§10): the message is a CONFIRMED-working
+    // POSITIONAL argv arg, NOT stdin. First turn prefixes the systemPrompt;
+    // resume sends only the follow-up text (the prior session is on disk).
+    const message = isResume
       ? text
       : (this.systemPrompt.trim().length > 0 ? `${this.systemPrompt}\n\n${text}` : text);
-    let result = await this.#attemptTurn({ resumeId: isResume ? resumeId : null, stdinPrompt });
+    let result = await this.#attemptTurn({ resumeId: isResume ? resumeId : null, message });
     if (result.accepted !== true && isResume && UNKNOWN_SESSION_RE.test(result.__failError || '')) {
       if (this.sessionStore) this.sessionStore.clear(this.runtimeId);
       this.#push({
@@ -86,8 +89,8 @@ export class OpencodeExecAdapter extends RuntimeAdapter {
         note: 'opencode_session_reset',
         detail: 'opencode resume session unknown - restarting as a fresh session',
       });
-      const firstTurnPrompt = this.systemPrompt.trim().length > 0 ? `${this.systemPrompt}\n\n${text}` : text;
-      result = await this.#attemptTurn({ resumeId: null, stdinPrompt: firstTurnPrompt });
+      const firstTurnMessage = this.systemPrompt.trim().length > 0 ? `${this.systemPrompt}\n\n${text}` : text;
+      result = await this.#attemptTurn({ resumeId: null, message: firstTurnMessage });
     }
     if (result.accepted !== true && typeof result.__failError === 'string' && result.__pushedFailure !== true) {
       this.#push({ runtimeId: this.runtimeId, teamId: this.teamId, agentId: this.agentId, type: 'turn_failed', error: result.__failError });
@@ -95,13 +98,18 @@ export class OpencodeExecAdapter extends RuntimeAdapter {
     return result;
   }
 
-  async #attemptTurn({ resumeId, stdinPrompt }) {
+  async #attemptTurn({ resumeId, message }) {
+    // §7/§10 RATIFIED argv. First turn:
+    //   run --format json --dangerously-skip-permissions ...modelArgs <message>
+    // Resume adds ['--session', '<captured ses_* id>'] before the message.
+    // The message is the FINAL POSITIONAL arg (CONFIRMED working), never stdin.
     const args = [
       'run',
       '--format', 'json',
       '--dangerously-skip-permissions',
       ...(resumeId ? ['--session', resumeId] : []),
       ...this.args,
+      message,
     ];
     const resolved = this.resolveCliImpl('opencode');
     const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(String(resolved));
@@ -189,7 +197,10 @@ export class OpencodeExecAdapter extends RuntimeAdapter {
       child.stderr && child.stderr.on('data', onStderr);
       child.on('close', onClose);
       child.on('error', onErr);
-      try { child.stdin.write(stdinPrompt); child.stdin.end(); } catch { /* close/error path reports it */ }
+      // GROUNDED: the prompt is delivered as a positional argv arg (above),
+      // NOT via stdin. Close stdin with nothing so opencode doesn't block
+      // waiting on an interactive stdin stream.
+      try { child.stdin && child.stdin.end(); } catch { /* close/error path reports it */ }
     });
   }
 

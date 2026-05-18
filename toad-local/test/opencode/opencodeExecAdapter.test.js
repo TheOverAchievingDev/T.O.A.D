@@ -44,7 +44,12 @@ function makeAdapter(child, opts = {}) {
   });
 }
 
-test('first sendTurn spawns OpenCode run json with prompt on stdin', async () => {
+// SP1c Task 4: corrected to GROUNDED opencode 1.15.4. This test previously
+// asserted the prompt was written to child.stdin — that was the UNGROUNDED
+// pre-Task-4 model. Grounding §7/§10 PROVED `opencode run "<message>"
+// --format json ...` works as a positional arg and there is no stdin/-p
+// path; the message is now the final POSITIONAL argv element, not stdin.
+test('first sendTurn spawns OpenCode run json with the prompt as a positional arg', async () => {
   const child = fakeChild([
     JSON.stringify({ type: 'step_start', sessionID: 'ses_1', part: { type: 'step-start' } }),
     JSON.stringify({ type: 'text', sessionID: 'ses_1', part: { type: 'text', text: 'ok' } }),
@@ -61,8 +66,9 @@ test('first sendTurn spawns OpenCode run json with prompt on stdin', async () =>
     '--format', 'json',
     '--dangerously-skip-permissions',
     '--model', 'deepseek/deepseek-v4',
+    'You are dev-1.\n\ndo the task',
   ]);
-  assert.match(child.writes.join(''), /You are dev-1\.\n\ndo the task/);
+  assert.equal(child.writes.join(''), '', 'prompt is a positional arg, NOT written to stdin');
   assert.equal(makeAdapter._last.opts.cwd, '/work');
 });
 
@@ -82,13 +88,16 @@ test('session id is persisted and resume sends only the follow-up message', asyn
   const res = await adapter.sendTurn({ message: { text: 'second turn' } });
 
   assert.equal(res.accepted, true);
+  // GROUNDED §7 resume argv: ['--session','<id>'] before the positional
+  // message; resume sends only the follow-up text (no systemPrompt prefix).
   assert.deepEqual(makeAdapter._last.args, [
     'run',
     '--format', 'json',
     '--dangerously-skip-permissions',
     '--session', 'ses_existing',
+    'second turn',
   ]);
-  assert.equal(child.writes.join(''), 'second turn');
+  assert.equal(child.writes.join(''), '', 'resume prompt is a positional arg, NOT stdin');
   assert.deepEqual(calls, [['set', 'r1', 'ses_existing']]);
 });
 
@@ -177,5 +186,8 @@ test('stale resume session clears stored id and retries as a fresh first turn', 
   assert.equal(res.accepted, true);
   assert.deepEqual(calls, [['clear', 'r1'], ['set', 'r1', 'ses_new']]);
   assert.ok(!makeAdapter._last.args.includes('--session'));
-  assert.match(second.writes.join(''), /You are dev-1\.\n\nrecover/);
+  // GROUNDED: the fresh-restart prompt (with systemPrompt prefix) is the
+  // final POSITIONAL argv element, NOT written to stdin.
+  assert.equal(makeAdapter._last.args[makeAdapter._last.args.length - 1], 'You are dev-1.\n\nrecover');
+  assert.equal(second.writes.join(''), '', 'recovered turn prompt is positional, NOT stdin');
 });
