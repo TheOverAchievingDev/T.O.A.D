@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 const RUNTIME_DELIVERY_MODES = new Set(['runtime_stdin', 'runtime_bridge']);
+const SESSION_DELIVERY_MODES = new Set(['session_turn']);
 
 export class DeliveryWorker {
   constructor({ broker, runtimeDirectory, adapters }) {
@@ -56,6 +57,35 @@ export class DeliveryWorker {
           },
           responseState: receipt.responseState || 'accepted_by_runtime',
         });
+      }
+
+      if (SESSION_DELIVERY_MODES.has(resolved.deliveryMode)) {
+        const adapter = this.adapters.get(resolved.runtimeId);
+        if (adapter && typeof adapter.sendTurn === 'function') {
+          // Wake-on-message: the adapter's FIFO + resume logic handles
+          // idle-wake vs mid-turn batching transparently (spec §5).
+          const receipt = await adapter.sendTurn({
+            runtimeId: resolved.runtimeId,
+            deliveryMode: resolved.deliveryMode,
+            destination: resolved.destination,
+            message,
+          });
+          if (!receipt || receipt.accepted !== true) {
+            throw new Error(receipt?.reason || 'session runtime did not accept message');
+          }
+          return this.broker.commitDeliveryAttempt({
+            attemptId: begin.attempt.attemptId,
+            receipt: {
+              deliveryMode: resolved.deliveryMode,
+              responseState: receipt.responseState || 'accepted_by_runtime',
+              ...(receipt.receipt && typeof receipt.receipt === 'object' ? receipt.receipt : {}),
+            },
+            responseState: receipt.responseState || 'accepted_by_runtime',
+          });
+        }
+        // No live adapter (agent parked / not yet launched): fall through to
+        // the durable queued commit below — the broker is durable, so the
+        // boot reconciliation pass (Task 9) re-delivers on relaunch.
       }
 
       return this.broker.commitDeliveryAttempt({
