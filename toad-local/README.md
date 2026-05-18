@@ -64,6 +64,19 @@ every adapter implements the same `RuntimeAdapter` contract.
 > and there is no first-turn MCP-tool visibility probe across session adapters.
 > Use Claude or Codex for real team runs until that grounding lands.
 
+## Screenshots
+
+Captured from the `family-meal-planner` demo scenario. Full gallery (34 views):
+**[docs/SCREENSHOTS.md](docs/SCREENSHOTS.md)**.
+
+| Cockpit (FOR me) | Tasks board |
+| --- | --- |
+| ![Cockpit FOR me](demo/screenshots/family-meal-planner-full/00-cockpit-for-me.png) | ![Tasks board](demo/screenshots/family-meal-planner-full/07-tasks-board.png) |
+
+| Foundry discovery | Drift monitor |
+| --- | --- |
+| ![Foundry discovery](demo/screenshots/family-meal-planner-full/03-foundry-discovery.png) | ![Drift monitor](demo/screenshots/family-meal-planner-full/09-drift-monitor.png) |
+
 ## Backend Verification
 
 ```powershell
