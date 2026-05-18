@@ -1070,7 +1070,30 @@ git -C /c/Project-TOAD -c commit.gpgsign=false commit -m "feat(codex): DeliveryW
 
 ### Task 9: Crash/boot reconciliation of undelivered session inboxes
 
-Spec §5/§8: after a TOAD restart, any `session_turn` agent with inbox messages that were never delivered must get them via a fresh resume turn — no lost messages. A pure helper computes the undelivered set; `LocalToadRuntime` invokes `deliverMessage` for each on boot (idempotent via `beginDeliveryAttempt`).
+> **RATIFIED 2026-05-18 (controller, mid-execution):** the boot pass is a
+> *defensive secondary net*, not the primary spec-§5/§8 guarantee. Verified
+> against real code: `SqliteRuntimeRegistry.reconcileOrphans()` (boot step 1)
+> stops **and unbinds** every still-live runtime row (`DELETE FROM
+> agent_delivery_modes` for reconciled rows); `#reconcileSessionInboxes()`
+> runs *after* that and filters `status==='running'`, so on a normal
+> post-crash boot it finds **zero** running session_turn rows and is a
+> no-op. The *actual* "no lost message after restart" guarantee is the
+> pre-existing path: a message to a stopped/unbound session agent resolves
+> to `offline_queue` → durably committed → the 500 ms delivery retry sweep
+> (`listMessagesNeedingDelivery` covers `offline_queue`) re-attempts → once
+> the agent relaunches and re-registers its `session_turn` directory binding
+> + adapter, `runtimeDirectory.resolve` returns the session runtime (a fresh
+> delivery idempotency key, distinct from the offline one) → Task-8
+> wake-on-message delivers it. The pure helper + boot call are kept (correct,
+> harmless, and a genuine net for the narrow case where a session row is
+> running with no adapter, e.g. adapter briefly absent while bound). **The
+> spec guarantee must be VERIFIED end-to-end, not assumed** — Task 9 adds an
+> end-to-end recovery test (Step 5a) proving a queued message to a
+> not-yet-adapter-registered session agent is delivered exactly once after
+> the adapter registers (no loss, no duplicate), exercised through the real
+> broker + DeliveryWorker.
+
+Spec §5/§8: after a TOAD restart, any `session_turn` agent with inbox messages that were never delivered must get them — no lost messages. A pure helper computes the undelivered set; `LocalToadRuntime` invokes `deliverMessage` for each on boot (idempotent via `beginDeliveryAttempt`) as a defensive net; the primary guarantee is the offline_queue + retry-sweep + Task-8-wake path (see RATIFIED note). Task 9 additionally adds an end-to-end test that the recovery guarantee actually holds.
 
 **Files:**
 - Create: `src/runtime/codex/reconcileSessionInboxes.js`
@@ -1188,6 +1211,51 @@ Add a private async method and call it once during boot, after the broker, runti
 Then add `await this.#reconcileSessionInboxes();` at the chosen boot point.
 
 **Note for the implementer:** verify the broker exposes a committed-delivery check. The code-explorer found `SqliteBroker.listMessagesNeedingDelivery({limit})` and the delivery-attempt API (`beginDeliveryAttempt`/`commitDeliveryAttempt`). If there is no `hasCommittedRuntimeDelivery(messageId)` method, the `isCommitted` predicate above safely returns `false` (its `try/catch`), which makes reconciliation re-invoke `deliverMessage` for every inbox message — that is still correct because `deliverMessage` is idempotent (`beginDeliveryAttempt` returns the existing committed attempt without re-sending; see `deliveryWorker.js:29-31`). So this task is correct with or without that method; prefer the precise check if a committed-query method exists, else rely on `deliverMessage` idempotency.
+
+- [ ] **Step 5a: End-to-end recovery proof (verifies the spec §5/§8 guarantee — RATIFIED)**
+
+Append to `test/codex/reconcileSessionInboxes.test.js` a test that proves the *actual* "no lost message after restart" guarantee through the real broker + DeliveryWorker (not the inert boot helper): a message addressed to a session agent that has **no registered adapter yet** is durably retained, and once the adapter registers it is delivered **exactly once** (no loss, no duplicate). Mirror the valid envelope shape used in `test/deliveryWorker.test.js` (read it; `from:{kind:'user',id:'lead'}`, a valid `MESSAGE_KINDS` `kind`, `text:` — not `body`/`agentId`).
+
+```javascript
+import { InMemoryBroker } from '../../src/broker/inMemoryBroker.js';
+import { DeliveryWorker } from '../../src/delivery/deliveryWorker.js';
+import { RuntimeDirectory } from '../../src/delivery/runtimeDirectory.js';
+
+test('END-TO-END: a message to a not-yet-adapter-registered session agent is delivered exactly once after the adapter registers (spec §5/§8 — no loss, no dup)', async () => {
+  const broker = new InMemoryBroker();
+  const directory = new RuntimeDirectory();
+  directory.registerAgent({ teamId: 't1', agentId: 'dev-1', runtimeId: 'r-codex-1', deliveryMode: 'session_turn' });
+  const adapters = new Map(); // agent not yet (re)launched — no adapter
+  const worker = new DeliveryWorker({ broker, runtimeDirectory: directory, adapters });
+
+  const { message } = broker.appendMessage({
+    teamId: 't1', from: { kind: 'user', id: 'lead' }, to: { kind: 'agent', teamId: 't1', agentId: 'dev-1' },
+    kind: 'instruction', text: 'must survive restart', idempotencyKey: 'k-recover-1',
+  });
+
+  // Parked: no adapter → durably queued (not delivered to a runtime).
+  const a1 = await worker.deliverMessage(message.messageId);
+  assert.equal(a1.status, 'committed');
+  assert.equal(a1.responseState, 'queued_for_recipient');
+
+  // Agent relaunches: its adapter registers. The retry sweep / a fresh
+  // delivery attempt now wakes it. Delivery must reach the adapter exactly
+  // once and the message must not be lost.
+  const seen = [];
+  adapters.set('r-codex-1', { async sendTurn(t) { seen.push(t.message.messageId); return { accepted: true, responseState: 'accepted_by_runtime', receipt: { written: true, runtimeId: 'r-codex-1' } }; } });
+  const a2 = await worker.deliverMessage(message.messageId);
+
+  assert.equal(seen.length, 1, 'delivered to the adapter exactly once after it registered');
+  assert.equal(seen[0], message.messageId);
+  assert.equal(a2.status, 'committed');
+  assert.equal(a2.responseState, 'accepted_by_runtime');
+});
+```
+
+If `deliverMessage`'s idempotency gate (same `messageId`+`runtimeId`+`deliveryMode` → returns the prior committed `queued_for_recipient` attempt) prevents the second call from reaching `sendTurn`, that is a **real lost-message defect** (the agent never gets the message after relaunch) — surface it as a finding, do not weaken the test. The correct production behaviour is that the post-relaunch delivery reaches `sendTurn` exactly once; if the idempotency key makes the parked `queued_for_recipient` commit swallow the redelivery, the controller must be told (it changes the §5/§8 recovery design).
+
+Run: `cd /c/Project-TOAD/toad-local && node --test test/codex/reconcileSessionInboxes.test.js`
+Expected: all 3 tests PASS (`# fail 0`). If the end-to-end test FAILS because of the idempotency-gate swallow described above, **STOP and report it to the controller** — it is a genuine spec-§5/§8 defect requiring a design decision, not a test to soften.
 
 - [ ] **Step 6: Run the helper test + the boot smoke**
 
