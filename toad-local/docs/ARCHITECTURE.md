@@ -1,4 +1,38 @@
-# TOAD Architecture Draft
+# Symphony Engine Architecture
+
+> Historical note: the engine directory, `TOAD_*` env vars, and several
+> internal class names retain the original "TOAD" naming during the staged
+> rename to **Symphony AI**.
+
+## Overview
+
+```mermaid
+flowchart LR
+  subgraph clients["Clients"]
+    UI["React + Tauri UI"]
+    Agents["Team agents (MCP)"]
+  end
+  UI -->|"/api/call · /events SSE"| Facade
+  Agents -->|"stdio MCP tools"| Facade
+  Facade["tools — localToolFacade<br/>(single enforcement point)"]
+  Facade --> Protocol["protocol (envelopes)"]
+  Facade --> Broker["broker (durable journal)"]
+  Facade --> Board["task-board"]
+  Facade --> ReadModel["read-model (projections)"]
+  Facade --> Supervisor["supervisor"]
+  Supervisor --> Adapters["runtime-adapters<br/>(one per CLI runtime)"]
+  Adapters --> Claude["Claude · working"]
+  Adapters --> Codex["Codex · working"]
+  Adapters --> Gemini["Gemini · unverified"]
+  Adapters --> Opencode["OpenCode · unverified"]
+```
+
+Provider status as of this revision: Claude and Codex are whole-impl
+reviewed and grounded; Gemini and OpenCode are structurally complete but
+their CLI invocation contracts + stream-JSON event vocabularies are **not
+yet grounded** against the real CLIs (tracked follow-up — see the bundle
+whole-impl review doc under `docs/superpowers/`). The adapter seam is
+provider-agnostic; un-grounded providers are wired but not production-trusted.
 
 ## Components
 

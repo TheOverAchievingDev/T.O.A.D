@@ -26,6 +26,44 @@ The product is now branded as **Symphony AI**. The `toad-local` directory name, 
 - Mutating commands require stable identity and idempotency.
 - Risky changes are controlled by policy and human approval gates.
 
+## Architecture
+
+```mermaid
+flowchart TD
+  UI["React + Tauri desktop UI"] -->|"POST /api/call · GET /events (SSE)"| API["apiServer.js"]
+  API --> Facade["localToolFacade.js<br/>(shared enforcement point)"]
+  MCP["Agent-facing MCP tool server<br/>(stdioServer.js)"] --> Facade
+  Facade --> Broker["broker<br/>(durable messages + delivery journal)"]
+  Facade --> Board["task-board<br/>(tasks, lifecycle, worktrees, diff, merge gates)"]
+  Facade --> Drift["drift<br/>(deterministic + L3 semantic)"]
+  Facade --> Supervisor["RuntimeSupervisor<br/>(process lifecycle + event ingestion)"]
+  Supervisor --> AFP["adapterForProvider()"]
+  AFP --> Claude["ClaudeStreamJsonAdapter<br/>persistent child · working"]
+  AFP --> Codex["CodexExecAdapter<br/>session / per-turn · working"]
+  AFP --> Gemini["GeminiExecAdapter<br/>session / per-turn · unverified"]
+  AFP --> Opencode["OpencodeExecAdapter<br/>session / per-turn · unverified"]
+  Broker --> DB[("SQLite · .toad/toad.db")]
+  Board --> DB
+```
+
+## Provider Runtimes
+
+Team agents run through a provider-keyed adapter seam (`adapterForProvider()`);
+every adapter implements the same `RuntimeAdapter` contract.
+
+| Provider | Adapter | Lifecycle | Status |
+| --- | --- | --- | --- |
+| Anthropic (Claude) | `ClaudeStreamJsonAdapter` | persistent child | **Working** — whole-impl reviewed, full suite green |
+| OpenAI (Codex) | `CodexExecAdapter` | session / per-turn (`codex exec [resume]`) | **Working** — SP1a Stage 1+2 reviewed, grounded against codex-cli 0.130 |
+| Google (Gemini) | `GeminiExecAdapter` | session / per-turn | **Present, unverified** — structurally complete; CLI flags + event vocabulary not yet grounded against the real CLI |
+| OpenCode | `OpencodeExecAdapter` | session / per-turn | **Present, unverified** — same as Gemini |
+
+> Gemini and OpenCode are not production-trusted yet: their CLI invocation
+> contracts and stream-JSON event shapes are unverified assumptions pending a
+> grounding pass against the installed CLIs plus a scripted end-to-end proof,
+> and there is no first-turn MCP-tool visibility probe across session adapters.
+> Use Claude or Codex for real team runs until that grounding lands.
+
 ## Backend Verification
 
 ```powershell
