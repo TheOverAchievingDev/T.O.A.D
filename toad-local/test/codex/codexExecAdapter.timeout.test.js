@@ -30,5 +30,6 @@ test('a turn exceeding turnTimeoutMs is SIGTERM-killed and resolves turn_failed(
   assert.equal(res.accepted, false);
   assert.equal(child.killed, true);
   const failed = events.find((e) => e.type === 'turn_failed');
-  assert.ok(failed && /timeout/i.test(failed.error));
+  assert.ok(failed, 'a turn_failed event was emitted');
+  assert.match(failed.error, /codex exec turn timeout after 40ms/i);
 });

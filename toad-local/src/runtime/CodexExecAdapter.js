@@ -151,7 +151,9 @@ export class CodexExecAdapter extends RuntimeAdapter {
         if (settled) return;
         settled = true;
         cleanup();
-        this.#push({ ...ctx, type: 'turn_failed', error: err && err.message ? err.message : String(err) });
+        this.#push({ ...ctx, type: 'turn_failed', error: timedOut
+          ? `codex exec turn timeout after ${this.turnTimeoutMs}ms`
+          : (err && err.message ? err.message : String(err)) });
         resolve({ accepted: false, responseState: 'turn_failed', receipt: { written: false, runtimeId: this.runtimeId } });
       };
       const cleanup = () => {
