@@ -158,6 +158,61 @@ No MCP servers configured.
 
 The `gemini mcp add <name> <commandOrUrl> [args...]` signature suggests MCP servers are stored in `~/.gemini/settings.json` (or a related file) under a key not yet visible in this settings snapshot. The current settings.json has no `mcpServers` key. The `--allowed-mcp-server-names` flag (an array) suggests allowlisting by server name at runtime. The actual on-disk MCP schema for `settings.json` is **not fully observable from help text alone** — the exact key structure will require `gemini mcp add` output or documentation fetch. The `mcp add` signature `<name> <commandOrUrl> [args...]` is the primary observable fact.
 
+### MCP on-disk schema — GROUNDED (Task 5, via `gemini mcp add`)
+
+`~/.gemini/settings.json` had no `mcpServers` section on this machine, so the real schema was grounded by running `gemini mcp add` against a throwaway temp project and reading the file gemini 0.42.0 itself wrote.
+
+Verbatim `gemini mcp add --help`:
+
+```
+Usage: gemini mcp add [options] <name> <commandOrUrl> [args...]
+
+Positionals:
+  name          Name of the server  [string] [required]
+  commandOrUrl  Command (stdio) or URL (sse, http)  [string] [required]
+
+Options:
+  -d, --debug              Run in debug mode (open debug console with F12)  [boolean] [default: false]
+  -s, --scope              Configuration scope (user or project)  [string] [choices: "user", "project"] [default: "project"]
+  -t, --transport, --type  Transport type (stdio, sse, http)  [string] [choices: "stdio", "sse", "http"] [default: "stdio"]
+  -e, --env                Set environment variables (e.g. -e KEY=value)  [array]
+  -H, --header             Set HTTP headers for SSE and HTTP transports (e.g. -H "X-Api-Key: abc123" -H "Authorization: Bearer abc123")  [array]
+      --timeout            Set connection timeout in milliseconds  [number]
+      --trust              Trust the server (bypass all tool call confirmation prompts)  [boolean]
+      --description        Set the description for the server  [string]
+      --include-tools      A comma-separated list of tools to include  [array]
+      --exclude-tools      A comma-separated list of tools to exclude  [array]
+  -h, --help               Show help  [boolean]
+```
+
+Verbatim `settings.json` written by `gemini mcp add --scope project --transport stdio --trust --description "TOAD MCP" -e FOO=bar toad-local node /tmp/x.js --flag`:
+
+```json
+{
+  "mcpServers": {
+    "toad-local": {
+      "command": "node",
+      "args": [
+        "C:/Users/Nova_/AppData/Local/Temp/x.js",
+        "--flag"
+      ],
+      "env": {
+        "FOO": "bar"
+      },
+      "trust": true,
+      "description": "TOAD MCP"
+    }
+  }
+}
+```
+
+**Grounded schema (stdio transport):**
+- Top-level key: **`mcpServers`** — an object keyed by server name.
+- Per-server stdio fields: **`command`** (string), **`args`** (string array), **`env`** (object of string→string), **`trust`** (boolean — set by `--trust`), **`description`** (string — optional, omitted when `--description` not given).
+- For sse/http transports the entry uses `httpUrl`/`url` + `headers` instead of `command`/`args` (not used by TOAD — TOAD's MCP server is stdio).
+
+**RATIFIED (Task 5):** geminiMcpConfig output matches the real gemini 0.42.0 settings.json MCP schema — no code change needed.
+
 ---
 
 ## 6. DIVERGENCE vs current adapter
