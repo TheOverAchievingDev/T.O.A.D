@@ -55,6 +55,33 @@ test('turn.started (NEW in 0.130) → runtime_event, never throws', () => {
   assert.equal(ev[0].type, 'runtime_event');
 });
 
+// --- Characterization of REAL codex-cli 0.130.0 output, captured by the
+// 2026-05-18 real-codex smoke (verbatim shapes). Retires the SP1a Stage-1
+// "happy-path vocabulary UNVERIFIED" residual risk. ---
+
+test('item.started (REAL 0.130 shape, undocumented at grounding time) → runtime_event, NEVER a duplicate tool_use', () => {
+  // codex 0.130 emits item.started{status:"in_progress"} BEFORE each
+  // item.completed. It MUST degrade to runtime_event — mapping it like
+  // item.completed would double-count every tool call in the ingestor.
+  const line = JSON.stringify({
+    type: 'item.started',
+    item: { id: 'item_0', type: 'command_execution', command: 'pwsh -Command "..."', aggregated_output: '', exit_code: null, status: 'in_progress' },
+  });
+  const ev = normalizeCodexExecLine(line, ctx);
+  assert.equal(ev.length, 1);
+  assert.equal(ev[0].type, 'runtime_event');
+  assert.notEqual(ev[0].type, 'tool_use');
+  assert.notEqual(ev[0].type, 'assistant_text');
+});
+
+test('turn.completed WITH real usage object → turn_completed; usage preserved in raw (SP2 data path)', () => {
+  const usage = { input_tokens: 57114, cached_input_tokens: 30848, output_tokens: 568, reasoning_output_tokens: 377 };
+  const ev = normalizeCodexExecLine(JSON.stringify({ type: 'turn.completed', usage }), ctx);
+  assert.equal(ev.length, 1);
+  assert.equal(ev[0].type, 'turn_completed');
+  assert.deepEqual(ev[0].raw.usage, usage);
+});
+
 test('non-JSON line → parse_error (never throws)', () => {
   let ev;
   assert.doesNotThrow(() => { ev = normalizeCodexExecLine('codex: warming up...', ctx); });
