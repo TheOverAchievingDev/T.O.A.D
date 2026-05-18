@@ -93,3 +93,22 @@ test('constructor accepts optional sessionStore + turnTimeoutMs (defaults: no st
   assert.equal(typeof a.turnTimeoutMs, 'number');
   assert.ok(a.turnTimeoutMs >= 600000);
 });
+
+test('turnStartedAt/isTurnInFlight reflect an in-flight turn and clear on completion', async () => {
+  let release;
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write: () => {}, end: () => { release = () => { child.stdout.emit('data', Buffer.from(JSON.stringify({ type: 'turn.completed' }) + '\n')); child.emit('close', 0); }; }, writable: true };
+  child.kill = () => {};
+  const a = new CodexExecAdapter({ runtimeId: 'r1', teamId: 't1', agentId: 'a1', cwd: '/w', systemPrompt: '', spawnImpl: () => child, resolveCliImpl: (n) => n, sessionStore: { get: () => null, set: () => {}, clear: () => {} } });
+  assert.equal(a.isTurnInFlight(), false);
+  const p = a.sendTurn({ message: { text: 'x' } });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(a.isTurnInFlight(), true);
+  assert.equal(typeof a.turnStartedAt, 'string');
+  release();
+  await p;
+  assert.equal(a.isTurnInFlight(), false);
+  assert.equal(a.turnStartedAt, null);
+});

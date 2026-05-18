@@ -21,6 +21,7 @@ export class StuckRuntimeMonitor {
   #setTimer;
   #clearTimer;
   #now;
+  #supervisor;
 
   #handle = null;
   #alerted = new Set(); // runtimeIds we've already announced as stuck this episode
@@ -35,6 +36,7 @@ export class StuckRuntimeMonitor {
     setTimer = setInterval,
     clearTimer = clearInterval,
     now = () => new Date().toISOString(),
+    supervisor,
   } = {}) {
     if (!runtimeRegistry || typeof runtimeRegistry.listRuntimes !== 'function') {
       throw new TypeError('StuckRuntimeMonitor: runtimeRegistry is required');
@@ -50,6 +52,7 @@ export class StuckRuntimeMonitor {
     this.#setTimer = setTimer;
     this.#clearTimer = clearTimer;
     this.#now = typeof now === 'function' ? now : () => new Date().toISOString();
+    this.#supervisor = supervisor && typeof supervisor.getAdapter === 'function' ? supervisor : null;
   }
 
   /**
@@ -87,9 +90,20 @@ export class StuckRuntimeMonitor {
     const latestEventByRuntime = this.#eventLog
       ? this.#eventLog.latestEventByRuntime({})
       : new Map();
+    const sessionInFlight = new Map();
+    if (this.#supervisor) {
+      for (const r of runtimes) {
+        if (r && r.deliveryMode === 'session_turn') {
+          const ad = this.#supervisor.getAdapter(r.runtimeId);
+          const at = ad && typeof ad.isTurnInFlight === 'function' && ad.isTurnInFlight() ? ad.turnStartedAt : null;
+          if (typeof at === 'string') sessionInFlight.set(r.runtimeId, at);
+        }
+      }
+    }
     const stuck = detectStuckRuntimes({
       runtimes,
       latestEventByRuntime,
+      sessionInFlight,
       now: this.#now(),
       thresholdMs: this.#thresholdMs,
     });

@@ -333,6 +333,7 @@ export class LocalToadRuntime {
             runtimeRegistry: this.runtimeRegistry,
             eventLog: this.eventLog,
             eventBus: this.eventBus,
+            supervisor: this.supervisor,
             ...(stuckMonitorIntervalMs != null ? { intervalMs: stuckMonitorIntervalMs } : {}),
             ...(stuckMonitorThresholdMs != null ? { thresholdMs: stuckMonitorThresholdMs } : {}),
           })

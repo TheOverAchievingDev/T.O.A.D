@@ -100,6 +100,7 @@ export class CodexExecAdapter extends RuntimeAdapter {
     const attempt = (argv, stdinPrompt) => {
       const resolved = this.resolveCliImpl('codex');
       const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(String(resolved));
+      this._turnStartedAt = new Date().toISOString();
       const child = this.spawnImpl(resolved, argv, {
         stdio: ['pipe', 'pipe', 'pipe'], shell: needsShell, windowsHide: true, cwd: this.cwd,
       });
@@ -160,6 +161,7 @@ export class CodexExecAdapter extends RuntimeAdapter {
         };
         const cleanup = () => {
           clearTimeout(timeoutTimer);
+          this._turnStartedAt = null;
           child.stdout && child.stdout.removeListener && child.stdout.removeListener('data', onData);
           child.stderr && child.stderr.removeListener && child.stderr.removeListener('data', onStderr);
           child.removeListener && child.removeListener('close', onClose);
@@ -217,6 +219,9 @@ export class CodexExecAdapter extends RuntimeAdapter {
   async health() {
     return { runtimeId: this.runtimeId, status: this._ended ? 'stopped' : 'idle', healthy: !this._ended };
   }
+
+  get turnStartedAt() { return this._turnStartedAt; }
+  isTurnInFlight() { return typeof this._turnStartedAt === 'string'; }
 }
 
 function requireString(value, label) {
