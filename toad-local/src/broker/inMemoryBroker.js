@@ -183,6 +183,24 @@ export class InMemoryBroker {
     return next;
   }
 
+  // SP1a Stage 2 (whole-impl W3) — crash recovery (mirrors SqliteBroker).
+  resetStaleSessionInFlight() {
+    let changes = 0;
+    for (const [attemptId, attempt] of this.#deliveryAttempts) {
+      if (attempt.deliveryKind === 'session_turn'
+          && attempt.status === 'committed'
+          && attempt.responseState === 'delivering') {
+        this.#deliveryAttempts.set(attemptId, {
+          ...attempt,
+          responseState: 'queued_for_recipient',
+          updatedAt: new Date().toISOString(),
+        });
+        changes += 1;
+      }
+    }
+    return changes;
+  }
+
   #deliveryAttemptResult(inserted, attempt) {
     return { inserted, attempt, ...attempt };
   }

@@ -38,6 +38,7 @@ import { getAuthStatus as defaultGetAuthStatus } from '../providers/providerAuth
 import { createAdapterForProvider } from '../runtime/adapterForProvider.js';
 import { makeRuntimeRegistrySessionStore } from '../runtime/codex/runtimeRegistrySessionStore.js';
 import { writeCodexProjectConfig, writeAgentsMd } from '../mcp/codexMcpConfig.js';
+import { writeGeminiProjectConfig, writeGeminiMd } from '../mcp/geminiMcpConfig.js';
 import { computeUndeliveredSessionMessages } from '../runtime/codex/reconcileSessionInboxes.js';
 import { spawn as nodeSpawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -106,6 +107,7 @@ export class LocalToadRuntime {
     spawnProcess,
     createAdapter,
     getCodexAuthStatusImpl,
+    getProviderAuthStatusImpl,
     supervisor = null,
     deliveryWorker = null,
     toolFacade = null,
@@ -161,6 +163,9 @@ export class LocalToadRuntime {
     this.readClaudeCredsStatus = readClaudeCredsStatus;
     this.getCodexAuthStatusImpl = typeof getCodexAuthStatusImpl === 'function'
       ? getCodexAuthStatusImpl
+      : ((opts) => defaultGetAuthStatus(opts));
+    this.getProviderAuthStatusImpl = typeof getProviderAuthStatusImpl === 'function'
+      ? getProviderAuthStatusImpl
       : ((opts) => defaultGetAuthStatus(opts));
     // CONTROLLER-RATIFIED (T7 grounding, §8d — hermetic-test +
     // inert/over-gate epicenter). `#authPreflightEnabled` is true iff
@@ -567,8 +572,12 @@ export class LocalToadRuntime {
     // (Stage-2 / provider-plumbing hardens dispatch fully).
     const __isCodexLaunch = (input && input.providerId === 'openai')
       || (providerForCommand(input && input.command) === 'openai');
+    const __isGeminiLaunch = (input && input.providerId === 'gemini')
+      || (providerForCommand(input && input.command) === 'gemini');
     if (__isCodexLaunch) {
       runtime = await this.#prepareCodexRuntime(scrubbedInput);
+    } else if (__isGeminiLaunch) {
+      runtime = await this.#prepareGeminiRuntime(scrubbedInput);
     } else {
       const launchInput = this.#withToadMcpConfig(scrubbedInput);
       if (this.#authPreflightEnabled && isClaudeCommand(input && input.command)) {
@@ -752,8 +761,46 @@ export class LocalToadRuntime {
     });
   }
 
+  async #prepareGeminiRuntime(input) {
+    const auth = await this.getProviderAuthStatusImpl({ providerId: 'gemini' });
+    if (!auth || auth.signedIn !== true) {
+      throw new Error(
+        `Gemini not authenticated - run \`gemini auth login\`.${auth && auth.reason ? ` (${auth.reason})` : ''}`,
+      );
+    }
+    const cwd = requireLaunchCwd(input);
+    writeGeminiProjectConfig({
+      projectCwd: cwd,
+      dbPath: this.dbPath,
+      teamId: input.teamId,
+      agentId: input.agentId,
+      role: resolveLaunchRole(input),
+      taskId: input.taskId,
+      runtimeId: input.runtimeId,
+    });
+    if (typeof input.systemPrompt === 'string' && input.systemPrompt.trim().length > 0) {
+      writeGeminiMd({ projectCwd: cwd, content: input.systemPrompt });
+    }
+    return this.supervisor.registerSessionAgent({
+      teamId: input.teamId,
+      agentId: input.agentId,
+      runtimeId: input.runtimeId,
+      command: input.command,
+      cwd,
+      systemPrompt: input.systemPrompt,
+      taskId: input.taskId,
+      restartPolicy: input.restartPolicy,
+    });
+  }
+
   async #reconcileSessionInboxes() {
     if (!this.runtimeRegistry || !this.broker || !this.deliveryWorker) return;
+    // W3: a `delivering` session attempt means the process died mid-turn —
+    // on restart it is undelivered again. Reset stale in-flight claims so the
+    // boot re-drive / sweep can recover them (no message lost on crash).
+    if (typeof this.broker.resetStaleSessionInFlight === 'function') {
+      try { this.broker.resetStaleSessionInFlight(); } catch { /* best effort */ }
+    }
     const runtimes = this.runtimeRegistry.listRuntimes({});
     const isCommitted = (messageId) => {
       try { return this.broker.hasCommittedRuntimeDelivery

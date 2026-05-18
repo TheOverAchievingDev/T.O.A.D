@@ -346,6 +346,26 @@ export class SqliteBroker {
     return this.#getDeliveryAttempt(attemptId);
   }
 
+  // SP1a Stage 2 (whole-impl W3) — crash recovery. A session attempt left
+  // `delivering` means the process died mid-turn; on restart it is undelivered
+  // again. Reset stale session in-flight claims back to `queued_for_recipient`
+  // so the sweep / boot reconcile re-drives them. Session-scoped; terminal
+  // (accepted/queued/failed) and Claude attempts are untouched. Returns the
+  // number of attempts reset.
+  resetStaleSessionInFlight() {
+    const info = this.db.prepare(
+      `
+        UPDATE delivery_attempts
+        SET response_state = 'queued_for_recipient',
+            updated_at = ?
+        WHERE delivery_kind = 'session_turn'
+          AND status = 'committed'
+          AND response_state = 'delivering'
+      `
+    ).run(new Date().toISOString());
+    return info.changes;
+  }
+
   #ensureTeam(teamId) {
     this.db.prepare(
       `
