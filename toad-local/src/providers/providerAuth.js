@@ -190,7 +190,9 @@ function readCliStatus(cfg, providerId, { spawnSyncImpl } = {}) {
 function readFileStatus(cfg, providerId, { readFileImpl, statImpl } = {}) {
   const readFile = readFileImpl || ((p) => readFileSync(p, 'utf8'));
   const stat = statImpl || ((p) => statSync(p));
-  const authPath = expandHome(cfg.statusFile);
+  const authPath = providerId === 'opencode'
+    ? resolveOpencodeAuthFile()
+    : expandHome(cfg.statusFile);
   const infoPath = cfg.statusInfoFile ? expandHome(cfg.statusInfoFile) : null;
 
   let authRaw;
@@ -203,7 +205,7 @@ function readFileStatus(cfg, providerId, { readFileImpl, statImpl } = {}) {
         providerId,
         supported: true,
         signedIn: false,
-        reason: `Not signed in (${cfg.statusFile} does not exist).`,
+        reason: `Not signed in (${authPath} does not exist).`,
       };
     }
     return {
@@ -222,7 +224,7 @@ function readFileStatus(cfg, providerId, { readFileImpl, statImpl } = {}) {
       providerId,
       supported: true,
       signedIn: false,
-      reason: `Auth file ${cfg.statusFile} did not parse as JSON.`,
+      reason: `Auth file ${authPath} did not parse as JSON.`,
     };
   }
 
@@ -510,6 +512,30 @@ function pickString(...values) {
     if (typeof v === 'string' && v.trim().length > 0) return v.trim();
   }
   return null;
+}
+
+/**
+ * BR6/A5: OpenCode's auth file is platform-specific. Honor XDG_DATA_HOME on
+ * any OS, else %APPDATA% on Windows, else the Linux/mac ~/.local/share
+ * default. Injectable for tests. (Best-effort pending the A3 grounding of
+ * the real OpenCode CLI on Windows.)
+ */
+export function resolveOpencodeAuthFile({
+  env = process.env,
+  platform = process.platform,
+  homedir = os.homedir(),
+} = {}) {
+  const xdg = env && env.XDG_DATA_HOME;
+  if (typeof xdg === 'string' && xdg.length > 0) {
+    return path.join(xdg, 'opencode', 'auth.json');
+  }
+  if (platform === 'win32') {
+    const appData = env && env.APPDATA;
+    if (typeof appData === 'string' && appData.length > 0) {
+      return path.join(appData, 'opencode', 'auth.json');
+    }
+  }
+  return path.join(homedir, '.local', 'share', 'opencode', 'auth.json');
 }
 
 function expandHome(p) {
