@@ -38,6 +38,7 @@ import { getAuthStatus as defaultGetAuthStatus } from '../providers/providerAuth
 import { createAdapterForProvider } from '../runtime/adapterForProvider.js';
 import { makeRuntimeRegistrySessionStore } from '../runtime/codex/runtimeRegistrySessionStore.js';
 import { writeCodexProjectConfig, writeAgentsMd } from '../mcp/codexMcpConfig.js';
+import { computeUndeliveredSessionMessages } from '../runtime/codex/reconcileSessionInboxes.js';
 import { spawn as nodeSpawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -441,6 +442,11 @@ export class LocalToadRuntime {
         console.warn(`[runtime] hydrateRuntimeDirectory failed: ${err?.message || err}`);
       }
     }
+    // Boot reconciliation — re-deliver any session_turn inbox messages that
+    // were never delivered (no committed attempt) before the previous restart.
+    // Uses DeliveryWorker.deliverMessage which is idempotent: beginDeliveryAttempt
+    // early-returns an already-committed attempt without re-sending.
+    await this.#reconcileSessionInboxes();
     // Delivery retry sweep — only in the MAIN sidecar, not the per-agent
     // MCP children. Each MCP child has its own LocalToadRuntime with empty
     // adapters/directory, so when an agent calls message_send via MCP the
@@ -743,6 +749,24 @@ export class LocalToadRuntime {
       taskId: input.taskId,
       restartPolicy: input.restartPolicy,
     });
+  }
+
+  async #reconcileSessionInboxes() {
+    if (!this.runtimeRegistry || !this.broker || !this.deliveryWorker) return;
+    const runtimes = this.runtimeRegistry.listRuntimes({});
+    const isCommitted = (messageId) => {
+      try { return this.broker.hasCommittedRuntimeDelivery
+        ? this.broker.hasCommittedRuntimeDelivery(messageId) === true
+        : false; } catch { return false; }
+    };
+    const pending = computeUndeliveredSessionMessages({
+      runtimes,
+      listInbox: ({ teamId, agentId }) => this.broker.listInbox({ teamId, recipient: { kind: 'agent', teamId, agentId } }),
+      isCommitted,
+    });
+    for (const p of pending) {
+      try { await this.deliveryWorker.deliverMessage(p.messageId); } catch { /* idempotent retry on next boot */ }
+    }
   }
 
   #withToadMcpConfig(input) {
