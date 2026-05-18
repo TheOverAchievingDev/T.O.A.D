@@ -48,6 +48,9 @@ test('createAdapterForProvider threads sessionStore + turnTimeoutMs into the Cod
     runtimeId: 'r2', teamId: 't1', agentId: 'lead', providerId: 'anthropic',
     child: fakeChild(), sessionStore, turnTimeoutMs: 1234,
   });
+  // ClaudeStreamJsonAdapter sets providerId='claude' via super('claude') (not 'anthropic');
+  // and its ctor requires a real child, so fakeChild() is used above — both differ from the
+  // plan draft on purpose. Intent: the Claude branch never receives sessionStore.
   assert.equal(claude.providerId, 'claude');
   assert.equal(claude.sessionStore, undefined);
 });
