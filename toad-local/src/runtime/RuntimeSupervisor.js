@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { ClaudeStreamJsonAdapter } from './ClaudeStreamJsonAdapter.js';
 import { recordSpawn, removeSpawn } from './spawnLedger.js';
+import { providerForCommand } from '../team/providerCommands.js';
 
 /**
  * Resolve a bare command name (e.g. `claude`) to an absolute path on
@@ -167,7 +168,7 @@ export class RuntimeSupervisor {
         }
       });
     }
-    const adapter = this.createAdapter({ runtimeId, teamId, agentId, child });
+    const adapter = this.createAdapter({ runtimeId, teamId, agentId, child, providerId: providerForCommand(command) || 'anthropic' });
     const record = {
       runtimeId,
       teamId,
@@ -215,6 +216,43 @@ export class RuntimeSupervisor {
       });
     }
 
+    return this.#snapshot(record);
+  }
+
+  /**
+   * SP1a: register a CHILDLESS "session" runtime (Codex per-turn
+   * adapter). No process is spawned here — the adapter spawns per
+   * turn. Record/registry bookkeeping mirrors launchAgent so
+   * listRuntimes / the registry / message routing see the agent
+   * identically to a persistent-child agent.
+   */
+  registerSessionAgent(input) {
+    const teamId = requireString(input.teamId, 'teamId');
+    const agentId = requireString(input.agentId, 'agentId');
+    const runtimeId = requireString(input.runtimeId, 'runtimeId');
+    const command = requireString(input.command, 'command');
+    const existing = this.#runtimes.get(runtimeId);
+    if (existing) {
+      if (existing.status === 'running') throw new Error(`runtime already launched: ${runtimeId}`);
+      this.#runtimes.delete(runtimeId);
+    }
+    const adapter = this.createAdapter({
+      runtimeId, teamId, agentId, child: null,
+      providerId: providerForCommand(command) || 'openai',
+      cwd: input.cwd, systemPrompt: input.systemPrompt,
+    });
+    const record = {
+      runtimeId, teamId, agentId, command,
+      args: [], cwd: input.cwd || null,
+      env: {}, stdio: null, deliveryMode: 'session_turn',
+      taskId: typeof input.taskId === 'string' && input.taskId.length > 0 ? input.taskId : null,
+      child: null, adapter, status: 'running', pid: null,
+      startedAt: new Date().toISOString(), stoppedAt: null,
+      exitCode: null, signal: null, stopRequested: false,
+      restartPolicy: normalizeRestartPolicy(input.restartPolicy), restartCount: 0,
+    };
+    this.#runtimes.set(runtimeId, record);
+    this.#registerRunningRuntime(record);
     return this.#snapshot(record);
   }
 
@@ -324,6 +362,7 @@ export class RuntimeSupervisor {
       teamId: record.teamId,
       agentId: record.agentId,
       child,
+      providerId: providerForCommand(record.command) || 'anthropic',
     });
     record.child = child;
     record.adapter = adapter;
