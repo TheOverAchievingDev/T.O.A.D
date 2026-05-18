@@ -112,3 +112,10 @@ test('turnStartedAt/isTurnInFlight reflect an in-flight turn and clear on comple
   assert.equal(a.isTurnInFlight(), false);
   assert.equal(a.turnStartedAt, null);
 });
+
+test('a synchronously-throwing spawnImpl does not leave a stale in-flight marker', async () => {
+  const a = new CodexExecAdapter({ runtimeId: 'r1', teamId: 't1', agentId: 'a1', cwd: '/w', systemPrompt: '', spawnImpl: () => { throw new Error('spawn boom'); }, resolveCliImpl: (n) => n, sessionStore: { get: () => null, set: () => {}, clear: () => {} } });
+  await assert.rejects(() => a.sendTurn({ message: { text: 'x' } }));
+  assert.equal(a.isTurnInFlight(), false);
+  assert.equal(a.turnStartedAt, null);
+});

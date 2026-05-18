@@ -74,7 +74,7 @@ test('StuckRuntimeMonitor builds sessionInFlight from the supervisor and flags a
     eventLog: { latestEventByRuntime: () => new Map() },
     eventBus: { emit: (n, e) => events.push([n, e]) },
     supervisor,
-    now: () => '2026-05-18T01:00:00.000Z',
+    now: () => NOW,
     thresholdMs: 15 * 60_000,
     setTimer: () => 0, clearTimer: () => {},
   });

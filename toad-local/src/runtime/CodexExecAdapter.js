@@ -101,9 +101,15 @@ export class CodexExecAdapter extends RuntimeAdapter {
       const resolved = this.resolveCliImpl('codex');
       const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(String(resolved));
       this._turnStartedAt = new Date().toISOString();
-      const child = this.spawnImpl(resolved, argv, {
-        stdio: ['pipe', 'pipe', 'pipe'], shell: needsShell, windowsHide: true, cwd: this.cwd,
-      });
+      let child;
+      try {
+        child = this.spawnImpl(resolved, argv, {
+          stdio: ['pipe', 'pipe', 'pipe'], shell: needsShell, windowsHide: true, cwd: this.cwd,
+        });
+      } catch (spawnErr) {
+        this._turnStartedAt = null; // no stale in-flight marker if spawn throws synchronously
+        throw spawnErr;             // preserve existing throw-propagation for this edge
+      }
       this.child = child;
 
       return new Promise((resolve) => {
