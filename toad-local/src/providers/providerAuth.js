@@ -189,9 +189,15 @@ function readCliStatus(cfg, providerId, { spawnSyncImpl } = {}) {
 function readFileStatus(cfg, providerId, { readFileImpl, statImpl } = {}) {
   const readFile = readFileImpl || ((p) => readFileSync(p, 'utf8'));
   const stat = statImpl || ((p) => statSync(p));
-  const authPath = providerId === 'opencode'
-    ? resolveOpencodeAuthFile()
-    : expandHome(cfg.statusFile);
+  let authPath;
+  if (providerId === 'opencode') {
+    const candidates = resolveOpencodeAuthFileCandidates();
+    authPath = candidates.find((p) => {
+      try { stat(p); return true; } catch { return false; }
+    }) || candidates[0]; // none exist → preferred path drives the ENOENT message
+  } else {
+    authPath = expandHome(cfg.statusFile);
+  }
   const infoPath = cfg.statusInfoFile ? expandHome(cfg.statusInfoFile) : null;
 
   let authRaw;
@@ -519,22 +525,36 @@ function pickString(...values) {
  * default. Injectable for tests. (Best-effort pending the A3 grounding of
  * the real OpenCode CLI on Windows.)
  */
-export function resolveOpencodeAuthFile({
+export function resolveOpencodeAuthFile(opts = {}) {
+  return resolveOpencodeAuthFileCandidates(opts)[0];
+}
+
+/**
+ * Ordered candidate paths for OpenCode's auth file. The real location is
+ * NOT grounded yet (deferred A3), so we probe several rather than guess
+ * one: XDG_DATA_HOME, then %APPDATA% on Windows, then the legacy
+ * cross-platform ~/.local/share. readFileStatus uses the first that
+ * exists; the [0] entry is the preferred path shown in not-signed-in
+ * messages. Injectable for tests.
+ */
+export function resolveOpencodeAuthFileCandidates({
   env = process.env,
   platform = process.platform,
   homedir = os.homedir(),
 } = {}) {
+  const out = [];
   const xdg = env && env.XDG_DATA_HOME;
   if (typeof xdg === 'string' && xdg.length > 0) {
-    return path.join(xdg, 'opencode', 'auth.json');
+    out.push(path.join(xdg, 'opencode', 'auth.json'));
   }
   if (platform === 'win32') {
     const appData = env && env.APPDATA;
     if (typeof appData === 'string' && appData.length > 0) {
-      return path.join(appData, 'opencode', 'auth.json');
+      out.push(path.join(appData, 'opencode', 'auth.json'));
     }
   }
-  return path.join(homedir, '.local', 'share', 'opencode', 'auth.json');
+  out.push(path.join(homedir, '.local', 'share', 'opencode', 'auth.json'));
+  return [...new Set(out)];
 }
 
 function expandHome(p) {
