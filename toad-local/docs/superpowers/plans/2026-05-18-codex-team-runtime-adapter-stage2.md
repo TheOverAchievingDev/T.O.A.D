@@ -1271,6 +1271,70 @@ git -C /c/Project-TOAD -c commit.gpgsign=false commit -m "feat(codex): boot reco
 
 ---
 
+### Task 9b / 9c: Fix the parked-session-message §5/§8 lost-message defect (RATIFIED 2026-05-18, user-approved "fix it now")
+
+> **Why (controller, empirically confirmed):** the ratified Step-5a end-to-end recovery proof FAILED, proving a real spec-§5/§8 lost-message defect in *shared, load-bearing* delivery infra (used by ALL providers). Root cause, grounded: (1) `deliveryWorker.js` short-circuits on ANY committed attempt — a *parked* `queued_for_recipient` commit (session agent, no live adapter) is treated as terminal, so a later genuine wake under the same `(messageId,runtimeId,deliveryMode)` idempotency key is permanently swallowed; (2) `sqliteBroker.listMessagesNeedingDelivery` only re-drives `offline_queue` / non-committed messages, so a parked committed `session_turn` message is never re-attempted by the 500 ms retry sweep. Both must change. Production-realistic trigger: a message to a session agent delivered in the launch-race window (directory bound, before `LocalToadRuntime.adapters.set`). **This is load-bearing — the FULL deliveryWorker + broker + codex + localToadRuntime regression must stay green; this affects every provider's delivery, not just Codex.**
+
+#### Task 9b — DeliveryWorker idempotency gate must not treat a *parked* commit as terminal
+
+**Files:** Modify `src/delivery/deliveryWorker.js` (the line ~30 short-circuit). Test: the ratified end-to-end proof in `test/codex/reconcileSessionInboxes.test.js` (Step 5a) is the RED→GREEN driver (it manually re-invokes `deliverMessage` after the adapter registers, so 9b alone turns it GREEN).
+
+- [ ] **Step 1: RED.** `cd /c/Project-TOAD/toad-local`. Re-add the ratified Step-5a end-to-end test to `test/codex/reconcileSessionInboxes.test.js` (the exact test from the Task-9 RATIFIED note / Step 5a — `END-TO-END: a message to a not-yet-adapter-registered session agent is delivered exactly once after the adapter registers`). Run `node --test test/codex/reconcileSessionInboxes.test.js` → it MUST FAIL `seen.length 0 !== 1` (the documented swallow).
+
+- [ ] **Step 2: GREEN.** In `src/delivery/deliveryWorker.js`, ground the real short-circuit + the broker attempt object's property name (read `src/broker/sqliteBroker.js` `#rowToDeliveryAttempt`/the attempt mapper to confirm it exposes `responseState` camelCase; `begin.attempt` is `{...attempt}` per `#deliveryAttemptResult`). Change ONLY the short-circuit:
+
+```javascript
+    if (!begin.inserted && begin.attempt.status === 'committed'
+        && begin.attempt.responseState !== 'queued_for_recipient') {
+      return begin.attempt;
+    }
+```
+
+Rationale: a real delivered commit (`accepted_by_runtime`) and `queued_offline` still short-circuit (byte-unchanged behaviour — offline recovery already works via its distinct idempotency key). Only a *parked* `queued_for_recipient` commit becomes re-enterable, so a later `deliverMessage` (adapter now present) proceeds into the Task-8 `session_turn` branch and `commitDeliveryAttempt` UPDATEs the SAME attempt row to `accepted_by_runtime` (idempotent UPDATE — grounded safe). If still no adapter, it re-commits `queued_for_recipient` on the same row (idempotent — no new attempt row). Confirm `begin.attempt.responseState` is the correct accessor; if the mapper exposes a different name (e.g. `response_state`), use the REAL one and note it.
+
+- [ ] **Step 3:** `node --test test/codex/reconcileSessionInboxes.test.js` → all PASS (`# fail 0`), incl. the end-to-end proof.
+
+- [ ] **Step 4: FULL load-bearing regression** (must all pass, 0 fail — this gate is mandatory because the short-circuit is shared by every provider): `node --test test/deliveryWorker.test.js test/codex/deliveryWorker.sessionTurn.test.js test/codex/reconcileSessionInboxes.test.js test/localToadRuntime.test.js` and any broker test files (`node --test test/*roker*.test.js` — discover the real broker test filenames via the test dir and run them). If ANY pre-existing delivery/broker test fails, the change broke idempotency for another mode — STOP, report, do not weaken.
+
+- [ ] **Step 5: Commit** (commit-hygiene gate — exactly these 2): `git -C /c/Project-TOAD add toad-local/src/delivery/deliveryWorker.js toad-local/test/codex/reconcileSessionInboxes.test.js`; verify `git -C /c/Project-TOAD diff --cached --name-only` == exactly those 2; `git -C /c/Project-TOAD -c commit.gpgsign=false commit -m "fix(delivery): idempotency gate must not treat a parked queued_for_recipient commit as terminal (SP1a Stage 2, ratified §5/§8)" -m "Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"`.
+
+#### Task 9c — `listMessagesNeedingDelivery` must re-drive parked `session_turn` messages
+
+**Files:** Modify `src/broker/sqliteBroker.js` (`listMessagesNeedingDelivery` query) — and the in-memory broker if it has an equivalent (`src/broker/inMemoryBroker.js`; check — if `listMessagesNeedingDelivery` exists there too, mirror the logic). Test: a new broker test.
+
+- [ ] **Step 1: RED.** Create `test/codex/brokerNeedsDelivery.sessionTurn.test.js`: build a real `SqliteBroker` (`:memory:`), append an agent message, `beginDeliveryAttempt` + `commitDeliveryAttempt` it as a `session_turn` attempt with `responseState:'queued_for_recipient'` (mirror the real attempt API — read `sqliteBroker.js` for exact method shapes), assert `broker.listMessagesNeedingDelivery({})` INCLUDES that message; then `commitDeliveryAttempt` the same attempt to `responseState:'accepted_by_runtime'` and assert `listMessagesNeedingDelivery` NO LONGER includes it (self-terminating). Run → FAIL (current query excludes it).
+
+- [ ] **Step 2: GREEN.** Ground the real current query, then broaden the `EXISTS(... offline_queue ...)` requirement to also accept a committed parked session attempt — keeping the `NOT EXISTS (committed runtime_stdin/runtime_bridge)` guard intact:
+
+```sql
+        AND (
+          EXISTS (
+            SELECT 1 FROM delivery_attempts da
+            WHERE da.message_id = m.message_id
+              AND da.delivery_kind = 'offline_queue'
+          )
+          OR EXISTS (
+            SELECT 1 FROM delivery_attempts da
+            WHERE da.message_id = m.message_id
+              AND da.delivery_kind = 'session_turn'
+              AND da.status = 'committed'
+              AND da.response_state = 'queued_for_recipient'
+          )
+        )
+```
+
+(Use the REAL column names you ground — likely `delivery_kind`, `status`, `response_state`. Keep the existing `m.to_kind='agent'`, ordering, LIMIT, and the `NOT EXISTS committed runtime_stdin/runtime_bridge` clause exactly.) This makes the 500 ms sweep re-drive parked session messages; combined with 9b, a registered adapter then gets woken, and once `accepted_by_runtime` the message self-terminates out of the needing-delivery set. If `inMemoryBroker.js` has its own `listMessagesNeedingDelivery`, apply the equivalent predicate there too (and the new test should cover whichever broker(s) implement it).
+
+- [ ] **Step 3:** new broker test PASSES (`# fail 0`).
+
+- [ ] **Step 4: FULL load-bearing regression** (mandatory): `node --test test/deliveryWorker.test.js test/codex/deliveryWorker.sessionTurn.test.js test/codex/reconcileSessionInboxes.test.js test/codex/brokerNeedsDelivery.sessionTurn.test.js test/localToadRuntime.test.js` + all broker test files. 0 fail. A broken `listMessagesNeedingDelivery` would manifest as the retry-sweep tests / delivery tests failing or looping — STOP and report if so.
+
+- [ ] **Step 5: Commit** (exactly the broker file(s) + the new test): `git -C /c/Project-TOAD add toad-local/src/broker/sqliteBroker.js toad-local/test/codex/brokerNeedsDelivery.sessionTurn.test.js` (+ `toad-local/src/broker/inMemoryBroker.js` ONLY if you modified it); verify cached set == exactly those; `git -C /c/Project-TOAD -c commit.gpgsign=false commit -m "fix(broker): listMessagesNeedingDelivery re-drives parked session_turn messages (SP1a Stage 2, ratified §5/§8)" -m "Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"`.
+
+> After 9b+9c: the end-to-end recovery proof is GREEN; a parked session message is re-driven by the sweep and delivered once an adapter registers; spec §5/§8 "no lost message after restart" is genuinely satisfied (verified, not assumed). Then resume Task 10.
+
+---
+
 ### Task 10: Session-aware stuck detector
 
 Spec §8: `stuckRuntimeMonitor` assumes a persistent child; for session agents idle-between-turns is normal and must NOT flag. "Stuck" = an in-flight turn exceeding the cap with no `--json` progress. The pure `detectStuckRuntimes` gains a `sessionInFlight` map argument (`runtimeId → turnStartedAt ISO | null`, supplied by the monitor in Task 11). Branch: `deliveryMode==='session_turn'` ⇒ if not in-flight, never stuck; if in-flight, stuck when silence (from the later of turn-start / last event) exceeds threshold.
