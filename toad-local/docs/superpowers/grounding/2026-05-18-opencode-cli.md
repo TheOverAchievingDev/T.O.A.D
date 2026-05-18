@@ -363,7 +363,69 @@ Options:
 
 ### MCP config location inference
 
-The `opencode providers list` output shows credentials at `~/.local/share/opencode/auth.json`. The main config is at `~/.config/opencode/opencode.jsonc` with schema reference `https://opencode.ai/config.json`. MCP server configuration is likely stored in `opencode.jsonc` under an `mcp` or `mcpServers` key — but since no servers are configured and `mcp add` is interactive, the exact on-disk schema is NOT observable from this probe. The real schema shape must be confirmed via Task 2 or by running `opencode mcp add` interactively and observing the written config.
+The `opencode providers list` output shows credentials at `~/.local/share/opencode/auth.json`. The main config is at `~/.config/opencode/opencode.jsonc` with schema reference `https://opencode.ai/config.json`. MCP server configuration is stored in the opencode config (global `opencode.jsonc` or project-level `opencode.json`) under a top-level **`mcp`** key (NOT `mcpServers`).
+
+### FIRMED (Task 5) — authoritative MCP schema from `https://opencode.ai/config.json`
+
+`opencode mcp add` exposes no CLI positionals (interactive-only), so the schema was firmed for free two ways: (a) fetching the official `https://opencode.ai/config.json` JSON Schema (the exact `$schema` opencode 1.15.4 references) and extracting the MCP definitions, and (b) a free `opencode mcp list` run from a THROWAWAY temp project dir (created under the OS temp dir, removed afterward — the real project config was never touched) containing a hand-written `opencode.json` with TOAD's exact shape. No `opencode run` was invoked; zero tokens spent.
+
+**Top-level `Config.mcp` (verbatim from the schema):** an object whose keys are server names; each value is `McpLocalConfig` | `McpRemoteConfig` | `{ enabled: boolean }`.
+
+```json
+"mcp": {
+  "type": "object",
+  "additionalProperties": {
+    "anyOf": [
+      { "anyOf": [ { "$ref": "#/$defs/McpLocalConfig" }, { "$ref": "#/$defs/McpRemoteConfig" } ] },
+      { "type": "object", "properties": { "enabled": { "type": "boolean" } }, "required": ["enabled"], "additionalProperties": false }
+    ]
+  },
+  "description": "MCP (Model Context Protocol) server configurations"
+}
+```
+
+**`McpLocalConfig` (verbatim — this is the local-stdio server shape TOAD writes):**
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "type":        { "type": "string", "enum": ["local"], "description": "Type of MCP server connection" },
+    "command":     { "type": "array", "items": { "type": "string" }, "description": "Command and arguments to run the MCP server" },
+    "environment": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Environment variables to set when running the MCP server" },
+    "enabled":     { "type": "boolean", "description": "Enable or disable the MCP server on startup" },
+    "timeout":     { "type": "integer", "exclusiveMinimum": 0, "description": "Timeout in ms for MCP server requests. Defaults to 5000 if not specified." }
+  },
+  "required": ["type", "command"],
+  "additionalProperties": false
+}
+```
+
+**`McpRemoteConfig` (verbatim — for reference; TOAD does NOT use this):** required `type` (enum `"remote"`) + `url`; optional `enabled`, `headers` (string map), `oauth`, `timeout`. `additionalProperties: false`.
+
+**Schema notes:**
+- Top-level key is **`mcp`** (singular), NOT `mcpServers` (the Claude/Gemini convention). Each entry is keyed by server name.
+- Local-stdio servers use `type: "local"` and a single **`command`** array containing the executable AND its args (one flat string array — NOT separate `command`/`args` fields). This differs from the Claude/Gemini `command` (string) + `args` (array) split.
+- Env var key is **`environment`** (NOT `env`), a string→string map.
+- `enabled` is an optional boolean. Only `type` and `command` are required for a local server. `additionalProperties: false` — no extra/unknown fields are permitted in a local server entry.
+
+### FIRMED (Task 5) — live `opencode mcp list` from a throwaway project (verbatim)
+
+A throwaway temp dir was created, `opencode.json` written with TOAD's exact emitted shape (`{$schema, instructions, compaction, mcp:{ "toad-local": { type:"local", enabled:true, command:[...], environment:{...} } }}`), then `opencode mcp list` was run from it (then the dir was deleted):
+
+```
+┌  MCP Servers
+│
+●  ✗ toad-local failed
+│      MCP error -32000: Connection closed
+│      /usr/bin/node --no-warnings /srv/stdioServer.js
+│
+└  1 server(s)
+```
+
+opencode 1.15.4 **parsed and honored** the on-disk schema: it recognized the `mcp."toad-local"` entry, read `type`/`command`/`environment`/`enabled`, and echoed the `command` array back (`/usr/bin/node --no-warnings /srv/stdioServer.js`). The `Connection closed` failure is solely because the placeholder `/srv/stdioServer.js` path does not exist — NOT a schema/key rejection (a wrong top-level key would yield `No MCP servers configured`). This proves the exact shape `opencodeMcpConfig.js` writes is loadable by a real opencode 1.15.4.
+
+**RATIFIED (Task 5):** opencodeMcpConfig output matches the real opencode 1.15.4 MCP schema — no code change needed.
 
 ---
 
