@@ -37,6 +37,8 @@ export function openToadDatabase(filePath = ':memory:') {
 function applyMigrations(db) {
   // §11 slice 1: link runtimes to their task.
   try { db.exec('ALTER TABLE runtime_instances ADD COLUMN task_id TEXT'); } catch {}
+  // SP1a Stage 2: persist Codex's disk-session id for `codex exec resume`.
+  try { db.exec('ALTER TABLE runtime_instances ADD COLUMN cli_session_id TEXT'); } catch {}
   // Drift Slice 3: stamp findings as "under remediation".
   try { db.exec('ALTER TABLE drift_findings ADD COLUMN correction_task_id TEXT'); } catch {}
   try {

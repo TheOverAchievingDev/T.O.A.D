@@ -256,6 +256,18 @@ export class SqliteRuntimeRegistry {
     return this.getRuntime(id);
   }
 
+  setRuntimeCliSessionId({ runtimeId, cliSessionId }) {
+    const id = requireString(runtimeId, 'runtimeId');
+    if (!this.getRuntime(id)) {
+      throw new Error(`unknown runtime: ${id}`);
+    }
+    const value = typeof cliSessionId === 'string' && cliSessionId.length > 0 ? cliSessionId : null;
+    this.db.prepare(
+      'UPDATE runtime_instances SET cli_session_id = ?, updated_at = ? WHERE runtime_id = ?'
+    ).run(value, new Date().toISOString(), id);
+    return this.getRuntime(id);
+  }
+
   #ensureTeam(teamId) {
     this.db.prepare(
       `
@@ -285,6 +297,7 @@ export class SqliteRuntimeRegistry {
       exitCode: row.exit_code,
       signal: row.signal,
       taskId: row.task_id || null,
+      cliSessionId: row.cli_session_id || null,
     };
   }
 

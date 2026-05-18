@@ -226,3 +226,27 @@ test('SqliteRuntimeRegistry.reconcileOrphans returns reconciled=0 and empty orph
     assert.deepEqual(result.orphanedPids, []);
   });
 });
+
+test('cliSessionId defaults null, persists via setRuntimeCliSessionId, survives reopen, preserved across re-upsert', () => {
+  withRegistry((registry) => {
+    registry.upsertRuntime({
+      runtimeId: 'r-codex-1', teamId: 'team-a', agentId: 'dev-1',
+      providerId: 'openai', command: 'codex', deliveryMode: 'session_turn',
+      status: 'running', startedAt: '2026-05-18T00:00:00.000Z',
+    });
+    assert.equal(registry.getRuntime('r-codex-1').cliSessionId, null);
+
+    const updated = registry.setRuntimeCliSessionId({ runtimeId: 'r-codex-1', cliSessionId: 'sess-abc' });
+    assert.equal(updated.cliSessionId, 'sess-abc');
+    assert.equal(registry.getRuntime('r-codex-1').cliSessionId, 'sess-abc');
+
+    registry.upsertRuntime({
+      runtimeId: 'r-codex-1', teamId: 'team-a', agentId: 'dev-1',
+      providerId: 'openai', command: 'codex', deliveryMode: 'session_turn',
+      status: 'running', startedAt: '2026-05-18T00:00:00.000Z',
+    });
+    assert.equal(registry.getRuntime('r-codex-1').cliSessionId, 'sess-abc');
+
+    assert.equal(registry.setRuntimeCliSessionId({ runtimeId: 'r-codex-1', cliSessionId: null }).cliSessionId, null);
+  });
+});
