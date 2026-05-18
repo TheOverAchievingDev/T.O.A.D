@@ -327,6 +327,25 @@ export class SqliteBroker {
     return this.#getDeliveryAttempt(attemptId);
   }
 
+  // SP1a Stage 2 (whole-impl W1) — claim a delivery attempt in-flight before
+  // a long session turn. Keeps status='committed' but flips response_state to
+  // 'delivering' so the idempotency gate + listMessagesNeedingDelivery exclude
+  // it from sweep re-entry until the turn settles. Session-scoped use only;
+  // the Claude runtime_stdin path never calls this.
+  markDeliveryInFlight({ attemptId }) {
+    this.#assertAttemptExists(attemptId);
+    this.db.prepare(
+      `
+        UPDATE delivery_attempts
+        SET status = 'committed',
+            response_state = 'delivering',
+            updated_at = ?
+        WHERE attempt_id = ?
+      `
+    ).run(new Date().toISOString(), attemptId);
+    return this.#getDeliveryAttempt(attemptId);
+  }
+
   #ensureTeam(teamId) {
     this.db.prepare(
       `

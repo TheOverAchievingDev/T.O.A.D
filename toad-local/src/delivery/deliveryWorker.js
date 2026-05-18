@@ -63,6 +63,13 @@ export class DeliveryWorker {
       if (SESSION_DELIVERY_MODES.has(resolved.deliveryMode)) {
         const adapter = this.adapters.get(resolved.runtimeId);
         if (adapter && typeof adapter.sendTurn === 'function') {
+          // W1: claim the attempt in-flight SYNCHRONOUSLY before awaiting the
+          // (multi-minute) turn. A concurrent sweep re-entry then finds a
+          // committed non-`queued_for_recipient` attempt and is short-circuited
+          // by the idempotency gate above — no duplicate sendTurn / no storm.
+          if (typeof this.broker.markDeliveryInFlight === 'function') {
+            this.broker.markDeliveryInFlight({ attemptId: begin.attempt.attemptId });
+          }
           // Wake-on-message: the adapter's FIFO + resume logic handles
           // idle-wake vs mid-turn batching transparently (spec §5).
           const receipt = await adapter.sendTurn({

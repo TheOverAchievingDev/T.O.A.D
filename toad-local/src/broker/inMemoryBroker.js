@@ -168,6 +168,21 @@ export class InMemoryBroker {
     return next;
   }
 
+  // SP1a Stage 2 (whole-impl W1) — claim a delivery attempt in-flight before
+  // a long session turn (mirrors SqliteBroker). Session-scoped use only.
+  markDeliveryInFlight({ attemptId }) {
+    const attempt = this.#deliveryAttempts.get(attemptId);
+    if (!attempt) throw new Error(`unknown delivery attempt: ${attemptId}`);
+    const next = {
+      ...attempt,
+      status: 'committed',
+      responseState: 'delivering',
+      updatedAt: new Date().toISOString(),
+    };
+    this.#deliveryAttempts.set(attemptId, next);
+    return next;
+  }
+
   #deliveryAttemptResult(inserted, attempt) {
     return { inserted, attempt, ...attempt };
   }
