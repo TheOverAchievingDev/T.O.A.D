@@ -125,6 +125,8 @@ export class LocalToadRuntime {
     githubClientId = null,
     providerAuthSpawn = null,
     providerAuthSpawnSync = null,
+    providerAuthReadFile = null,
+    providerAuthStat = null,
     // Auth-preflight injectable deps (T7). Real defaults wired lazily
     // (see #resolveRefreshOnce) so hermetic tests never touch real I/O.
     // The creds reader is readClaudeCredsStatusForPreflight (NOT raw
