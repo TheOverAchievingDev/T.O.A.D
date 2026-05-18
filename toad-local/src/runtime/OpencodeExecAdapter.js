@@ -54,7 +54,16 @@ export class OpencodeExecAdapter extends RuntimeAdapter {
         return { accepted: true, responseState: 'coalesced', receipt: { written: true, runtimeId: this.runtimeId } };
       }
       this._pendingTexts = [];
-      return this.#runTurn(batch.join('\n\n'));
+      try {
+        return await this.#runTurn(batch.join('\n\n'));
+      } catch (err) {
+        // A pre-spawn failure (synchronous spawnImpl throw) delivered
+        // nothing — restore the batch so the next chained slot re-drains it;
+        // otherwise later coalesced callers report a false `coalesced`
+        // success for lost messages. Mirrors CodexExecAdapter W5.
+        this._pendingTexts = batch.concat(this._pendingTexts);
+        throw err;
+      }
     });
     this._chain = run.then(() => {}, () => {});
     return run;
