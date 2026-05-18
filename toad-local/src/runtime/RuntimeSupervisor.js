@@ -276,6 +276,16 @@ export class RuntimeSupervisor {
       record.status = 'stopping';
       record.child.kill(signal);
     }
+    // SP1a: childless per-turn session adapters (deliveryMode
+    // 'session_turn') own their own event stream — killing a child
+    // won't end it (there is none). Signal the adapter so events()
+    // drains and the ingestor's for-await consumer terminates.
+    // Claude/runtime_stdin records inherit the throwing base stop();
+    // gating on session_turn never invokes it.
+    if (record.deliveryMode === 'session_turn'
+        && record.adapter && typeof record.adapter.stop === 'function') {
+      try { await record.adapter.stop(); } catch { /* best effort */ }
+    }
     record.status = 'stopped';
     record.signal = record.signal || signal;
     record.stoppedAt = record.stoppedAt || new Date().toISOString();
