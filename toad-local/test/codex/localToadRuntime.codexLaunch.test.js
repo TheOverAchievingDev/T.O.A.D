@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { LocalToadRuntime } from '../../src/app/LocalToadRuntime.js';
 
 function makeRuntime({ authSignedIn = true } = {}) {
@@ -11,13 +15,23 @@ function makeRuntime({ authSignedIn = true } = {}) {
 
 test('codex launch does NOT spawn a Claude child and registers a session adapter', async () => {
   const rt = makeRuntime();
-  const out = await rt.launchAgent({
-    teamId: 't1', agentId: 'dev-1', runtimeId: 'r-codex', command: 'codex',
-    cwd: process.cwd(), systemPrompt: 'You are dev-1.',
-  });
-  assert.equal(out.runtimeId, 'r-codex');
-  const ad = rt.adapters.get('r-codex');
-  assert.ok(ad && ad.providerId === 'openai');
+  // Hermetic working dir: #prepareCodexRuntime writes <cwd>/.codex/config.toml
+  // and <cwd>/AGENTS.md. Using process.cwd() pollutes the real repo on every
+  // test run; isolate it and assert the artifacts land HERE (proves isolation).
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'codexlaunch-'));
+  try {
+    const out = await rt.launchAgent({
+      teamId: 't1', agentId: 'dev-1', runtimeId: 'r-codex', command: 'codex',
+      cwd: dir, systemPrompt: 'You are dev-1.',
+    });
+    assert.equal(out.runtimeId, 'r-codex');
+    const ad = rt.adapters.get('r-codex');
+    assert.ok(ad && ad.providerId === 'openai');
+    assert.ok(existsSync(path.join(dir, '.codex', 'config.toml')), 'config written under isolated cwd');
+    assert.ok(existsSync(path.join(dir, 'AGENTS.md')), 'AGENTS.md written under isolated cwd');
+  } finally {
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
 });
 
 test('codex launch fails fast when not authenticated', async () => {
@@ -52,12 +66,17 @@ test('claude launch does NOT enter the codex branch (still spawns a child)', asy
 
 test('explicit providerId:openai routes to the Codex branch even with a non-canonical command', async () => {
   const rt = makeRuntime();
-  const out = await rt.launchAgent({
-    teamId: 't1', agentId: 'dev-1', runtimeId: 'r-codex-custom',
-    providerId: 'openai', command: 'codex.cmd', // custom command providerForCommand() would NOT match
-    cwd: process.cwd(), systemPrompt: 'You are dev-1.',
-  });
-  assert.equal(out.runtimeId, 'r-codex-custom');
-  const ad = rt.adapters.get('r-codex-custom');
-  assert.ok(ad && ad.providerId === 'openai'); // CodexExecAdapter, NOT Claude
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'codexlaunch-'));
+  try {
+    const out = await rt.launchAgent({
+      teamId: 't1', agentId: 'dev-1', runtimeId: 'r-codex-custom',
+      providerId: 'openai', command: 'codex.cmd', // custom command providerForCommand() would NOT match
+      cwd: dir, systemPrompt: 'You are dev-1.',
+    });
+    assert.equal(out.runtimeId, 'r-codex-custom');
+    const ad = rt.adapters.get('r-codex-custom');
+    assert.ok(ad && ad.providerId === 'openai'); // CodexExecAdapter, NOT Claude
+  } finally {
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
 });
