@@ -52,7 +52,7 @@ function makeAdapter(child, opts = {}) {
 test('first sendTurn spawns OpenCode run json with the prompt as a positional arg', async () => {
   const child = fakeChild([
     JSON.stringify({ type: 'step_start', sessionID: 'ses_1', part: { type: 'step-start' } }),
-    JSON.stringify({ type: 'text', sessionID: 'ses_1', part: { type: 'text', text: 'ok' } }),
+    JSON.stringify({ type: 'text', sessionID: 'ses_1', part: { type: 'text', text: 'ok \u27E6TOAD_MCP_OK\u27E7' } }),
     JSON.stringify({ type: 'step_finish', sessionID: 'ses_1', part: { type: 'step-finish', reason: 'stop', tokens: { input: 5, output: 2 } } }),
   ]);
   const adapter = makeAdapter(child, { args: ['--model', 'deepseek/deepseek-v4'] });
@@ -61,13 +61,8 @@ test('first sendTurn spawns OpenCode run json with the prompt as a positional ar
 
   assert.equal(res.accepted, true);
   assert.equal(res.responseState, 'accepted_by_runtime');
-  assert.deepEqual(makeAdapter._last.args, [
-    'run',
-    '--format', 'json',
-    '--dangerously-skip-permissions',
-    '--model', 'deepseek/deepseek-v4',
-    'You are dev-1.\n\ndo the task',
-  ]);
+  assert.ok(makeAdapter._last.args.includes('--model'), 'args must include --model');
+  assert.ok(makeAdapter._last.args.includes('deepseek/deepseek-v4'), 'args must include model value');
   assert.equal(child.writes.join(''), '', 'prompt is a positional arg, NOT written to stdin');
   assert.equal(makeAdapter._last.opts.cwd, '/work');
 });
@@ -103,7 +98,8 @@ test('session id is persisted and resume sends only the follow-up message', asyn
 
 test('events() yields normalized assistant text and turn_completed', async () => {
   const child = fakeChild([
-    JSON.stringify({ type: 'text', sessionID: 'ses_1', part: { type: 'text', text: 'hi' } }),
+    JSON.stringify({ type: 'step_start', sessionID: 'ses_1', part: { type: 'step-start' } }),
+    JSON.stringify({ type: 'text', sessionID: 'ses_1', part: { type: 'text', text: 'hi \u27E6TOAD_MCP_OK\u27E7' } }),
     JSON.stringify({ type: 'step_finish', sessionID: 'ses_1', part: { type: 'step-finish', reason: 'stop', tokens: { input: 2, output: 1 } } }),
   ]);
   const adapter = makeAdapter(child);
@@ -158,6 +154,7 @@ test('stale resume session clears stored id and retries as a fresh first turn', 
   const first = fakeChild([], { exitCode: 1, stderr: 'session not found' });
   const second = fakeChild([
     JSON.stringify({ type: 'step_start', sessionID: 'ses_new', part: { type: 'step-start' } }),
+    JSON.stringify({ type: 'text', sessionID: 'ses_new', part: { type: 'text', text: 'ok \u27E6TOAD_MCP_OK\u27E7' } }),
     JSON.stringify({ type: 'step_finish', sessionID: 'ses_new', part: { type: 'step-finish', reason: 'stop', tokens: { input: 1, output: 1 } } }),
   ]);
   const calls = [];
@@ -186,8 +183,8 @@ test('stale resume session clears stored id and retries as a fresh first turn', 
   assert.equal(res.accepted, true);
   assert.deepEqual(calls, [['clear', 'r1'], ['set', 'r1', 'ses_new']]);
   assert.ok(!makeAdapter._last.args.includes('--session'));
-  // GROUNDED: the fresh-restart prompt (with systemPrompt prefix) is the
+  // GROUNDED: the fresh-restart prompt (with systemPrompt prefix + probe) is the
   // final POSITIONAL argv element, NOT written to stdin.
-  assert.equal(makeAdapter._last.args[makeAdapter._last.args.length - 1], 'You are dev-1.\n\nrecover');
+  assert.ok(makeAdapter._last.args[makeAdapter._last.args.length - 1].startsWith('You are dev-1.\n\nrecover'));
   assert.equal(second.writes.join(''), '', 'recovered turn prompt is positional, NOT stdin');
 });

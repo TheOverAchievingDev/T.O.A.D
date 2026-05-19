@@ -2,6 +2,7 @@ import { spawn as defaultSpawn } from 'node:child_process';
 import { RuntimeAdapter, RuntimeAdapterError } from './RuntimeAdapter.js';
 import { resolveCli as defaultResolveCli } from '../foundry/providers/resolveCli.js';
 import { normalizeOpencodeStreamLine } from './opencode/normalizeOpencodeStreamLine.js';
+import { buildProbeInstruction, evaluateFirstTurnProbe } from './firstTurnMcpProbe.js';
 
 const UNKNOWN_SESSION_RE = /unknown session|session not found|no (such )?session|session id .* not found|invalid session/i;
 
@@ -72,13 +73,15 @@ export class OpencodeExecAdapter extends RuntimeAdapter {
   async #runTurn(text) {
     const resumeId = this.sessionStore ? this.sessionStore.get(this.runtimeId) : null;
     const isResume = typeof resumeId === 'string' && resumeId.length > 0;
+    let needsProbe = !isResume;
     // GROUNDED (opencode 1.15.4 §7/§10): the message is a CONFIRMED-working
     // POSITIONAL argv arg, NOT stdin. First turn prefixes the systemPrompt;
     // resume sends only the follow-up text (the prior session is on disk).
-    const message = isResume
+    let message = isResume
       ? text
       : (this.systemPrompt.trim().length > 0 ? `${this.systemPrompt}\n\n${text}` : text);
-    let result = await this.#attemptTurn({ resumeId: isResume ? resumeId : null, message });
+    if (needsProbe) message += `\n\n${buildProbeInstruction()}`;
+    let result = await this.#attemptTurn({ resumeId: isResume ? resumeId : null, message, needsProbe });
     if (result.accepted !== true && isResume && UNKNOWN_SESSION_RE.test(result.__failError || '')) {
       if (this.sessionStore) this.sessionStore.clear(this.runtimeId);
       this.#push({
@@ -89,8 +92,10 @@ export class OpencodeExecAdapter extends RuntimeAdapter {
         note: 'opencode_session_reset',
         detail: 'opencode resume session unknown - restarting as a fresh session',
       });
-      const firstTurnMessage = this.systemPrompt.trim().length > 0 ? `${this.systemPrompt}\n\n${text}` : text;
-      result = await this.#attemptTurn({ resumeId: null, message: firstTurnMessage });
+      let firstTurnMessage = this.systemPrompt.trim().length > 0 ? `${this.systemPrompt}\n\n${text}` : text;
+      needsProbe = true;
+      firstTurnMessage += `\n\n${buildProbeInstruction()}`;
+      result = await this.#attemptTurn({ resumeId: null, message: firstTurnMessage, needsProbe: true });
     }
     if (result.accepted !== true && typeof result.__failError === 'string' && result.__pushedFailure !== true) {
       this.#push({ runtimeId: this.runtimeId, teamId: this.teamId, agentId: this.agentId, type: 'turn_failed', error: result.__failError });
@@ -98,7 +103,7 @@ export class OpencodeExecAdapter extends RuntimeAdapter {
     return result;
   }
 
-  async #attemptTurn({ resumeId, message }) {
+  async #attemptTurn({ resumeId, message, needsProbe }) {
     // §7/§10 RATIFIED argv. First turn:
     //   run --format json --dangerously-skip-permissions ...modelArgs <message>
     // Resume adds ['--session', '<captured ses_* id>'] before the message.
@@ -134,6 +139,7 @@ export class OpencodeExecAdapter extends RuntimeAdapter {
       let stderrBuf = '';
       const STDERR_CAP = 8 * 1024;
       const ctx = { runtimeId: this.runtimeId, teamId: this.teamId, agentId: this.agentId };
+      const turnEvents = [];
       let timedOut = false;
 
       const timeoutTimer = setTimeout(() => {
@@ -163,6 +169,7 @@ export class OpencodeExecAdapter extends RuntimeAdapter {
           const line = lineBuf.slice(0, nl);
           lineBuf = lineBuf.slice(nl + 1);
           for (const ev of normalizeOpencodeStreamLine(line, ctx)) {
+            turnEvents.push(ev);
             this.#push(ev);
             if (ev.type === 'session_started' && typeof ev.sessionId === 'string'
                 && ev.sessionId.length > 0 && this.sessionStore) {
@@ -172,7 +179,11 @@ export class OpencodeExecAdapter extends RuntimeAdapter {
               finish({ accepted: false, responseState: 'turn_failed', receipt: { written: true, runtimeId: this.runtimeId }, __failError: ev.error, __pushedFailure: true });
             }
             if (ev.type === 'turn_completed') {
-              finish({ accepted: true, responseState: 'accepted_by_runtime', receipt: { written: true, runtimeId: this.runtimeId } });
+              if (needsProbe && !evaluateFirstTurnProbe(turnEvents).satisfied) {
+                finish({ accepted: false, responseState: 'turn_failed', receipt: { written: true, runtimeId: this.runtimeId }, __failError: 'TOAD tools unavailable: opencode agent could not confirm the toad MCP rail on the first turn' });
+              } else {
+                finish({ accepted: true, responseState: 'accepted_by_runtime', receipt: { written: true, runtimeId: this.runtimeId } });
+              }
             }
           }
         }
