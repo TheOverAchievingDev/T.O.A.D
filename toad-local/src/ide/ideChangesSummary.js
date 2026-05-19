@@ -41,8 +41,11 @@ function parsePorcelainLine(rawLine) {
     status = '?';
   } else {
     const trimmed = xy.trim();
-    status = trimmed.charAt(0) || 'M';
+    if (!trimmed) return null; // '  ' = clean; never appears in porcelain output
+    status = trimmed.charAt(0);
   }
+  // Note: a path literally containing ' -> ' would be mangled here.
+  // Acceptable per spec §9 (ASCII paths assumed; quoted-path dequoting deferred).
   const arrowIdx = rest.indexOf(' -> ');
   if (arrowIdx !== -1) rest = rest.slice(arrowIdx + 4);
   const relativePath = toPosixPath(rest.trim());

@@ -101,3 +101,14 @@ test('getIdeChangesSummary returns graceful error when source resolution throws'
   assert.deepEqual(result.files, []);
   assert.ok(typeof result.error === 'string' && result.error.length > 0);
 });
+
+test('getIdeChangesSummary reports a staged-added file as status A with counts', () => {
+  const runGit = fakeRunGit({
+    'diff HEAD --numstat': { exitCode: 0, stdout: '7\t0\tsrc/added.ts\n', stderr: '' },
+    'status --porcelain': { exitCode: 0, stdout: 'A  src/added.ts\n', stderr: '' },
+  });
+  const result = getIdeChangesSummary({ ...baseArgs, runGit });
+  assert.deepEqual(result.files[0], {
+    relativePath: 'src/added.ts', status: 'A', additions: 7, deletions: 0, binary: false,
+  });
+});
