@@ -72,15 +72,15 @@ Captured dynamically via our Playwright integration script (`npm run screenshots
 
 | Cockpit (Hero) | Tasks Board |
 | --- | --- |
-| ![Cockpit](docs/screenshots/workspace.png) | ![Tasks board](docs/screenshots/tasks.png) |
+| ![Cockpit](docs/screenshots/workspace.png?v=20260518) | ![Tasks board](docs/screenshots/tasks.png?v=20260518) |
 
 | Foundry Discovery | Drift Monitor |
 | --- | --- |
-| ![Foundry discovery](docs/screenshots/foundry.png) | ![Drift monitor](docs/screenshots/drift-screen.png) |
+| ![Foundry discovery](docs/screenshots/foundry.png?v=20260518) | ![Drift monitor](docs/screenshots/drift-screen.png?v=20260518) |
 
 | Team Creation | Settings |
 | --- | --- |
-| ![Create Team](docs/screenshots/create-team-modal.png) | ![Settings](docs/screenshots/settings-providers.png) |
+| ![Create Team](docs/screenshots/create-team-modal.png?v=20260518) | ![Settings](docs/screenshots/settings-providers.png?v=20260518) |
 
 ## Local Development
 

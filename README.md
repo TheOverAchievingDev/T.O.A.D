@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="toad-local/ui/src-tauri/icons/icon.png" alt="Symphony AI" width="96" height="96" />
+<img src="toad-local/ui/src-tauri/icons/icon.png?v=20260518" alt="Symphony AI" width="96" height="96" />
 
 # Symphony AI
 
@@ -17,7 +17,7 @@ Symphony combines a project-planning Foundry, real coding-agent teams, a local I
 
 <br/>
 
-<img src="toad-local/docs/screenshots/workspace.png" alt="Symphony AI workspace" width="900" />
+<img src="toad-local/docs/screenshots/workspace.png?v=20260518" alt="Symphony AI workspace" width="900" />
 
 <sub><i>Workspace view with a Symphony agent team in flight. Run <code>npm run screenshots</code> from <code>toad-local</code> to regenerate screenshots from the local app.</i></sub>
 
@@ -50,7 +50,7 @@ The important distinction: Symphony is not just a chat box and not just a proces
 
 Foundry is the planning front door. You chat through the idea, constraints, data model, architecture, product decisions, roadmap, and acceptance criteria. Symphony then materializes real project documents and starter tasks that an agent team can use.
 
-<img src="toad-local/docs/screenshots/foundry.png" alt="Foundry" width="100%"/>
+<img src="toad-local/docs/screenshots/foundry.png?v=20260518" alt="Foundry" width="100%"/>
 
 </td>
 <td width="50%" valign="top">
@@ -59,7 +59,7 @@ Foundry is the planning front door. You chat through the idea, constraints, data
 
 Create a lead plus specialist teammates, assign providers and roles, and let the team work through a structured task lifecycle. Agents communicate through Symphony's MCP tools, not through hidden side channels.
 
-<img src="toad-local/docs/screenshots/workspace.png" alt="Workspace" width="100%"/>
+<img src="toad-local/docs/screenshots/workspace.png?v=20260518" alt="Workspace" width="100%"/>
 
 </td>
 </tr>
@@ -70,7 +70,7 @@ Create a lead plus specialist teammates, assign providers and roles, and let the
 
 Tasks move through a deterministic lifecycle: backlog, ready, planned, in progress, review, testing, merge ready, done. Reviews capture real git diffs, validations capture real command output, and high-risk work can require human approval before merge.
 
-<img src="toad-local/docs/screenshots/tasks.png" alt="Tasks" width="100%"/>
+<img src="toad-local/docs/screenshots/tasks.png?v=20260518" alt="Tasks" width="100%"/>
 
 </td>
 <td width="50%" valign="top">
@@ -79,7 +79,7 @@ Tasks move through a deterministic lifecycle: backlog, ready, planned, in progre
 
 The drift monitor scores whether work is staying aligned: invalid transitions, out-of-scope files, missing tests, role violations, rubber-stamped reviews, provider leakage, semantic drift, and done-without-merge evidence.
 
-<img src="toad-local/docs/screenshots/drift-screen.png" alt="Drift Monitor" width="100%"/>
+<img src="toad-local/docs/screenshots/drift-screen.png?v=20260518" alt="Drift Monitor" width="100%"/>
 
 </td>
 </tr>
@@ -97,7 +97,7 @@ Browse a project, switch repositories, inspect task worktrees, edit files, and s
 
 Symphony tracks provider auth and plan state where possible, including subscription-style CLI auth. The goal is to make model assignment and team launch decisions with visible context instead of guesswork.
 
-<img src="toad-local/docs/screenshots/settings-providers.png" alt="Provider settings" width="100%"/>
+<img src="toad-local/docs/screenshots/settings-providers.png?v=20260518" alt="Provider settings" width="100%"/>
 
 </td>
 </tr>
