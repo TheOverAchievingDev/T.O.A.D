@@ -657,7 +657,7 @@ function EditorRegion({
   drift: DriftRunResult | null;
   diagnostics: IdeDiagnostic[];
   diagnosticNavigationTarget: { path: string; line: number; column: number; requestId: number } | null;
-  externalOpenRequest: { sourceKey: string; path: string; requestId: number } | null;
+  externalOpenRequest: { sourceKey: string; path: string; requestId: number; mode?: 'diff' } | null;
   onRefreshTreeRequest?: (path: string | null) => void;
   onRunDiagnosticsRequest?: (path?: string) => Promise<IdeDiagnosticsResult | null>;
   onDiagnosticsResult?: (result: IdeDiagnosticsResult | null | undefined) => void;

@@ -95,6 +95,10 @@ export function getIdeChangesSummary({
   }
 
   const files = [];
+  // Porcelain-driven merge: every emitted row is a porcelain entry with
+  // counts joined from numstat. A numstat-only path (no porcelain entry)
+  // cannot occur for a working-tree `diff HEAD` and is intentionally not
+  // synthesized (spec section 4.1 acknowledges this branch as unreachable).
   for (const rawLine of String(statusResult.stdout).split('\n')) {
     if (!rawLine) continue;
     const parsed = parsePorcelainLine(rawLine);
