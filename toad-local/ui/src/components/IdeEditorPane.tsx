@@ -158,6 +158,7 @@ export function IdeEditorPane({
     setTabs(prev => [...prev, newTab]);
     setActiveTabPath(relativePath);
 
+    let fileReadOk = false;
     try {
       const result = await callTool<IdeFileResult>({
         actor,
@@ -165,10 +166,11 @@ export function IdeEditorPane({
         args: { source, relativePath },
       });
       setTabs(prev => prev.map(t => t.path === relativePath ? { ...t, file: result, draftContent: isEditableIdeFile(result) ? result.content : '', loading: false } : t));
+      fileReadOk = true;
     } catch (err) {
       setTabs(prev => prev.map(t => t.path === relativePath ? { ...t, fileError: errorMessage(err), loading: false } : t));
     }
-    if (mode === 'diff') await loadDiffForPath(relativePath);
+    if (mode === 'diff' && fileReadOk) await loadDiffForPath(relativePath);
   }
 
   useEffect(() => {
