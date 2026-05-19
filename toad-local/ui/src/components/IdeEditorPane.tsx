@@ -63,7 +63,7 @@ interface IdeEditorPaneProps {
   actor: Actor;
   driftData?: DriftRunResult | null;
   activeAgentsInWorktree: Runtime[];
-  externalOpenRequest: { sourceKey: string; path: string; requestId: number } | null;
+  externalOpenRequest: { sourceKey: string; path: string; requestId: number; mode?: 'diff' } | null;
   onRefreshTreeRequest?: (path: string | null) => void;
   /** Phase 3d Task 13 — optional path → task lookup. When provided,
    *  files that match a task's allowedFiles contract render an "in
@@ -114,7 +114,7 @@ export function IdeEditorPane({
 
   const [tabs, setTabs] = useState<OpenTab[]>([]);
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null);
-  const [pendingExternalOpen, setPendingExternalOpen] = useState<{ sourceKey: string; path: string } | null>(null);
+  const [pendingExternalOpen, setPendingExternalOpen] = useState<{ sourceKey: string; path: string; mode?: 'diff' } | null>(null);
   const [pythonActionRunning, setPythonActionRunning] = useState(false);
 
   const activeTab = tabs.find((t) => t.path === activeTabPath);
@@ -133,12 +133,13 @@ export function IdeEditorPane({
     return !dirty || window.confirm(`Discard unsaved changes in ${tab.path}?`);
   }
 
-  async function openFile(relativePath: string) {
+  async function openFile(relativePath: string, mode?: 'diff') {
     if (!actor.teamId) return;
-    
+
     // Switch to tab if already open
     if (tabs.some(t => t.path === relativePath)) {
       setActiveTabPath(relativePath);
+      if (mode === 'diff') await loadDiffForPath(relativePath);
       return;
     }
 
@@ -167,6 +168,7 @@ export function IdeEditorPane({
     } catch (err) {
       setTabs(prev => prev.map(t => t.path === relativePath ? { ...t, fileError: errorMessage(err), loading: false } : t));
     }
+    if (mode === 'diff') await loadDiffForPath(relativePath);
   }
 
   useEffect(() => {
@@ -176,16 +178,16 @@ export function IdeEditorPane({
       // Source changed, we can't handle it directly here as we just receive `source`.
       // The parent component should unmount/remount us or change the `source` prop.
       // We set a pending state so that when the source prop updates, we open the file.
-      setPendingExternalOpen({ sourceKey: externalOpenRequest.sourceKey, path: externalOpenRequest.path });
+      setPendingExternalOpen({ sourceKey: externalOpenRequest.sourceKey, path: externalOpenRequest.path, mode: externalOpenRequest.mode });
       return;
     }
-    void openFile(externalOpenRequest.path);
+    void openFile(externalOpenRequest.path, externalOpenRequest.mode);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [externalOpenRequest?.requestId]);
 
   useEffect(() => {
     if (!pendingExternalOpen || sourceKey !== pendingExternalOpen.sourceKey) return;
-    void openFile(pendingExternalOpen.path);
+    void openFile(pendingExternalOpen.path, pendingExternalOpen.mode);
     setPendingExternalOpen(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingExternalOpen, sourceKey]);
@@ -386,18 +388,23 @@ export function IdeEditorPane({
     editor.focus();
   }, [diagnosticNavigationTarget, activeTabPath]);
 
-  async function loadDiff() {
-    if (!actor.teamId || !activeTabPath) return;
+  async function loadDiffForPath(relativePath: string) {
+    if (!actor.teamId || !relativePath) return;
     try {
       const result = await callTool<{ diff: string }>({
         actor,
         method: 'ide_get_diff',
-        args: { source, relativePath: activeTabPath },
+        args: { source, relativePath },
       });
-      setTabs(prev => prev.map(t => t.path === activeTabPath ? { ...t, diffContent: result.diff || 'No changes.', editorMode: 'diff' } : t));
+      setTabs(prev => prev.map(t => t.path === relativePath ? { ...t, diffContent: result.diff || 'No changes.', editorMode: 'diff' } : t));
     } catch (err) {
-      setTabs(prev => prev.map(t => t.path === activeTabPath ? { ...t, fileError: errorMessage(err) } : t));
+      setTabs(prev => prev.map(t => t.path === relativePath ? { ...t, fileError: errorMessage(err) } : t));
     }
+  }
+
+  async function loadDiff() {
+    if (!activeTabPath) return;
+    await loadDiffForPath(activeTabPath);
   }
 
   function handleEditorMount(editor: monaco.editor.IStandaloneCodeEditor) {
