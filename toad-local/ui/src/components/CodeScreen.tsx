@@ -217,6 +217,10 @@ export function CodeScreen({
   }
 
   useEffect(() => {
+    (window as any).__toadTreeRetried = false;
+  }, [activeProject?.id]);
+
+  useEffect(() => {
     setActiveFilePath(null);
     setTreeQuery('');
     setExpandedPaths(new Set());
@@ -225,7 +229,7 @@ export function CodeScreen({
     setSearchQuery('');
     void refreshTree(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveTeamId, sourceKey]);
+  }, [effectiveTeamId, sourceKey, activeProject?.id]);
 
   if (!effectiveTeamId) {
     return (
