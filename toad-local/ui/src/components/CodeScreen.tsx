@@ -185,8 +185,17 @@ export function CodeScreen({
       setTree(result);
       setExpandedPaths((current) => mergeExpandedPaths(current, getInitialExpandedPaths(result.entries, pathToReopen)));
     } catch (err) {
+      const msg = errorMessage(err);
+      
+      // Auto-retry once on startup if the backend isn't ready
+      if (msg.includes('failed to fetch') && !(window as any).__toadTreeRetried) {
+        (window as any).__toadTreeRetried = true;
+        window.setTimeout(() => void refreshTree(pathToReopen), 1500);
+        return;
+      }
+      
       setTree(null);
-      setTreeError(errorMessage(err));
+      setTreeError(msg);
     } finally {
       setLoadingTree(false);
     }

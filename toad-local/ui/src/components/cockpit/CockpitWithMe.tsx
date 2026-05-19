@@ -16,8 +16,18 @@ import { PaneSplitter } from './PaneSplitter';
 import { AgentCard } from './AgentCard';
 import { BottomPanel, type BottomPanelTab } from './BottomPanel';
 import { BottomPanelOutput } from './BottomPanelOutput';
+import { BottomPanelProblems } from './BottomPanelProblems';
 import { BottomPanelValidations } from './BottomPanelValidations';
 import { AgentInboxPanel } from './AgentInboxPanel';
+import { resolveCockpitTreeActor } from './cockpitTreeActor';
+import {
+  countDiagnosticsBySeverity,
+  type IdeDiagnostic,
+  type IdeDiagnosticsResult,
+  type IdeDiagnosticToolResult,
+} from '../ideDiagnostics';
+
+const TREE_LOAD_TIMEOUT_MS = 10_000;
 
 /**
  * Phase 2 CockpitWithMe — code-first, Cursor-style layout for the
@@ -122,6 +132,17 @@ export function CockpitWithMe({
   >(null);
   const [openRequestCounter, setOpenRequestCounter] = useState(0);
   const [activePath, setActivePath] = useState<string | null>(null);
+  const [treeReloadNonce, setTreeReloadNonce] = useState(0);
+  const [pythonDiagnostics, setPythonDiagnostics] = useState<IdeDiagnostic[]>([]);
+  const [pythonDiagnosticTools, setPythonDiagnosticTools] = useState<IdeDiagnosticToolResult[]>([]);
+  const [pythonDiagnosticsRunning, setPythonDiagnosticsRunning] = useState(false);
+  const [pythonDiagnosticsError, setPythonDiagnosticsError] = useState<string | null>(null);
+  const [diagnosticNavigationTarget, setDiagnosticNavigationTarget] = useState<{
+    path: string;
+    line: number;
+    column: number;
+    requestId: number;
+  } | null>(null);
 
   // Load the project file tree on mount + whenever the team changes.
   // Mirrors CodeScreen's loadTree logic but trimmed: no git-status
@@ -129,21 +150,14 @@ export function CockpitWithMe({
   // is the better place to share that logic via a hook. Phase 3a Task 1
   // keeps it inline so the diff stays small.
   const treeActor: Actor = useMemo(
-    () => ({
-      teamId: team.name || 'system',
-      agentId: 'ui-client',
-      agentName: 'ui',
-      role: 'human',
-    }),
-    [team.name],
+    () => resolveCockpitTreeActor({ actor, teamName: team.name }),
+    [actor?.agentId, actor?.agentName, actor?.role, actor?.teamId, team.name],
   );
 
   useEffect(() => {
     let cancelled = false;
-    if (!team.name) {
-      setTree(null);
-      return;
-    }
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), TREE_LOAD_TIMEOUT_MS);
     (async () => {
       setTreeError(null);
       try {
@@ -151,6 +165,7 @@ export function CockpitWithMe({
           actor: treeActor,
           method: 'ide_tree_list',
           args: { source: { kind: 'project' } },
+          signal: controller.signal,
         });
         if (cancelled) return;
         setTree(result);
@@ -167,12 +182,31 @@ export function CockpitWithMe({
         });
       } catch (err) {
         if (cancelled) return;
-        setTreeError(err instanceof Error ? err.message : String(err));
+        
+        // The desktop app spawns the sidecar concurrently with the UI.
+        // If the UI fetches before the sidecar binds port 3001, we get
+        // a network error. Auto-retry once after a short delay so the
+        // user doesn't see a scary 'failed to fetch' on startup.
+        const msg = treeLoadErrorMessage(err);
+        if (msg.includes('failed to fetch') && treeReloadNonce === 0) {
+          window.setTimeout(() => {
+            if (!cancelled) setTreeReloadNonce(1);
+          }, 1500);
+          return;
+        }
+        
+        setTreeError(msg);
         setTree(null);
+      } finally {
+        window.clearTimeout(timeoutId);
       }
     })();
-    return () => { cancelled = true; };
-  }, [team.name, treeActor]);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [treeActor, treeReloadNonce]);
 
   // Build the hierarchical tree from the flat entries the MCP method
   // returns. Memoized so re-renders don't rebuild unless entries change.
@@ -205,23 +239,100 @@ export function CockpitWithMe({
 
   // Refresh-tree callback fired by IdeEditorPane after a save.
   const refreshTree = useCallback(async (_pathToReopen: string | null = null) => {
-    if (!team.name) return;
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), TREE_LOAD_TIMEOUT_MS);
     try {
       const result = await callTool<IdeTreeResult>({
         actor: treeActor,
         method: 'ide_tree_list',
         args: { source: { kind: 'project' } },
+        signal: controller.signal,
       });
       setTree(result);
     } catch (err) {
-      setTreeError(err instanceof Error ? err.message : String(err));
+      setTreeError(treeLoadErrorMessage(err));
+    } finally {
+      window.clearTimeout(timeoutId);
     }
-  }, [team.name, treeActor]);
+  }, [treeActor]);
 
   // Build the IdeSource the editor pane consumes. CockpitWithMe always
   // operates on the project root (not a task worktree); task-scoped
   // editing remains the Code screen's job.
   const editorSource: IdeSource = useMemo(() => ({ kind: 'project' }), []);
+
+  const runPythonDiagnostics = useCallback(async (options: { relativePath?: string; scope?: 'project' | 'file' } = {}) => {
+    if (!treeActor.teamId) return null;
+    setPythonDiagnosticsRunning(true);
+    setPythonDiagnosticsError(null);
+    try {
+      const result = await callTool<IdeDiagnosticsResult>({
+        actor: treeActor,
+        method: 'ide_diagnostics_run',
+        args: {
+          source: editorSource,
+          ...(options.relativePath ? { relativePath: options.relativePath } : {}),
+          scope: options.scope ?? (options.relativePath ? 'file' : 'project'),
+        },
+      });
+      setPythonDiagnostics(result.diagnostics ?? []);
+      setPythonDiagnosticTools(result.toolResults ?? []);
+      return result;
+    } catch (err) {
+      setPythonDiagnosticsError(errorMessage(err));
+      return null;
+    } finally {
+      setPythonDiagnosticsRunning(false);
+    }
+  }, [editorSource, treeActor]);
+
+  useEffect(() => {
+    if (!tree) return;
+    void runPythonDiagnostics({ scope: 'project' });
+  }, [tree?.rootLabel, runPythonDiagnostics]);
+
+  const handleDiagnosticsResult = useCallback((result: IdeDiagnosticsResult | null | undefined) => {
+    if (!result) return;
+    setPythonDiagnostics(result.diagnostics ?? []);
+    setPythonDiagnosticTools(result.toolResults ?? []);
+    setPythonDiagnosticsError(null);
+  }, []);
+
+  const fixPythonProject = useCallback(async () => {
+    if (!treeActor.teamId) return;
+    setPythonDiagnosticsRunning(true);
+    setPythonDiagnosticsError(null);
+    try {
+      const result = await callTool<IdeDiagnosticsResult>({
+        actor: treeActor,
+        method: 'ide_fix_project',
+        idempotencyKey: createIdeActionIdempotencyKey('ide-fix-project'),
+        args: { source: editorSource },
+      });
+      handleDiagnosticsResult(result);
+    } catch (err) {
+      setPythonDiagnosticsError(errorMessage(err));
+    } finally {
+      setPythonDiagnosticsRunning(false);
+    }
+  }, [editorSource, handleDiagnosticsResult, treeActor]);
+
+  const handleOpenDiagnostic = useCallback((diagnostic: IdeDiagnostic) => {
+    setActivePath(diagnostic.path);
+    setOpenRequestCounter((c) => {
+      const next = c + 1;
+      setExternalOpenRequest({ sourceKey: 'project', path: diagnostic.path, requestId: next });
+      setDiagnosticNavigationTarget({
+        path: diagnostic.path,
+        line: diagnostic.line,
+        column: diagnostic.column,
+        requestId: next,
+      });
+      return next;
+    });
+  }, []);
+
+  const problemCount = countDiagnosticsBySeverity(pythonDiagnostics).total;
 
   // Phase 3d Task 13 — first active task whose allowedFiles contract
   // names the path wins. Done / rejected tasks are skipped so stale
@@ -316,7 +427,16 @@ export function CockpitWithMe({
             </div>
             <div className="cockpit-with-tree-body">
               {treeError && (
-                <div className="cockpit-with-tree-error">{treeError}</div>
+                <div className="cockpit-with-tree-error">
+                  <span>{treeError}</span>
+                  <button
+                    type="button"
+                    className="btn btn-xs"
+                    onClick={() => setTreeReloadNonce((n) => n + 1)}
+                  >
+                    Retry
+                  </button>
+                </div>
               )}
               {!treeError && tree && visibleNodes.length === 0 && (
                 <div className="cockpit-with-tree-empty">Project is empty.</div>
@@ -370,8 +490,12 @@ export function CockpitWithMe({
             source={editorSource}
             actor={treeActor}
             drift={drift}
+            diagnostics={pythonDiagnostics}
+            diagnosticNavigationTarget={diagnosticNavigationTarget}
             externalOpenRequest={externalOpenRequest}
             onRefreshTreeRequest={refreshTree}
+            onRunDiagnosticsRequest={(path) => runPythonDiagnostics(path ? { relativePath: path, scope: 'file' } : { scope: 'project' })}
+            onDiagnosticsResult={handleDiagnosticsResult}
             scopeChipForPath={scopeChipForPath}
             recentActivityForPath={recentActivityForPath}
           />
@@ -394,8 +518,12 @@ export function CockpitWithMe({
           source={editorSource}
           actor={treeActor}
           drift={drift}
+          diagnostics={pythonDiagnostics}
+          diagnosticNavigationTarget={diagnosticNavigationTarget}
           externalOpenRequest={externalOpenRequest}
           onRefreshTreeRequest={refreshTree}
+          onRunDiagnosticsRequest={(path) => runPythonDiagnostics(path ? { relativePath: path, scope: 'file' } : { scope: 'project' })}
+          onDiagnosticsResult={handleDiagnosticsResult}
         />
       )}
     </PaneSplitter>
@@ -417,12 +545,21 @@ export function CockpitWithMe({
             activeTab={bottomPanelTab}
             onChangeTab={(tab) => setTweak('bottomPanelTab', tab)}
             onClose={() => setTweak('showBottomPanel', false)}
+            problemCount={problemCount}
             outputCount={Object.values(agentStreams).reduce((n, arr) => n + arr.length, 0)}
+            problemsSlot={(
+              <BottomPanelProblems
+                diagnostics={pythonDiagnostics}
+                toolResults={pythonDiagnosticTools}
+                running={pythonDiagnosticsRunning}
+                error={pythonDiagnosticsError}
+                onOpenDiagnostic={handleOpenDiagnostic}
+                onRunDiagnostics={() => void runPythonDiagnostics({ scope: 'project' })}
+                onFixProject={() => void fixPythonProject()}
+              />
+            )}
             outputSlot={<BottomPanelOutput team={team} agentStreams={agentStreams} />}
             validationsSlot={<BottomPanelValidations tasks={tasks} />}
-            // Phase 3a Task 3 ships Output + Validations slots; Terminal
-            // and Problems land in Phase 5 (xterm wiring + LSP).
-            // BottomPanel's empty-state render kicks in for those slots.
           />
         </PaneSplitter>
       ) : (
@@ -436,16 +573,24 @@ function EditorRegion({
   source,
   actor,
   drift,
+  diagnostics,
+  diagnosticNavigationTarget,
   externalOpenRequest,
   onRefreshTreeRequest,
+  onRunDiagnosticsRequest,
+  onDiagnosticsResult,
   scopeChipForPath,
   recentActivityForPath,
 }: {
   source: IdeSource;
   actor: Actor;
   drift: DriftRunResult | null;
+  diagnostics: IdeDiagnostic[];
+  diagnosticNavigationTarget: { path: string; line: number; column: number; requestId: number } | null;
   externalOpenRequest: { sourceKey: string; path: string; requestId: number } | null;
   onRefreshTreeRequest?: (path: string | null) => void;
+  onRunDiagnosticsRequest?: (path?: string) => Promise<IdeDiagnosticsResult | null>;
+  onDiagnosticsResult?: (result: IdeDiagnosticsResult | null | undefined) => void;
   scopeChipForPath?: (path: string) => { taskId: string; assignee?: string } | null;
   recentActivityForPath?: (path: string) => { agentName: string; summary: string; at: string } | null;
 }) {
@@ -460,15 +605,41 @@ function EditorRegion({
         source={source}
         actor={actor}
         driftData={drift}
+        diagnostics={diagnostics}
+        diagnosticNavigationTarget={diagnosticNavigationTarget}
         // CockpitWithMe always operates on the project root — task-
         // worktree editing is the Code screen's domain. No agent
         // filter; an empty list is correct here.
         activeAgentsInWorktree={[]}
         externalOpenRequest={externalOpenRequest}
         onRefreshTreeRequest={onRefreshTreeRequest}
+        onRunDiagnosticsRequest={onRunDiagnosticsRequest}
+        onDiagnosticsResult={onDiagnosticsResult}
         scopeChipForPath={scopeChipForPath}
         recentActivityForPath={recentActivityForPath}
       />
     </div>
   );
+}
+
+function treeLoadErrorMessage(err: unknown): string {
+  if (err instanceof DOMException && err.name === 'AbortError') {
+    return 'File tree request timed out. Check that the local API server is running, then retry.';
+  }
+  if (err instanceof Error) {
+    return err.message;
+  }
+  return String(err);
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function createIdeActionIdempotencyKey(prefix: string): string {
+  const suffix =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `${prefix}:${suffix}`;
 }
