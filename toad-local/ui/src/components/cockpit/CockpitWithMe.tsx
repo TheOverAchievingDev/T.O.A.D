@@ -20,6 +20,7 @@ import { BottomPanelProblems } from './BottomPanelProblems';
 import { BottomPanelValidations } from './BottomPanelValidations';
 import { AgentInboxPanel } from './AgentInboxPanel';
 import { resolveCockpitTreeActor } from './cockpitTreeActor';
+import { useProjects } from '@/hooks/useProjects';
 import {
   countDiagnosticsBySeverity,
   type IdeDiagnostic,
@@ -115,6 +116,10 @@ export function CockpitWithMe({
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(
     () => (rightPanelAgent ?? team.members.find((m) => m.role === 'lead')?.id ?? team.members[0]?.id ?? null),
   );
+  const { activeId: activeProjectId } = useProjects();
+  useEffect(() => {
+    setTreeReloadNonce(0);
+  }, [activeProjectId]);
 
   // Phase 3a Task 1+2: real file tree + Monaco editor wiring. The
   // editor (IdeEditorPane) manages its own tabs internally — we no
@@ -206,7 +211,7 @@ export function CockpitWithMe({
       window.clearTimeout(timeoutId);
       controller.abort();
     };
-  }, [treeActor, treeReloadNonce, team]);
+  }, [treeActor, treeReloadNonce, team, activeProjectId]);
 
   // Build the hierarchical tree from the flat entries the MCP method
   // returns. Memoized so re-renders don't rebuild unless entries change.

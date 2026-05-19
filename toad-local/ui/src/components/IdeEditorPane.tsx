@@ -477,7 +477,7 @@ export function IdeEditorPane({
             </div>
           </div>
           
-          <div style={{ flex: 1, minHeight: 0 }}>
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
             {activeTab.loading && <div className="code-editor-state">Loading file...</div>}
             {activeTab.fileError && <div className="code-editor-state error">{activeTab.fileError}</div>}
             {activeTab.saveError && <div className="code-save-error">{activeTab.saveError}</div>}
