@@ -53,7 +53,9 @@ try {
 // The grounded §8 reply echoes the positional message so the e2e can prove
 // the prompt was delivered as a POSITIONAL arg (not stdin) all the way
 // through the real normalizer into a real broker reply.
-const replyText = `grounded opencode ok \u27E6TOAD_MCP_OK\u27E7: ${message}`;
+const replyText = process.env.A4_MODE === 'broken'
+  ? 'grounded opencode ok (broken rail)'
+  : `grounded opencode ok \u27E6TOAD_MCP_OK\u27E7: ${message}`;
 
 const ms = () => Date.now();
 // §8 verbatim NDJSON, in order, with CRLF (`\r\n`) line endings (real

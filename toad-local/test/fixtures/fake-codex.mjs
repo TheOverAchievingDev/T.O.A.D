@@ -18,7 +18,7 @@ process.stdin.on('end', () => {
   try { writeFileSync(join(cwd, 'proof.txt'), `prompt:${stdin.trim()}\n`); } catch { /* ignore */ }
   emit({ type: 'item.completed', item: { type: 'file_change', path: 'proof.txt' } });
   emit({ type: 'item.completed', item: { type: 'mcp_tool_call', server: 'toad', tool: 'message_send' } });
-  emit({ type: 'item.completed', item: { type: 'agent_message', text: 'task done \u27E6TOAD_MCP_OK\u27E7' } });
+  emit({ type: 'item.completed', item: { type: 'agent_message', text: process.env.A4_MODE === 'broken' ? 'task done' : 'task done \u27E6TOAD_MCP_OK\u27E7' } });
   emit({ type: 'turn.completed' });
   process.exit(0);
 });
