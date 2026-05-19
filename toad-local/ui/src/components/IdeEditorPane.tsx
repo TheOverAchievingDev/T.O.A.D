@@ -12,6 +12,15 @@ import { Icon } from './Icon';
 import { MarkdownPreview } from './MarkdownPreview';
 import type { DriftRunResult } from '@/hooks/useDrift';
 import type { IdeFileResult, IdeSource } from './ideSource';
+import { isEditableIdeFile, languageForFile, unsupportedReason } from './ideFilePresentation';
+import {
+  diagnosticsForPath,
+  isPythonPath,
+  toMonacoMarkerData,
+  type IdeDiagnostic,
+  type IdeDiagnosticsResult,
+  type IdeFileActionResult,
+} from './ideDiagnostics';
 
 loader.config({ monaco });
 
@@ -69,6 +78,20 @@ interface IdeEditorPaneProps {
    *  body. Caller is responsible for the freshness window (typically
    *  the last 60-90s of agentStreams). */
   recentActivityForPath?: (path: string) => { agentName: string; summary: string; at: string } | null;
+  /** Python-IDE Task 10 — diagnostics for the project/active source.
+   *  Used to render Monaco squiggles on the active tab. Optional so
+   *  non-diagnostic callsites (e.g. Code screen) stay unaffected. */
+  diagnostics?: IdeDiagnostic[];
+  /** Python-IDE Task 10 — navigation request from the Problems tab.
+   *  When its path matches the active model, the editor moves the
+   *  cursor and reveals the target line. requestId de-dupes repeats. */
+  diagnosticNavigationTarget?: { path: string; line: number; column: number; requestId: number } | null;
+  /** Python-IDE Task 10 — run Ruff/Mypy diagnostics for a file (or the
+   *  whole project when path is omitted). Wired by CockpitWithMe. */
+  onRunDiagnosticsRequest?: (path?: string) => Promise<IdeDiagnosticsResult | null>;
+  /** Python-IDE Task 10 — feed fresh diagnostics back to the caller so
+   *  the Problems tab / Cockpit state stays in sync after format/fix. */
+  onDiagnosticsResult?: (result: IdeDiagnosticsResult | null | undefined) => void;
 }
 
 export function IdeEditorPane({
@@ -80,17 +103,24 @@ export function IdeEditorPane({
   onRefreshTreeRequest,
   scopeChipForPath,
   recentActivityForPath,
+  diagnostics,
+  diagnosticNavigationTarget,
+  onRunDiagnosticsRequest,
+  onDiagnosticsResult,
 }: IdeEditorPaneProps) {
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const decorationsCollectionRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
+  const lastNavRequestRef = useRef<number | null>(null);
 
   const [tabs, setTabs] = useState<OpenTab[]>([]);
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null);
   const [pendingExternalOpen, setPendingExternalOpen] = useState<{ sourceKey: string; path: string } | null>(null);
+  const [pythonActionRunning, setPythonActionRunning] = useState(false);
 
   const activeTab = tabs.find((t) => t.path === activeTabPath);
-  const isDirty = activeTab ? activeTab.draftContent !== activeTab.file?.content : false;
-  const isAnyDirty = tabs.some((t) => t.file !== null && t.draftContent !== t.file.content);
+  const activeTabEditable = isEditableIdeFile(activeTab?.file);
+  const isDirty = activeTab && isEditableIdeFile(activeTab.file) ? activeTab.draftContent !== activeTab.file.content : false;
+  const isAnyDirty = tabs.some((t) => isEditableIdeFile(t.file) && t.draftContent !== t.file.content);
 
   const sourceKey = source.kind === 'project' ? 'project' : `task:${source.taskId}`;
 
@@ -99,7 +129,7 @@ export function IdeEditorPane({
   }
 
   function confirmDiscardTabDirty(tab: OpenTab): boolean {
-    const dirty = tab.file !== null && tab.draftContent !== tab.file.content;
+    const dirty = isEditableIdeFile(tab.file) && tab.draftContent !== tab.file.content;
     return !dirty || window.confirm(`Discard unsaved changes in ${tab.path}?`);
   }
 
@@ -133,7 +163,7 @@ export function IdeEditorPane({
         method: 'ide_read_file',
         args: { source, relativePath },
       });
-      setTabs(prev => prev.map(t => t.path === relativePath ? { ...t, file: result, draftContent: result.content, loading: false } : t));
+      setTabs(prev => prev.map(t => t.path === relativePath ? { ...t, file: result, draftContent: isEditableIdeFile(result) ? result.content : '', loading: false } : t));
     } catch (err) {
       setTabs(prev => prev.map(t => t.path === relativePath ? { ...t, fileError: errorMessage(err), loading: false } : t));
     }
@@ -189,24 +219,25 @@ export function IdeEditorPane({
   }
 
   async function saveFile() {
-    if (!actor.teamId || !activeTab || !activeTab.file || !isDirty) return;
+    if (!actor.teamId || !activeTab || !isEditableIdeFile(activeTab.file) || !isDirty) return;
+    const editableFile = activeTab.file;
     const pathToSave = activeTabPath;
-    
+
     setTabs(prev => prev.map(t => t.path === pathToSave ? { ...t, saving: true, saveError: null } : t));
-    
+
     try {
       const result = await callTool<IdeFileResult>({
         actor,
         method: 'ide_write_file',
-        idempotencyKey: createIdempotencyKey(activeTab.file.relativePath),
+        idempotencyKey: createIdempotencyKey(editableFile.relativePath),
         args: {
-          source: activeTab.file.source,
-          relativePath: activeTab.file.relativePath,
+          source: editableFile.source,
+          relativePath: editableFile.relativePath,
           content: activeTab.draftContent,
-          expectedSha256: activeTab.file.sha256,
+          expectedSha256: editableFile.sha256,
         },
       });
-      setTabs(prev => prev.map(t => t.path === pathToSave ? { ...t, file: result, draftContent: result.content, saving: false } : t));
+      setTabs(prev => prev.map(t => t.path === pathToSave ? { ...t, file: result, draftContent: isEditableIdeFile(result) ? result.content : '', saving: false } : t));
       
       if (onRefreshTreeRequest) {
          onRefreshTreeRequest(pathToSave);
@@ -217,8 +248,54 @@ export function IdeEditorPane({
   }
 
   function revertFile() {
-    if (!activeTab || !activeTab.file) return;
-    setTabs(prev => prev.map(t => t.path === activeTabPath ? { ...t, draftContent: t.file!.content, saveError: null } : t));
+    if (!activeTab || !isEditableIdeFile(activeTab.file)) return;
+    setTabs(prev => prev.map(t => t.path === activeTabPath && isEditableIdeFile(t.file)
+      ? { ...t, draftContent: t.file.content, saveError: null }
+      : t));
+  }
+
+  async function runActiveDiagnostics() {
+    if (!activeTabPath || !onRunDiagnosticsRequest || pythonActionRunning) return;
+    setPythonActionRunning(true);
+    try {
+      const result = await onRunDiagnosticsRequest(activeTabPath);
+      onDiagnosticsResult?.(result);
+    } finally {
+      setPythonActionRunning(false);
+    }
+  }
+
+  // Python-IDE Task 10 — Format (Ruff) / Fix (Ruff) for the active
+  // Python file. CockpitWithMe wires diagnostics state through
+  // onDiagnosticsResult; the IDE tools return the refreshed file so
+  // we keep the editor draft + saved content consistent afterwards.
+  async function runActivePythonAction(method: 'ide_format_file' | 'ide_fix_file') {
+    if (!actor.teamId || !activeTab || !isEditableIdeFile(activeTab.file)) return;
+    if (pythonActionRunning || activeTab.saving) return;
+    const pathToUpdate = activeTabPath;
+    const editableFile = activeTab.file;
+    setPythonActionRunning(true);
+    setTabs(prev => prev.map(t => t.path === pathToUpdate ? { ...t, saveError: null } : t));
+    try {
+      const result = await callTool<IdeFileActionResult>({
+        actor,
+        method,
+        idempotencyKey: createIdempotencyKey(`${method}:${editableFile.relativePath}`),
+        args: { source: editableFile.source, relativePath: editableFile.relativePath },
+      });
+      const refreshed = result.file as IdeFileResult | undefined;
+      if (refreshed && isEditableIdeFile(refreshed)) {
+        setTabs(prev => prev.map(t => t.path === pathToUpdate
+          ? { ...t, file: refreshed, draftContent: refreshed.content }
+          : t));
+      }
+      onDiagnosticsResult?.(result);
+      if (onRefreshTreeRequest) onRefreshTreeRequest(pathToUpdate);
+    } catch (err) {
+      setTabs(prev => prev.map(t => t.path === pathToUpdate ? { ...t, saveError: errorMessage(err) } : t));
+    } finally {
+      setPythonActionRunning(false);
+    }
   }
 
   useEffect(() => {
@@ -265,6 +342,49 @@ export function IdeEditorPane({
 
     decorationsCollectionRef.current.set(decorations);
   }, [activeTabPath, driftData, activeTab?.draftContent]);
+
+  // Python-IDE Task 10 — apply Ruff/Mypy diagnostics as Monaco
+  // markers on the active model under a dedicated owner so they
+  // never collide with drift glyphs or built-in language markers.
+  // Recomputes on diagnostics / active tab / saved-content change;
+  // a missing model or no diagnostics clears the owner's markers.
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const model = editor.getModel();
+    if (!model) return;
+    const owner = 'symphony-python-diagnostics';
+    if (!activeTabPath || !diagnostics || diagnostics.length === 0) {
+      monaco.editor.setModelMarkers(model, owner, []);
+      return;
+    }
+    const forFile = diagnosticsForPath(diagnostics, activeTabPath);
+    const markers = forFile.map((d) => toMonacoMarkerData(d, monaco.MarkerSeverity));
+    monaco.editor.setModelMarkers(model, owner, markers);
+    return () => {
+      const m = editor.getModel();
+      if (m) monaco.editor.setModelMarkers(m, owner, []);
+    };
+  }, [activeTabPath, diagnostics, activeTab?.file, activeTab?.editorMode]);
+
+  // Python-IDE Task 10 — react to a Problems-tab navigation request.
+  // Only act once per requestId and only when the target file is the
+  // active model, then move the cursor and centre the target line.
+  useEffect(() => {
+    if (!diagnosticNavigationTarget) return;
+    if (lastNavRequestRef.current === diagnosticNavigationTarget.requestId) return;
+    const editor = editorRef.current;
+    if (!editor) return;
+    if (activeTabPath !== diagnosticNavigationTarget.path) return;
+    lastNavRequestRef.current = diagnosticNavigationTarget.requestId;
+    const position = {
+      lineNumber: Math.max(1, diagnosticNavigationTarget.line),
+      column: Math.max(1, diagnosticNavigationTarget.column),
+    };
+    editor.setPosition(position);
+    editor.revealPositionInCenter(position);
+    editor.focus();
+  }, [diagnosticNavigationTarget, activeTabPath]);
 
   async function loadDiff() {
     if (!actor.teamId || !activeTabPath) return;
@@ -338,7 +458,7 @@ export function IdeEditorPane({
              // Re-load the diff and the file
              const newFile = await callTool<IdeFileResult>({ actor, method: 'ide_read_file', args: { source, relativePath: activeTabPath }});
              const newDiff = await callTool<{diff: string}>({ actor, method: 'ide_get_diff', args: { source, relativePath: activeTabPath }});
-             setTabs(prev => prev.map(t => t.path === activeTabPath ? { ...t, file: newFile, draftContent: newFile.content, diffContent: newDiff.diff || 'No changes.' } : t));
+             setTabs(prev => prev.map(t => t.path === activeTabPath ? { ...t, file: newFile, draftContent: isEditableIdeFile(newFile) ? newFile.content : '', diffContent: newDiff.diff || 'No changes.' } : t));
           } catch(err) {
              window.alert(errorMessage(err));
           }
@@ -377,7 +497,7 @@ export function IdeEditorPane({
       {tabs.length > 0 && (
         <div className="code-tabs" style={{ display: 'flex', overflowX: 'auto', borderBottom: '1px solid var(--border)' }}>
           {tabs.map((tab) => {
-            const isTabDirty = tab.file !== null && tab.draftContent !== tab.file.content;
+            const isTabDirty = isEditableIdeFile(tab.file) && tab.draftContent !== tab.file.content;
             return (
               <div
                 key={tab.path}
@@ -413,7 +533,7 @@ export function IdeEditorPane({
           <div className="code-filebar">
             <div className="code-file-meta">
               <span className="mono">{activeTab.path}</span>
-              {(activeTab.file !== null && activeTab.draftContent !== activeTab.file.content) && <span className="code-dirty-pill">Unsaved</span>}
+              {(isEditableIdeFile(activeTab.file) && activeTab.draftContent !== activeTab.file.content) && <span className="code-dirty-pill">Unsaved</span>}
               {(() => {
                 // Phase 3d Task 13 — "in scope for t_42" chip. Renders
                 // only when a callsite (CodeScreen / CockpitWithMe) has
@@ -443,6 +563,37 @@ export function IdeEditorPane({
                   <button className={`btn btn-sm ${activeTab.editorMode === 'split' ? 'btn-primary' : ''}`} style={{ border: 'none', borderRadius: 0 }} onClick={() => setTabs(prev => prev.map(t => t.path === activeTabPath ? { ...t, editorMode: 'split' } : t))}>Split</button>
                 </div>
               )}
+              {isPythonPath(activeTab.path) && activeTabEditable && (
+                <div className="code-mode-toggles" style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: '4px', overflow: 'hidden' }}>
+                  <button
+                    className="btn btn-sm"
+                    style={{ border: 'none', borderRadius: 0 }}
+                    type="button"
+                    onClick={() => void runActiveDiagnostics()}
+                    disabled={pythonActionRunning || activeTab.saving || !onRunDiagnosticsRequest}
+                  >
+                    {pythonActionRunning ? 'Running' : 'Run diagnostics'}
+                  </button>
+                  <button
+                    className="btn btn-sm"
+                    style={{ border: 'none', borderRadius: 0 }}
+                    type="button"
+                    onClick={() => void runActivePythonAction('ide_format_file')}
+                    disabled={pythonActionRunning || activeTab.saving}
+                  >
+                    Format
+                  </button>
+                  <button
+                    className="btn btn-sm"
+                    style={{ border: 'none', borderRadius: 0 }}
+                    type="button"
+                    onClick={() => void runActivePythonAction('ide_fix_file')}
+                    disabled={pythonActionRunning || activeTab.saving}
+                  >
+                    Fix
+                  </button>
+                </div>
+              )}
               <button
                 className="btn btn-sm"
                 type="button"
@@ -461,7 +612,7 @@ export function IdeEditorPane({
                 className="btn btn-sm"
                 type="button"
                 onClick={revertFile}
-                disabled={!(activeTab.file !== null && activeTab.draftContent !== activeTab.file.content) || activeTab.saving || activeTab.editorMode === 'diff'}
+                disabled={!activeTabEditable || !(isEditableIdeFile(activeTab.file) && activeTab.draftContent !== activeTab.file.content) || activeTab.saving || pythonActionRunning || activeTab.editorMode === 'diff'}
               >
                 Revert
               </button>
@@ -469,7 +620,7 @@ export function IdeEditorPane({
                 className="btn btn-sm btn-primary"
                 type="button"
                 onClick={() => void saveFile()}
-                disabled={!(activeTab.file !== null && activeTab.draftContent !== activeTab.file.content) || activeTab.saving || activeTab.editorMode === 'diff'}
+                disabled={!activeTabEditable || !(isEditableIdeFile(activeTab.file) && activeTab.draftContent !== activeTab.file.content) || activeTab.saving || pythonActionRunning || activeTab.editorMode === 'diff'}
               >
                 <Icon name="check" size={12} />
                 {activeTab.saving ? 'Saving' : 'Save'}
@@ -484,14 +635,30 @@ export function IdeEditorPane({
             {!activeTab.loading && !activeTab.fileError && !activeTab.file && (
               <div className="code-editor-state">Select a file to edit it.</div>
             )}
-            {activeTab.file && (
+            {activeTab.file && !isEditableIdeFile(activeTab.file) && (
+              <div className="code-unsupported-file">
+                <div className="code-unsupported-card">
+                  <Icon name="file" size={22} />
+                  <div>
+                    <h3>{activeTab.path.split('/').pop()}</h3>
+                    <p>{unsupportedReason(activeTab.file)}</p>
+                    <dl>
+                      <div><dt>Path</dt><dd className="mono">{activeTab.path}</dd></div>
+                      <div><dt>Size</dt><dd>{formatBytes(activeTab.file.sizeBytes)}</dd></div>
+                      <div><dt>Type</dt><dd>{activeTab.file.category ?? 'unsupported'}</dd></div>
+                    </dl>
+                  </div>
+                </div>
+              </div>
+            )}
+            {activeTab.file && isEditableIdeFile(activeTab.file) && (
               <div style={{ display: 'flex', width: '100%', height: '100%' }}>
                 {activeTab.editorMode !== 'preview' && (
                   <div style={{ flex: 1, minWidth: 0, height: '100%' }}>
                     <Editor
                       height="100%"
                       value={activeTab.editorMode === 'diff' ? activeTab.diffContent : activeTab.draftContent}
-                      language={activeTab.editorMode === 'diff' ? 'diff' : (activeTab.file.languageHint ?? languageFromPath(activeTab.file.relativePath))}
+                      language={activeTab.editorMode === 'diff' ? 'diff' : languageForFile(activeTab.file.relativePath, activeTab.file.languageHint)}
                       theme="vs-dark"
                       onChange={(value) => {
                         if (activeTab.editorMode === 'code' || activeTab.editorMode === 'split') {
@@ -536,19 +703,6 @@ function createIdempotencyKey(relativePath: string): string {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-function languageFromPath(filePath: string): string {
-  const ext = filePath.split('.').pop()?.toLowerCase();
-  if (ext === 'ts' || ext === 'tsx') return 'typescript';
-  if (ext === 'js' || ext === 'jsx') return 'javascript';
-  if (ext === 'json') return 'json';
-  if (ext === 'md') return 'markdown';
-  if (ext === 'css') return 'css';
-  if (ext === 'html') return 'html';
-  if (ext === 'yml' || ext === 'yaml') return 'yaml';
-  if (ext === 'sql') return 'sql';
-  return 'plaintext';
 }
 
 function formatBytes(bytes: number): string {

@@ -4,6 +4,12 @@ export interface CodeTreeEntry {
   kind: 'file' | 'directory';
   sizeBytes?: number;
   gitStatus?: string;
+  category?: 'text' | 'readonly_text' | 'binary' | 'unsupported';
+  editable?: boolean;
+  previewable?: boolean;
+  binary?: boolean;
+  reason?: string | null;
+  languageHint?: string | null;
 }
 
 export interface CodeTreeNode {
@@ -14,6 +20,12 @@ export interface CodeTreeNode {
   children: CodeTreeNode[];
   depth: number;
   gitStatus?: string;
+  category?: 'text' | 'readonly_text' | 'binary' | 'unsupported';
+  editable?: boolean;
+  previewable?: boolean;
+  binary?: boolean;
+  reason?: string | null;
+  languageHint?: string | null;
 }
 
 export interface CodeTreeFilterResult {
@@ -26,7 +38,7 @@ export function buildCodeTree(entries: CodeTreeEntry[]): CodeTreeNode[] {
   const rootNodes: CodeTreeNode[] = [];
 
   for (const entry of entries) {
-    ensureNode(entry.path, entry.kind, entry.name, entry.sizeBytes, entry.gitStatus);
+    ensureNode(entry);
   }
 
   for (const node of nodeByPath.values()) {
@@ -35,7 +47,7 @@ export function buildCodeTree(entries: CodeTreeEntry[]): CodeTreeNode[] {
       rootNodes.push(node);
       continue;
     }
-    const parent = nodeByPath.get(parentPath) ?? ensureNode(parentPath, 'directory', basename(parentPath));
+    const parent = nodeByPath.get(parentPath) ?? ensureNode({ path: parentPath, kind: 'directory', name: basename(parentPath) });
     if (!parent.children.some((child) => child.path === node.path)) {
       parent.children.push(node);
     }
@@ -44,32 +56,41 @@ export function buildCodeTree(entries: CodeTreeEntry[]): CodeTreeNode[] {
   assignDepthAndSort(rootNodes, 0);
   return rootNodes;
 
-  function ensureNode(path: string, kind: 'file' | 'directory', name: string, sizeBytes?: number, gitStatus?: string): CodeTreeNode {
-    const normalizedPath = normalizeTreePath(path);
+  function ensureNode(entry: CodeTreeEntry): CodeTreeNode {
+    const normalizedPath = normalizeTreePath(entry.path);
     const existing = nodeByPath.get(normalizedPath);
     if (existing) {
-      if (kind === 'directory' && existing.kind !== 'directory') existing.kind = 'directory';
-      if (sizeBytes !== undefined) existing.sizeBytes = sizeBytes;
-      if (gitStatus !== undefined) existing.gitStatus = gitStatus;
+      if (entry.kind === 'directory' && existing.kind !== 'directory') existing.kind = 'directory';
+      applyMetadata(existing, entry);
       return existing;
     }
     const node: CodeTreeNode = {
       path: normalizedPath,
-      name: name || basename(normalizedPath),
-      kind,
-      ...(sizeBytes !== undefined ? { sizeBytes } : {}),
-      ...(gitStatus !== undefined ? { gitStatus } : {}),
+      name: entry.name || basename(normalizedPath),
+      kind: entry.kind,
       children: [],
       depth: 0,
     };
+    applyMetadata(node, entry);
     nodeByPath.set(normalizedPath, node);
 
     const parentPath = parentOf(normalizedPath);
     if (parentPath && !nodeByPath.has(parentPath)) {
-      ensureNode(parentPath, 'directory', basename(parentPath));
+      ensureNode({ path: parentPath, kind: 'directory', name: basename(parentPath) });
     }
     return node;
   }
+}
+
+function applyMetadata(node: CodeTreeNode, entry: CodeTreeEntry): void {
+  if (entry.sizeBytes !== undefined) node.sizeBytes = entry.sizeBytes;
+  if (entry.gitStatus !== undefined) node.gitStatus = entry.gitStatus;
+  if (entry.category !== undefined) node.category = entry.category;
+  if (entry.editable !== undefined) node.editable = entry.editable;
+  if (entry.previewable !== undefined) node.previewable = entry.previewable;
+  if (entry.binary !== undefined) node.binary = entry.binary;
+  if (entry.reason !== undefined) node.reason = entry.reason;
+  if (entry.languageHint !== undefined) node.languageHint = entry.languageHint;
 }
 
 export function flattenVisibleCodeTree(nodes: CodeTreeNode[], expandedPaths: ReadonlySet<string>): CodeTreeNode[] {
