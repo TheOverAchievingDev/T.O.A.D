@@ -100,11 +100,14 @@ fn main() {
 /// Returns the directory holding `scripts/` (i.e. the engine root) and the
 /// resolved script path.
 fn find_orchestrator_script(app: &AppHandle) -> Option<(PathBuf, PathBuf)> {
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        let engine_dir = resource_dir.join("engine");
-        let resource_script = engine_dir.join("scripts").join("dev-api-server.mjs");
-        if resource_script.exists() {
-            return Some((engine_dir, resource_script));
+    #[cfg(not(debug_assertions))]
+    {
+        if let Ok(resource_dir) = app.path().resource_dir() {
+            let engine_dir = resource_dir.join("engine");
+            let resource_script = engine_dir.join("scripts").join("dev-api-server.mjs");
+            if resource_script.exists() {
+                return Some((engine_dir, resource_script));
+            }
         }
     }
 
@@ -153,6 +156,14 @@ fn spawn_api(app: &AppHandle, project_dir: &Path, script: &Path, project_cwd: &s
     // it as "no project loaded" and starts in degraded mode. The UI
     // shows the picker until the user opens a folder.
     cmd.env("TOAD_PROJECT_CWD", project_cwd);
+    // In dev, Vite reads VITE_TOAD_API_TOKEN while the Node sidecar reads
+    // TOAD_API_TOKEN. Bridge the value so `npm run tauri:dev` can be launched
+    // from one shell without ending up with a UI token the sidecar rejects.
+    if std::env::var_os("TOAD_API_TOKEN").is_none() {
+        if let Some(token) = std::env::var_os("VITE_TOAD_API_TOKEN") {
+            cmd.env("TOAD_API_TOKEN", token);
+        }
+    }
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
 

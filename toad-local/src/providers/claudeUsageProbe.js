@@ -174,6 +174,17 @@ function parseUsagePanel(rawText) {
     const resetIn = cleanResetString(resetMatch ? resetMatch[1] : null);
     out[cls.kind] = { label: cls.label, pctUsed, resetIn };
   }
+
+  // Fallback: If Claude just printed a top-level error/limit message without standard headers
+  if (!out.session && !out.weekly && !out.opusWeekly) {
+    const ltext = text.toLowerCase();
+    if (ltext.includes('out of messages') || ltext.includes('limit reached') || ltext.includes('100% used') || ltext.includes('0% left')) {
+      const resetMatch = text.match(/until\s+(.+?)(?:\.|$)/i) || text.match(/resets?\s+(.+?)(?:\.|$)/i);
+      const resetIn = cleanResetString(resetMatch ? resetMatch[1] : null);
+      out.session = { label: 'Usage limit reached', pctUsed: 100, resetIn };
+    }
+  }
+
   return out;
 }
 
