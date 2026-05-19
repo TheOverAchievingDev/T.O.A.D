@@ -29,7 +29,7 @@ import { Icon } from '../Icon';
  * state — Phase 2 keeps the model simple (rendered or not).
  */
 
-export type BottomPanelTab = 'terminal' | 'problems' | 'output' | 'validations';
+export type BottomPanelTab = 'terminal' | 'problems' | 'output' | 'changes' | 'validations';
 
 export interface BottomPanelProps {
   activeTab: BottomPanelTab;
@@ -39,11 +39,13 @@ export interface BottomPanelProps {
   /** Optional counts rendered next to each tab name. e.g. Problems "2". */
   problemCount?: number;
   outputCount?: number;
+  changeCount?: number;
 
   /** Tab-content slots. Undefined falls back to empty-state. */
   terminalSlot?: ReactNode;
   problemsSlot?: ReactNode;
   outputSlot?: ReactNode;
+  changesSlot?: ReactNode;
   validationsSlot?: ReactNode;
 
   /** Optional action handlers in the tabs-row toolbar. */
@@ -64,9 +66,11 @@ export function BottomPanel({
   onClose,
   problemCount,
   outputCount,
+  changeCount,
   terminalSlot,
   problemsSlot,
   outputSlot,
+  changesSlot,
   validationsSlot,
   onNewTerminal,
   onSplitTerminal,
@@ -75,6 +79,7 @@ export function BottomPanel({
   const tabs: TabSpec[] = [
     { id: 'terminal', label: 'Terminal' },
     { id: 'problems', label: 'Problems', count: problemCount },
+    { id: 'changes', label: 'Changes', count: changeCount },
     { id: 'output', label: 'Output', count: outputCount },
     { id: 'validations', label: 'Validations' },
   ];
@@ -85,6 +90,8 @@ export function BottomPanel({
         return terminalSlot ?? <EmptyState label="Terminal" hint="No active terminal session." />;
       case 'problems':
         return problemsSlot ?? <EmptyState label="Problems" hint="No diagnostics from the active editor." />;
+      case 'changes':
+        return changesSlot ?? <EmptyState label="Changes" hint="No working-tree changes vs HEAD." />;
       case 'output':
         return outputSlot ?? <EmptyState label="Output" hint="No recent agent tool calls." />;
       case 'validations':
