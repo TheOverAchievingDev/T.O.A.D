@@ -42,6 +42,7 @@ test('first turn (no session id) uses first-turn argv + prepends systemPrompt; c
   const a = makeAdapter(() => {
     const c = fakeChild([
       JSON.stringify({ type: 'thread.started', thread_id: 'sess-xyz' }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'ok \u27E6TOAD_MCP_OK\u27E7' } }),
       JSON.stringify({ type: 'turn.completed' }),
     ]);
     writes = c.writes;

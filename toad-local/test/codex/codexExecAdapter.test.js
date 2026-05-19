@@ -32,7 +32,7 @@ function makeAdapter(child) {
 test('first sendTurn spawns codex exec with RATIFIED argv + prompt on stdin', async () => {
   const child = fakeChild([
     JSON.stringify({ type: 'thread.started', thread_id: 's1' }),
-    JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'ok' } }),
+    JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'ok \u27E6TOAD_MCP_OK\u27E7' } }),
     JSON.stringify({ type: 'turn.completed' }),
   ]);
   const a = makeAdapter(child);
@@ -46,7 +46,7 @@ test('first sendTurn spawns codex exec with RATIFIED argv + prompt on stdin', as
 
 test('events() yields the normalized stream incl. turn_completed', async () => {
   const child = fakeChild([
-    JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'hi' } }),
+    JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'hi \u27E6TOAD_MCP_OK\u27E7' } }),
     JSON.stringify({ type: 'turn.completed' }),
   ]);
   const a = makeAdapter(child);
@@ -99,7 +99,7 @@ test('turnStartedAt/isTurnInFlight reflect an in-flight turn and clear on comple
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  child.stdin = { write: () => {}, end: () => { release = () => { child.stdout.emit('data', Buffer.from(JSON.stringify({ type: 'turn.completed' }) + '\n')); child.emit('close', 0); }; }, writable: true };
+  child.stdin = { write: () => {}, end: () => { release = () => { child.stdout.emit('data', Buffer.from(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: '\u27E6TOAD_MCP_OK\u27E7' } }) + '\n')); child.stdout.emit('data', Buffer.from(JSON.stringify({ type: 'turn.completed' }) + '\n')); child.emit('close', 0); }; }, writable: true };
   child.kill = () => {};
   const a = new CodexExecAdapter({ runtimeId: 'r1', teamId: 't1', agentId: 'a1', cwd: '/w', systemPrompt: '', spawnImpl: () => child, resolveCliImpl: (n) => n, sessionStore: { get: () => null, set: () => {}, clear: () => {} } });
   assert.equal(a.isTurnInFlight(), false);

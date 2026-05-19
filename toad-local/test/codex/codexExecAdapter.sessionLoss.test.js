@@ -30,7 +30,7 @@ test('resume with an unknown session id clears it, emits codex_session_reset, re
       spawns.push(args);
       call += 1;
       if (call === 1) return fakeChild([], { exitCode: 1, stderr: 'Error: unknown session id: stale-sess' });
-      return fakeChild([JSON.stringify({ type: 'thread.started', thread_id: 'fresh-sess' }), JSON.stringify({ type: 'turn.completed' })]);
+      return fakeChild([JSON.stringify({ type: 'thread.started', thread_id: 'fresh-sess' }), JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'ok \u27E6TOAD_MCP_OK\u27E7' } }), JSON.stringify({ type: 'turn.completed' })]);
     },
     resolveCliImpl: (n) => n, sessionStore: store,
   });

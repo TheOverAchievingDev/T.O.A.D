@@ -2,6 +2,7 @@ import { spawn as defaultSpawn } from 'node:child_process';
 import { RuntimeAdapter, RuntimeAdapterError } from './RuntimeAdapter.js';
 import { resolveCli as defaultResolveCli } from '../foundry/providers/resolveCli.js';
 import { normalizeCodexExecLine } from './codex/normalizeCodexExecLine.js';
+import { buildProbeInstruction, evaluateFirstTurnProbe } from './firstTurnMcpProbe.js';
 
 const UNKNOWN_SESSION_RE = /unknown session|session not found|no (such )?session|session id .* not found|invalid session/i;
 
@@ -91,12 +92,14 @@ export class CodexExecAdapter extends RuntimeAdapter {
   async #runTurn(text) {
     const resumeId = this.sessionStore ? this.sessionStore.get(this.runtimeId) : null;
     const isResume = typeof resumeId === 'string' && resumeId.length > 0;
+    let needsProbe = !isResume;
     // First turn: prepend systemPrompt (codex exec has no append-system-prompt
     // flag; conventions live in AGENTS.md). Resume: prior convo + instructions
     // are on disk — send the message only (grounding §10).
-    const prompt = isResume
+    let prompt = isResume
       ? text
       : (this.systemPrompt.trim().length > 0 ? `${this.systemPrompt}\n\n${text}` : text);
+    if (needsProbe) prompt += `\n\n${buildProbeInstruction()}`;
     // RATIFIED argv: first-turn keeps the Stage-1 sandbox argv. Resume
     // (grounding §10, real codex 0.130) rejects -C/--sandbox (session-stored
     // cwd is authoritative; process is spawned with cwd=this.cwd) but accepts
@@ -128,6 +131,7 @@ export class CodexExecAdapter extends RuntimeAdapter {
         let stderrBuf = '';
         const STDERR_CAP = 8 * 1024;
         const ctx = { runtimeId: this.runtimeId, teamId: this.teamId, agentId: this.agentId };
+        const turnEvents = [];
 
         let timedOut = false;
         const timeoutTimer = setTimeout(() => {
@@ -143,6 +147,7 @@ export class CodexExecAdapter extends RuntimeAdapter {
             const line = lineBuf.slice(0, nl);
             lineBuf = lineBuf.slice(nl + 1);
             for (const ev of normalizeCodexExecLine(line, ctx)) {
+              turnEvents.push(ev);
               this.#push(ev);
               if (ev.type === 'session_started' && typeof ev.sessionId === 'string'
                   && ev.sessionId.length > 0 && this.sessionStore) {
@@ -151,7 +156,11 @@ export class CodexExecAdapter extends RuntimeAdapter {
               if (ev.type === 'turn_completed' && !settled) {
                 settled = true;
                 cleanup();
-                resolve({ accepted: true, responseState: 'accepted_by_runtime', receipt: { written: true, runtimeId: this.runtimeId } });
+                if (needsProbe && !evaluateFirstTurnProbe(turnEvents).satisfied) {
+                  resolve({ accepted: false, responseState: 'turn_failed', receipt: { written: true, runtimeId: this.runtimeId }, __failError: 'TOAD tools unavailable: codex agent could not confirm the toad MCP rail on the first turn' });
+                } else {
+                  resolve({ accepted: true, responseState: 'accepted_by_runtime', receipt: { written: true, runtimeId: this.runtimeId } });
+                }
               }
             }
           }
@@ -200,7 +209,9 @@ export class CodexExecAdapter extends RuntimeAdapter {
         detail: 'codex resume session unknown — restarting as a fresh session' });
       const firstTurnArgs = ['exec', '--json', '--skip-git-repo-check', '-C', this.cwd,
         '--sandbox', 'workspace-write', '-c', 'approval_policy="never"', '-'];
-      const firstTurnPrompt = this.systemPrompt.trim().length > 0 ? `${this.systemPrompt}\n\n${text}` : text;
+      let firstTurnPrompt = this.systemPrompt.trim().length > 0 ? `${this.systemPrompt}\n\n${text}` : text;
+      needsProbe = true;
+      firstTurnPrompt += `\n\n${buildProbeInstruction()}`;
       result = await attempt(firstTurnArgs, firstTurnPrompt);
     }
     if (result.accepted !== true && typeof result.__failError === 'string') {

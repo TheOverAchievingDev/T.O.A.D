@@ -41,7 +41,7 @@ test('END-TO-END PROOF: Codex session agent boots, changes a file, reports an MC
     assert.equal((await readFile(path.join(work, 'proof.txt'), 'utf8')).startsWith('prompt:'), true);
     assert.ok(seen.some((e) => e.type === 'tool_use' && e.toolName === 'file_change'));
     assert.ok(seen.some((e) => e.type === 'tool_use' && e.toolName === 'mcp_tool_call'));
-    assert.ok(seen.some((e) => e.type === 'assistant_text' && e.text === 'task done'));
+    assert.ok(seen.some((e) => e.type === 'assistant_text' && /task done/.test(e.text)));
     assert.ok(seen.some((e) => e.type === 'turn_completed'));
   } finally { await rm(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

@@ -26,6 +26,7 @@ function gatedChild() {
   child.release = () => {
     setImmediate(() => {
       child.stdout.emit('data', Buffer.from(JSON.stringify({ type: 'thread.started', thread_id: 's1' }) + '\n'));
+      child.stdout.emit('data', Buffer.from(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'ok \u27E6TOAD_MCP_OK\u27E7' } }) + '\n'));
       child.stdout.emit('data', Buffer.from(JSON.stringify({ type: 'turn.completed' }) + '\n'));
       child.emit('close', 0);
     });

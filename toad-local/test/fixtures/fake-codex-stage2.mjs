@@ -22,7 +22,7 @@ process.stdin.on('end', () => {
     else { writeFileSync(join(cwd, 'turn1.txt'), 'ALPHA'); }
   } catch { /* ignore */ }
   emit({ type: 'item.completed', item: { id: 'i1', type: 'file_change', changes: [{ path: 'turn1.txt', kind: isResume ? 'update' : 'add' }] } });
-  emit({ type: 'item.completed', item: { id: 'i2', type: 'agent_message', text: isResume ? 'appended' : 'created' } });
+  emit({ type: 'item.completed', item: { id: 'i2', type: 'agent_message', text: isResume ? 'appended' : 'created \u27E6TOAD_MCP_OK\u27E7' } });
   emit({ type: 'turn.completed', usage: { input_tokens: 10, output_tokens: 2 } });
   process.exit(0);
 });
