@@ -16,8 +16,12 @@
 export interface ProjectSwitchDeps {
   /** The registry's projects (only id + path are used here). */
   projects: ReadonlyArray<{ id: string; path: string }>;
-  /** integrations/tauri.ts switchToProjectPath — respawns the sidecar. */
-  switchToProjectPath: (targetPath: string) => Promise<unknown | null>;
+  /**
+   * integrations/tauri.ts switchToProjectPath — respawns the sidecar.
+   * Resolves to a truthy object on success, null/falsy when the
+   * switch was aborted.
+   */
+  switchToProjectPath: (targetPath: string) => Promise<object | null>;
   /** useProjects().setActive. */
   setActive: (id: string) => void;
   /** App.tsx's refreshAfterProjectSwitch (clear-then-repopulate). */
