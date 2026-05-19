@@ -74,3 +74,24 @@ test('fixJsFile rejects non-JS/TS + path traversal', async () => {
     await assert.rejects(fixJsFile({ projectCwd: p.dir, teamId: 't', source: { kind: 'project' }, relativePath: '../x.ts', spawn: fakeSpawn(() => ({})) }), /path outside source root/);
   } finally { p.cleanup(); }
 });
+
+test('runJsDiagnostics: tsc exit 2 (options error) is not presented as clean-ok', async () => {
+  const p = jsProject(true);
+  try {
+    const spawn = fakeSpawn((cmd) => cmd.includes('eslint')
+      ? { stdout: '[]', code: 0 }
+      : { stdout: 'error TS6046: Argument for option ...\n', code: 2 });
+    const r = await runJsDiagnostics({ projectCwd: p.dir, teamId: 't', source: { kind: 'project' }, scope: 'project', spawn });
+    const tsc = r.toolResults.find((t) => t.tool === 'tsc');
+    assert.equal(tsc.available, true);
+    assert.equal(tsc.exitCode, 2);
+    assert.equal(r.diagnostics.filter((d) => d.source === 'tsc').length, 0);
+  } finally { p.cleanup(); }
+});
+
+test('fixJsFile: missing eslint binary rejects (no false changed:true)', async () => {
+  const p = jsProject(false);
+  try {
+    await assert.rejects(fixJsFile({ projectCwd: p.dir, teamId: 't', source: { kind: 'project' }, relativePath: 'src/a.ts', spawn: fakeSpawn(() => ({})) }), /eslint is not installed/i);
+  } finally { p.cleanup(); }
+});

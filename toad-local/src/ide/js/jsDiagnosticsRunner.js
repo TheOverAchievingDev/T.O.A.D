@@ -52,7 +52,7 @@ async function runEslint(rootPath, target, spawn) {
   const result = await runTool({
     tool: 'eslint', command: bin, args: ['--format', 'json', target], cwd: rootPath,
     timeoutMs: DIAGNOSTICS_TIMEOUT_MS, spawn, findingsExitCodes: new Set([0, 1]),
-    isUnavailable: ({ exitCode }) => exitCode !== 0 && exitCode !== 1,
+    isUnavailable: () => false,
   });
   return {
     diagnostics: result.available ? parseEslintJsonDiagnostics(result.stdout, { rootPath }) : [],
@@ -67,7 +67,7 @@ async function runTsc(rootPath, fileTarget, spawn) {
   const args = ['--noEmit', '--pretty', 'false', ...(hasTsconfig ? ['-p', 'tsconfig.json'] : [])];
   const result = await runTool({
     tool: 'tsc', command: bin, args, cwd: rootPath,
-    timeoutMs: DIAGNOSTICS_TIMEOUT_MS, spawn, findingsExitCodes: new Set([0, 1, 2]),
+    timeoutMs: DIAGNOSTICS_TIMEOUT_MS, spawn, findingsExitCodes: new Set([0, 1]),
     isUnavailable: () => false,
   });
   let diagnostics = result.available ? parseTscDiagnostics(result.stdout, { rootPath }) : [];
@@ -91,13 +91,13 @@ export async function formatJsFile({ projectCwd, taskBoard, teamId, source = { k
   return { changed: true, file, diagnostics: [], toolResults: [summarizeToolResult(toolResult)], generatedAt: new Date().toISOString() };
 }
 
-async function eslintFix(rootPath, target, spawn) {
+async function eslintFix(rootPath, target, spawn, timeoutMs) {
   const bin = localBin(rootPath, 'eslint');
-  if (!bin) return missingResult('eslint');
+  if (!bin) throw new Error("ide_fix: eslint is not installed in this project. Install the project's dev dependencies, then retry.");
   const r = await runTool({
     tool: 'eslint', command: bin, args: ['--fix', target], cwd: rootPath,
-    timeoutMs: FILE_ACTION_TIMEOUT_MS, spawn, findingsExitCodes: new Set([0, 1]),
-    isUnavailable: ({ exitCode }) => exitCode !== 0 && exitCode !== 1,
+    timeoutMs, spawn, findingsExitCodes: new Set([0, 1]),
+    isUnavailable: () => false,
   });
   if (!r.available) throw new Error(`ide_fix: ${r.message}`);
   return summarizeToolResult(r);
@@ -106,7 +106,7 @@ async function eslintFix(rootPath, target, spawn) {
 export async function fixJsFile({ projectCwd, taskBoard, teamId, source = { kind: 'project' }, relativePath, spawn = defaultSpawn } = {}) {
   const root = resolveIdeSourceRoot({ projectCwd, taskBoard, teamId, source });
   const target = resolveDiagnosticFileTarget(root.rootPath, relativePath, 'ide_fix_file', JS_EXTS);
-  const toolResult = await eslintFix(root.rootPath, target.commandTarget, spawn);
+  const toolResult = await eslintFix(root.rootPath, target.commandTarget, spawn, FILE_ACTION_TIMEOUT_MS);
   const diags = await runJsDiagnostics({ projectCwd, taskBoard, teamId, source, relativePath: target.relativePath, scope: 'file', spawn });
   const file = readIdeFile({ projectCwd, taskBoard, teamId, source, relativePath: target.relativePath });
   return { changed: true, file, diagnostics: diags.diagnostics, toolResults: [toolResult, ...diags.toolResults], generatedAt: new Date().toISOString() };
@@ -114,7 +114,7 @@ export async function fixJsFile({ projectCwd, taskBoard, teamId, source = { kind
 
 export async function fixJsProject({ projectCwd, taskBoard, teamId, source = { kind: 'project' }, spawn = defaultSpawn } = {}) {
   const root = resolveIdeSourceRoot({ projectCwd, taskBoard, teamId, source });
-  const toolResult = await eslintFix(root.rootPath, '.', spawn);
+  const toolResult = await eslintFix(root.rootPath, '.', spawn, PROJECT_FIX_TIMEOUT_MS);
   const diags = await runJsDiagnostics({ projectCwd, taskBoard, teamId, source, scope: 'project', spawn });
   return { changed: true, diagnostics: diags.diagnostics, toolResults: [toolResult, ...diags.toolResults], generatedAt: new Date().toISOString() };
 }
