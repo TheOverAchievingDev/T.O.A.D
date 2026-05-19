@@ -26,6 +26,18 @@ test('parseEslintJsonDiagnostics: empty / malformed → []', () => {
   assert.deepEqual(parseEslintJsonDiagnostics('{}', { rootPath: process.cwd() }), []);
 });
 
+test('parseEslintJsonDiagnostics: message without ruleId → code null', () => {
+  const rootPath = path.resolve('C:/project');
+  const stdout = JSON.stringify([
+    { filePath: path.join(rootPath, 'a.js'), messages: [
+      { ruleId: null, severity: 1, message: 'Parsing error: x', line: 1, column: 1, endLine: 1, endColumn: 2 },
+    ] },
+  ]);
+  assert.deepEqual(parseEslintJsonDiagnostics(stdout, { rootPath }), [
+    { source: 'eslint', code: null, severity: 'warning', message: 'Parsing error: x', path: 'a.js', line: 1, column: 1, endLine: 1, endColumn: 2, fixable: false },
+  ]);
+});
+
 test('parseTscDiagnostics maps tsc stdout incl. TS code, drops non-matching + out-of-root', () => {
   const rootPath = path.resolve('C:/project');
   const stdout = [
