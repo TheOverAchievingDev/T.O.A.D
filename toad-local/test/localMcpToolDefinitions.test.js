@@ -50,6 +50,10 @@ test('listLocalMcpTools exposes MCP-shaped local command tools', () => {
     'health_status',
     'ide_apply_patch',
     'ide_checkpoint_task',
+    'ide_diagnostics_run',
+    'ide_fix_file',
+    'ide_fix_project',
+    'ide_format_file',
     'ide_get_diff',
     'ide_get_status',
     'ide_read_file',
@@ -113,6 +117,9 @@ test('mutating MCP tools require idempotencyKey in their schemas', () => {
     'review_request',
     'review_decide',
     'ide_write_file',
+    'ide_format_file',
+    'ide_fix_file',
+    'ide_fix_project',
     'ide_checkpoint_task',
     'ide_apply_patch',
     'eas_build',
@@ -164,7 +171,7 @@ test('mutating MCP tools require idempotencyKey in their schemas', () => {
   }
 
   // Read-only tools
-  for (const name of ['task_list', 'agent_status', 'approval_list', 'runtime_events', 'cross_team_messages', 'tool_activity', 'health_status', 'team_list', 'review_list', 'stuck_runtime_list', 'foundry_session_list', 'foundry_session_get', 'project_state_describe', 'ide_tree_list', 'ide_read_file', 'ide_get_status', 'ide_get_diff', 'provider_model_list']) {
+  for (const name of ['task_list', 'agent_status', 'approval_list', 'runtime_events', 'cross_team_messages', 'tool_activity', 'health_status', 'team_list', 'review_list', 'stuck_runtime_list', 'foundry_session_list', 'foundry_session_get', 'project_state_describe', 'ide_tree_list', 'ide_read_file', 'ide_diagnostics_run', 'ide_get_status', 'ide_get_diff', 'provider_model_list']) {
     assert.ok(!getLocalMcpTool(name).inputSchema.required.includes('idempotencyKey'), name);
     assert.equal(getLocalMcpTool(name).annotations.readOnlyHint, true, `${name} should be readOnly`);
   }
@@ -204,6 +211,27 @@ test('ide_write_file MCP tool exposes mutating save schema', () => {
   assert.equal(write.inputSchema.properties.relativePath.minLength, 1);
   assert.equal(write.inputSchema.properties.content.type, 'string');
   assert.equal(write.inputSchema.properties.expectedSha256.minLength, 1);
+});
+
+test('python IDE diagnostics MCP tools expose diagnostics and Ruff action schemas', () => {
+  const diagnostics = getLocalMcpTool('ide_diagnostics_run');
+  assert.equal(diagnostics.annotations.readOnlyHint, true);
+  assert.deepEqual(diagnostics.inputSchema.required, []);
+  assert.equal(diagnostics.inputSchema.properties.scope.enum.includes('file'), true);
+  assert.equal(diagnostics.inputSchema.properties.relativePath.minLength, 1);
+
+  const format = getLocalMcpTool('ide_format_file');
+  assert.equal(format.annotations.readOnlyHint, false);
+  assert.deepEqual(format.inputSchema.required, ['idempotencyKey', 'relativePath']);
+  assert.equal(format.inputSchema.properties.source.properties.kind.enum.includes('task_worktree'), true);
+
+  const fixFile = getLocalMcpTool('ide_fix_file');
+  assert.equal(fixFile.annotations.readOnlyHint, false);
+  assert.deepEqual(fixFile.inputSchema.required, ['idempotencyKey', 'relativePath']);
+
+  const fixProject = getLocalMcpTool('ide_fix_project');
+  assert.equal(fixProject.annotations.readOnlyHint, false);
+  assert.deepEqual(fixProject.inputSchema.required, ['idempotencyKey']);
 });
 
 test('task_create MCP schema exposes task risk contract fields', () => {

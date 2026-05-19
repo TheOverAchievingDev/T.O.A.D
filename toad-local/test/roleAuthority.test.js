@@ -203,24 +203,27 @@ test('roleAuthority: drift_correction_create allowed for architect/lead/human, d
 });
 
 test('roleAuthority: ide tools are operator-only for Slice A and B', () => {
+  const ideTools = [
+    'ide_tree_list',
+    'ide_read_file',
+    'ide_write_file',
+    'ide_diagnostics_run',
+    'ide_format_file',
+    'ide_fix_file',
+    'ide_fix_project',
+  ];
   for (const role of ['lead', 'human']) {
-    assert.doesNotThrow(() => assertRoleCanCallTool({ role, toolName: 'ide_tree_list' }));
-    assert.doesNotThrow(() => assertRoleCanCallTool({ role, toolName: 'ide_read_file' }));
-    assert.doesNotThrow(() => assertRoleCanCallTool({ role, toolName: 'ide_write_file' }));
+    for (const toolName of ideTools) {
+      assert.doesNotThrow(() => assertRoleCanCallTool({ role, toolName }));
+    }
   }
   for (const role of ['architect', 'developer', 'reviewer', 'tester']) {
-    assert.throws(
-      () => assertRoleCanCallTool({ role, toolName: 'ide_tree_list' }),
-      new RegExp(`${role} cannot call ide_tree_list`),
-    );
-    assert.throws(
-      () => assertRoleCanCallTool({ role, toolName: 'ide_read_file' }),
-      new RegExp(`${role} cannot call ide_read_file`),
-    );
-    assert.throws(
-      () => assertRoleCanCallTool({ role, toolName: 'ide_write_file' }),
-      new RegExp(`${role} cannot call ide_write_file`),
-    );
+    for (const toolName of ideTools) {
+      assert.throws(
+        () => assertRoleCanCallTool({ role, toolName }),
+        new RegExp(`${role} cannot call ${toolName}`),
+      );
+    }
   }
 });
 

@@ -74,6 +74,12 @@ import { constitutionMergeGate as defaultConstitutionGate } from '../drift/check
 import { loadProjectSpec } from '../drift/spec/loadProjectSpec.js';
 import { listIdeTree, readIdeFile, writeIdeFile } from '../ide/ideFileTools.js';
 import {
+  fixPythonFile,
+  fixPythonProject,
+  formatPythonFile,
+  runPythonDiagnostics,
+} from '../ide/python/pythonDiagnosticsRunner.js';
+import {
   getIdeStatus,
   getIdeDiff,
   createIdeCheckpoint,
@@ -105,7 +111,7 @@ export class LocalToolFacade {
   #claudeQuotaCache = null;
   #claudeQuotaInflight = null;
 
-  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, installDir = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, foundryStore = null, foundryRuntime = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null, mergeIntegrator = null, remoteMergePolicy = null, riskPolicy = null, settingsStore = null, riskPolicyStore = null, githubFetch = null, githubClientId = null, providerAuthSpawn = null, providerAuthSpawnSync = null, providerAuthReadFile = null, providerAuthStat = null, claudeUsageProbe = null, driftEngine = null, runGit = null, deliveryWorker = null, pluginAuthReadFile = null, pluginAuthStat = null, pluginAuthSpawn = null, pluginAuthSpawnSync = null, pluginResources = null, pluginJobs = null, railwayToolImpls = null, easToolImpls = null, vercelToolImpls = null, constitutionGate = null, onObserverFinding = null }) {
+  constructor({ broker, taskBoard, runtimeRegistry = null, approvalBroker = null, adapters = null, projectCwd = null, installDir = null, readModel = null, launchAgent = null, stopAgent = null, teamConfigRegistry = null, foundryStore = null, foundryRuntime = null, spawnValidation = null, dbPath = null, eventLog = null, worktreeManager = null, diffComputer = null, mergeChecker = null, mergeIntegrator = null, remoteMergePolicy = null, riskPolicy = null, settingsStore = null, riskPolicyStore = null, githubFetch = null, githubClientId = null, providerAuthSpawn = null, providerAuthSpawnSync = null, providerAuthReadFile = null, providerAuthStat = null, claudeUsageProbe = null, driftEngine = null, runGit = null, deliveryWorker = null, pluginAuthReadFile = null, pluginAuthStat = null, pluginAuthSpawn = null, pluginAuthSpawnSync = null, pluginResources = null, pluginJobs = null, railwayToolImpls = null, easToolImpls = null, vercelToolImpls = null, pythonIdeTools = null, constitutionGate = null, onObserverFinding = null }) {
     if (!broker) throw new TypeError('broker is required');
     if (!taskBoard) throw new TypeError('taskBoard is required');
     this.broker = broker;
@@ -201,6 +207,8 @@ export class LocalToolFacade {
       ? easToolImpls : null;
     this.vercelToolImpls = vercelToolImpls && typeof vercelToolImpls === 'object'
       ? vercelToolImpls : null;
+    this.pythonIdeTools = pythonIdeTools && typeof pythonIdeTools === 'object'
+      ? pythonIdeTools : null;
     this.driftEngine = driftEngine && typeof driftEngine.runDrift === 'function' ? driftEngine : null;
     // Not a constructor param — an instance field defaulting null, late
     // injected by dev-api-server.mjs exactly as driftEngine is. Keeps the
@@ -303,6 +311,14 @@ export class LocalToolFacade {
         return this.#ideReadFile(actor, args);
       case COMMANDS.IDE_WRITE_FILE:
         return this.#ideWriteFile(actor, args);
+      case COMMANDS.IDE_DIAGNOSTICS_RUN:
+        return this.#ideDiagnosticsRun(actor, args);
+      case COMMANDS.IDE_FORMAT_FILE:
+        return this.#ideFormatFile(actor, args);
+      case COMMANDS.IDE_FIX_FILE:
+        return this.#ideFixFile(actor, args);
+      case COMMANDS.IDE_FIX_PROJECT:
+        return this.#ideFixProject(actor, args);
       case COMMANDS.IDE_GET_STATUS:
         return this.#ideGetStatus(actor, args);
       case COMMANDS.IDE_GET_DIFF:
@@ -562,6 +578,58 @@ export class LocalToolFacade {
       relativePath: requireString(args.relativePath, 'args.relativePath'),
       content: args.content,
       expectedSha256: typeof args.expectedSha256 === 'string' ? args.expectedSha256 : undefined,
+    });
+  }
+
+  #ideDiagnosticsRun(actor, args) {
+    const impl = typeof this.pythonIdeTools?.runPythonDiagnostics === 'function'
+      ? this.pythonIdeTools.runPythonDiagnostics
+      : runPythonDiagnostics;
+    return impl({
+      projectCwd: this.projectCwd,
+      taskBoard: this.taskBoard,
+      teamId: actor.teamId,
+      source: args.source,
+      relativePath: typeof args.relativePath === 'string' ? args.relativePath : undefined,
+      scope: typeof args.scope === 'string' ? args.scope : undefined,
+    });
+  }
+
+  #ideFormatFile(actor, args) {
+    const impl = typeof this.pythonIdeTools?.formatPythonFile === 'function'
+      ? this.pythonIdeTools.formatPythonFile
+      : formatPythonFile;
+    return impl({
+      projectCwd: this.projectCwd,
+      taskBoard: this.taskBoard,
+      teamId: actor.teamId,
+      source: args.source,
+      relativePath: requireString(args.relativePath, 'args.relativePath'),
+    });
+  }
+
+  #ideFixFile(actor, args) {
+    const impl = typeof this.pythonIdeTools?.fixPythonFile === 'function'
+      ? this.pythonIdeTools.fixPythonFile
+      : fixPythonFile;
+    return impl({
+      projectCwd: this.projectCwd,
+      taskBoard: this.taskBoard,
+      teamId: actor.teamId,
+      source: args.source,
+      relativePath: requireString(args.relativePath, 'args.relativePath'),
+    });
+  }
+
+  #ideFixProject(actor, args) {
+    const impl = typeof this.pythonIdeTools?.fixPythonProject === 'function'
+      ? this.pythonIdeTools.fixPythonProject
+      : fixPythonProject;
+    return impl({
+      projectCwd: this.projectCwd,
+      taskBoard: this.taskBoard,
+      teamId: actor.teamId,
+      source: args.source,
     });
   }
 

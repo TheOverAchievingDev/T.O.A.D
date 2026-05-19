@@ -9,6 +9,10 @@ import {
 } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import {
+  classifyFilePath,
+  classifyReadBuffer,
+} from './fileClassification.js';
 
 const IGNORED_DIR_NAMES = new Set([
   '.git',
@@ -17,21 +21,6 @@ const IGNORED_DIR_NAMES = new Set([
   'build',
   '.vite',
   'coverage',
-]);
-
-const LANGUAGE_HINTS = new Map([
-  ['.js', 'javascript'],
-  ['.jsx', 'javascriptreact'],
-  ['.ts', 'typescript'],
-  ['.tsx', 'typescriptreact'],
-  ['.json', 'json'],
-  ['.md', 'markdown'],
-  ['.css', 'css'],
-  ['.html', 'html'],
-  ['.rs', 'rust'],
-  ['.sql', 'sql'],
-  ['.yml', 'yaml'],
-  ['.yaml', 'yaml'],
 ]);
 
 export function resolveIdeSourceRoot({ projectCwd, taskBoard, teamId, source = { kind: 'project' } }) {
@@ -101,28 +90,33 @@ export function readIdeFile({
   if (!stats.isFile()) {
     throw new Error('ide_read_file: not a file');
   }
-  if (stats.size > maxBytes) {
-    throw new Error('ide_read_file: file too large');
-  }
-
   const bytes = withReadFileErrors(() => readFileSync(resolved.absolutePath));
-  if (isBinaryBuffer(bytes)) {
-    throw new Error('ide_read_file: binary file');
+  const meta = classifyReadBuffer({
+    relativePath: resolved.relativePath,
+    bytes,
+    maxBytes,
+  });
+
+  if (!meta.editable) {
+    return {
+      kind: 'unsupported',
+      source: root.source,
+      relativePath: resolved.relativePath,
+      sizeBytes: stats.size,
+      ...meta,
+    };
   }
 
   const content = bytes.toString('utf8');
-  if (content.includes('\uFFFD')) {
-    throw new Error('ide_read_file: binary file');
-  }
-
   return {
+    kind: 'text',
     source: root.source,
     relativePath: resolved.relativePath,
     content,
     encoding: 'utf8',
     sizeBytes: stats.size,
     sha256: sha256(bytes),
-    languageHint: getLanguageHint(resolved.relativePath),
+    ...meta,
   };
 }
 
@@ -241,11 +235,13 @@ function collectTreeEntries(rootPath, parentRelativePath, state) {
     }
 
     const stats = statSync(childAbsolutePath);
+    const meta = classifyFilePath(normalizedPath);
     state.entries.push({
       path: normalizedPath,
       name: child.name,
       kind: 'file',
       sizeBytes: stats.size,
+      ...meta,
     });
     if (state.entries.length >= state.maxEntries && hasLaterVisibleSibling) {
       state.truncated = true;
@@ -385,14 +381,6 @@ function withWriteFileErrors(operation) {
     }
     throw new Error(`ide_write_file: ${error?.message || 'filesystem error'}`);
   }
-}
-
-function isBinaryBuffer(bytes) {
-  return bytes.includes(0);
-}
-
-function getLanguageHint(relativePath) {
-  return LANGUAGE_HINTS.get(path.extname(relativePath).toLowerCase());
 }
 
 function sha256(bytes) {

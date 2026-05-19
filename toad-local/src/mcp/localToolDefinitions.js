@@ -265,6 +265,46 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
     },
   }),
   makeTool({
+    name: COMMANDS.IDE_DIAGNOSTICS_RUN,
+    title: 'IDE Diagnostics Run',
+    description: 'Read-only. Runs Python Ruff/Mypy diagnostics for the selected project root, task worktree, or Python file.',
+    required: [],
+    properties: {
+      source: IDE_SOURCE_SCHEMA,
+      relativePath: { type: 'string', minLength: 1 },
+      scope: { type: 'string', enum: ['project', 'file'] },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.IDE_FORMAT_FILE,
+    title: 'IDE Format File',
+    description: 'Mutating. Formats a Python file under the selected project root or task worktree with Ruff.',
+    required: ['relativePath'],
+    properties: {
+      source: IDE_SOURCE_SCHEMA,
+      relativePath: { type: 'string', minLength: 1 },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.IDE_FIX_FILE,
+    title: 'IDE Fix File',
+    description: 'Mutating. Applies safe Ruff fixes to a Python file under the selected project root or task worktree.',
+    required: ['relativePath'],
+    properties: {
+      source: IDE_SOURCE_SCHEMA,
+      relativePath: { type: 'string', minLength: 1 },
+    },
+  }),
+  makeTool({
+    name: COMMANDS.IDE_FIX_PROJECT,
+    title: 'IDE Fix Project',
+    description: 'Mutating. Applies safe Ruff fixes across the selected project root or task worktree.',
+    required: [],
+    properties: {
+      source: IDE_SOURCE_SCHEMA,
+    },
+  }),
+  makeTool({
     name: COMMANDS.IDE_GET_STATUS,
     title: 'IDE Get Status',
     description: 'Read-only. Returns git status for files in the selected project root or task worktree.',
