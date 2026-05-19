@@ -37,7 +37,7 @@ export function parseTscDiagnostics(stdout, { rootPath } = {}) {
     if (!match) continue;
     const [, filePath, line, column, level, code, message] = match;
     const diagnosticPath = normalizeDiagnosticPath(filePath, { rootPath });
-    if (!diagnosticPath || diagnosticPath.startsWith('../') || diagnosticPath.startsWith('..\\')) continue;
+    if (!diagnosticPath || diagnosticPath.startsWith('../')) continue;
     out.push(normalizeDiagnostic({
       source: 'tsc',
       code,
