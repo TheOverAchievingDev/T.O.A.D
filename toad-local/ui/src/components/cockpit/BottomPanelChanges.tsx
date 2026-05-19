@@ -24,7 +24,7 @@ export function BottomPanelChanges({
     <div className="bp-changes">
       <div className="bp-problems-head">
         <div className="bp-problems-summary">
-          <span className="bp-changes-count">{files.length} changed</span>
+          {files.length > 0 && <span className="bp-changes-count">{files.length} changed</span>}
           {running && <span className="bp-problems-running">Running</span>}
         </div>
         {onRefresh && (
@@ -51,6 +51,7 @@ export function BottomPanelChanges({
               type="button"
               className="bp-change-row"
               onClick={() => onOpenChange?.(entry.relativePath)}
+              disabled={!onOpenChange}
               title={entry.relativePath}
             >
               <span
