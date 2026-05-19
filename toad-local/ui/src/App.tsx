@@ -55,6 +55,7 @@ import {
   clearSavedProjectPath,
   switchToProjectPath,
 } from '@/integrations/tauri';
+import { switchToRegisteredProjectByPath } from '@/components/projectSwitchAction';
 import { callTool as callToadApi } from '@/api/client';
 import { useDrift } from '@/hooks/useDrift';
 import { useSpanSummaries } from '@/hooks/useSpanSummaries';
@@ -865,8 +866,17 @@ function AppInner() {
         onOpenProjectDropdown={() => setTweak('screen', 'picker')}
         projects={projectRegistry.projects.map((p) => ({ name: p.name, path: p.path }))}
         onSelectProject={(path) => {
-          const found = projectRegistry.projects.find((p) => p.path === path);
-          if (found) projectRegistry.setActive(found.id);
+          void switchToRegisteredProjectByPath(
+            {
+              projects: projectRegistry.projects,
+              switchToProjectPath,
+              setActive: projectRegistry.setActive,
+              refreshAfterProjectSwitch,
+              // eslint-disable-next-line no-console
+              onError: (err) => console.error('switch_project failed:', err),
+            },
+            path,
+          );
         }}
         onAddProject={() => setAddProjectOpen(true)}
         onOpenCommandPalette={togglePalette}
