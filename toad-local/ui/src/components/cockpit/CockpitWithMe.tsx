@@ -27,6 +27,8 @@ import {
   type IdeDiagnosticsResult,
   type IdeDiagnosticToolResult,
 } from '../ideDiagnostics';
+import { BottomPanelChanges } from './BottomPanelChanges';
+import { summarizeChanges, type IdeChangeEntry, type IdeChangesResult } from '../ideChanges';
 
 const TREE_LOAD_TIMEOUT_MS = 10_000;
 
@@ -133,7 +135,7 @@ export function CockpitWithMe({
   // externalOpenRequest carries a monotonic requestId so IdeEditorPane
   // re-fires open even if the same path is clicked twice.
   const [externalOpenRequest, setExternalOpenRequest] = useState<
-    { sourceKey: string; path: string; requestId: number } | null
+    { sourceKey: string; path: string; requestId: number; mode?: 'diff' } | null
   >(null);
   const [openRequestCounter, setOpenRequestCounter] = useState(0);
   const [activePath, setActivePath] = useState<string | null>(null);
@@ -265,6 +267,54 @@ export function CockpitWithMe({
   // operates on the project root (not a task worktree); task-scoped
   // editing remains the Code screen's job.
   const editorSource: IdeSource = useMemo(() => ({ kind: 'project' }), []);
+
+  const [changes, setChanges] = useState<IdeChangeEntry[]>([]);
+  const [changesRunning, setChangesRunning] = useState(false);
+  const [changesError, setChangesError] = useState<string | null>(null);
+
+  const runChangesSummary = useCallback(async () => {
+    if (!treeActor.teamId) return;
+    setChangesRunning(true);
+    try {
+      const result = await callTool<IdeChangesResult>({
+        actor: treeActor,
+        method: 'ide_changes_summary',
+        args: { source: editorSource },
+      });
+      setChanges(result.files ?? []);
+      setChangesError(result.error ?? null);
+    } catch (err) {
+      // Keep the last good list on a transient failure (spec s6).
+      setChangesError(errorMessage(err));
+    } finally {
+      setChangesRunning(false);
+    }
+  }, [editorSource, treeActor]);
+
+  // Poll only while the Changes tab is the active bottom-panel tab;
+  // zero work when the panel is closed or another tab is active.
+  useEffect(() => {
+    if (!showBottomPanel || bottomPanelTab !== 'changes') return;
+    void runChangesSummary();
+    const intervalId = window.setInterval(() => {
+      void runChangesSummary();
+    }, 4000);
+    return () => window.clearInterval(intervalId);
+  }, [showBottomPanel, bottomPanelTab, runChangesSummary, activeProjectId]);
+
+  const handleOpenChange = useCallback((relativePath: string) => {
+    setActivePath(relativePath);
+    setOpenRequestCounter((c) => {
+      const next = c + 1;
+      setExternalOpenRequest({
+        sourceKey: 'project',
+        path: relativePath,
+        requestId: next,
+        mode: 'diff',
+      });
+      return next;
+    });
+  }, []);
 
   const runPythonDiagnostics = useCallback(async (options: { relativePath?: string; scope?: 'project' | 'file' } = {}) => {
     if (!treeActor.teamId) return null;
@@ -552,6 +602,7 @@ export function CockpitWithMe({
             onClose={() => setTweak('showBottomPanel', false)}
             problemCount={problemCount}
             outputCount={Object.values(agentStreams).reduce((n, arr) => n + arr.length, 0)}
+            changeCount={summarizeChanges(changes)}
             problemsSlot={(
               <BottomPanelProblems
                 diagnostics={pythonDiagnostics}
@@ -561,6 +612,15 @@ export function CockpitWithMe({
                 onOpenDiagnostic={handleOpenDiagnostic}
                 onRunDiagnostics={() => void runPythonDiagnostics({ scope: 'project' })}
                 onFixProject={() => void fixPythonProject()}
+              />
+            )}
+            changesSlot={(
+              <BottomPanelChanges
+                files={changes}
+                running={changesRunning}
+                error={changesError}
+                onOpenChange={handleOpenChange}
+                onRefresh={() => void runChangesSummary()}
               />
             )}
             outputSlot={<BottomPanelOutput team={team} agentStreams={agentStreams} />}
