@@ -1,23 +1,6 @@
-import path from 'node:path';
+import { normalizeDiagnostic, normalizeDiagnosticPath } from '../diagnosticNormalize.js';
 
-export function normalizeDiagnosticPath(filePath, { rootPath } = {}) {
-  if (typeof filePath !== 'string' || filePath.length === 0) {
-    return '';
-  }
-
-  const normalizedRoot = typeof rootPath === 'string' && rootPath.length > 0
-    ? path.resolve(rootPath)
-    : null;
-  const absolutePath = path.isAbsolute(filePath)
-    ? path.resolve(filePath)
-    : (normalizedRoot ? path.resolve(normalizedRoot, filePath) : path.normalize(filePath));
-
-  const relativePath = normalizedRoot
-    ? path.relative(normalizedRoot, absolutePath)
-    : filePath;
-
-  return toPosixPath(relativePath || path.basename(absolutePath));
-}
+export { normalizeDiagnosticPath };
 
 export function parseRuffJsonDiagnostics(stdout, { rootPath } = {}) {
   if (typeof stdout !== 'string' || stdout.trim().length === 0) {
@@ -91,30 +74,6 @@ export function parseMypyDiagnostics(stdout, { rootPath } = {}) {
   return diagnostics;
 }
 
-function normalizeDiagnostic(diagnostic) {
-  const line = positiveIntegerOrDefault(diagnostic.line, 1);
-  const column = positiveIntegerOrDefault(diagnostic.column, 1);
-  const endLine = positiveIntegerOrDefault(diagnostic.endLine, line);
-  const endColumn = positiveIntegerOrDefault(diagnostic.endColumn, column + 1);
-  return {
-    source: diagnostic.source,
-    code: diagnostic.code || null,
-    severity: diagnostic.severity || 'warning',
-    message: diagnostic.message || 'Diagnostic',
-    path: diagnostic.path,
-    line,
-    column,
-    endLine,
-    endColumn: endLine === line ? Math.max(endColumn, column + 1) : endColumn,
-    fixable: Boolean(diagnostic.fixable),
-  };
-}
-
-function positiveIntegerOrDefault(value, fallback) {
-  const number = Number(value);
-  return Number.isInteger(number) && number > 0 ? number : fallback;
-}
-
 function severityForRuffCode(code, message) {
   if (typeof code === 'string' && code.startsWith('E9')) {
     return 'error';
@@ -131,6 +90,3 @@ function severityForMypyLevel(level) {
   return 'info';
 }
 
-function toPosixPath(filePath) {
-  return filePath.split(path.sep).join('/');
-}
