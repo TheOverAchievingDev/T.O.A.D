@@ -49,7 +49,7 @@ function makeAdapter(child, opts = {}) {
 test('first sendTurn spawns Gemini headless stream-json with prompt on stdin', async () => {
   const child = fakeChild([
     JSON.stringify({ type: 'init', session_id: 'g1', model: 'gemini-2.5-flash' }),
-    JSON.stringify({ type: 'message', role: 'assistant', content: 'ok', delta: true }),
+    JSON.stringify({ type: 'message', role: 'assistant', content: 'ok \u27E6TOAD_MCP_OK\u27E7', delta: true }),
     JSON.stringify({ type: 'result', status: 'success', stats: { input_tokens: 5, output_tokens: 2 } }),
   ]);
   const adapter = makeAdapter(child);
@@ -109,7 +109,8 @@ test('session id is persisted and resume sends only the follow-up message', asyn
 
 test('events() yields normalized assistant text and turn_completed', async () => {
   const child = fakeChild([
-    JSON.stringify({ type: 'message', role: 'assistant', content: 'hi', delta: true }),
+    JSON.stringify({ type: 'init', session_id: 'gx', model: 'm' }),
+    JSON.stringify({ type: 'message', role: 'assistant', content: 'hi \u27E6TOAD_MCP_OK\u27E7', delta: true }),
     JSON.stringify({ type: 'result', status: 'success', stats: { input_tokens: 2, output_tokens: 1 } }),
   ]);
   const adapter = makeAdapter(child);
@@ -164,6 +165,7 @@ test('stale resume session clears stored id and retries as a fresh first turn', 
   const first = fakeChild([], { exitCode: 1, stderr: 'session not found' });
   const second = fakeChild([
     JSON.stringify({ type: 'init', session_id: 'g-new' }),
+    JSON.stringify({ type: 'message', role: 'assistant', content: 'ok \u27E6TOAD_MCP_OK\u27E7', delta: true }),
     JSON.stringify({ type: 'result', status: 'success', stats: { input_tokens: 1, output_tokens: 1 } }),
   ]);
   const calls = [];

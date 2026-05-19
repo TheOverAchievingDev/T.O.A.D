@@ -3,6 +3,7 @@ import { randomUUID as defaultRandomUUID } from 'node:crypto';
 import { RuntimeAdapter, RuntimeAdapterError } from './RuntimeAdapter.js';
 import { resolveCli as defaultResolveCli } from '../foundry/providers/resolveCli.js';
 import { normalizeGeminiStreamLine } from './gemini/normalizeGeminiStreamLine.js';
+import { buildProbeInstruction, evaluateFirstTurnProbe } from './firstTurnMcpProbe.js';
 
 const GEMINI_PROMPT_ARG = 'Follow the instructions above.';
 const UNKNOWN_SESSION_RE = /unknown session|session not found|no (such )?session|session id .* not found|invalid session/i;
@@ -80,10 +81,12 @@ export class GeminiExecAdapter extends RuntimeAdapter {
     // the `init` event echoes it back and we store it as confirmation only.
     const storedId = this.sessionStore ? this.sessionStore.get(this.runtimeId) : null;
     const isResume = typeof storedId === 'string' && storedId.length > 0;
-    const stdinPrompt = isResume
+    let needsProbe = !isResume;
+    let stdinPrompt = isResume
       ? text
       : (this.systemPrompt.trim().length > 0 ? `${this.systemPrompt}\n\n${text}` : text);
-    let result = await this.#attemptTurn({ isResume, stdinPrompt });
+    if (needsProbe) stdinPrompt += `\n\n${buildProbeInstruction()}`;
+    let result = await this.#attemptTurn({ isResume, stdinPrompt, needsProbe });
     if (result.accepted !== true && isResume && UNKNOWN_SESSION_RE.test(result.__failError || '')) {
       if (this.sessionStore) this.sessionStore.clear(this.runtimeId);
       this.#push({
@@ -94,8 +97,10 @@ export class GeminiExecAdapter extends RuntimeAdapter {
         note: 'gemini_session_reset',
         detail: 'gemini resume session unknown - restarting as a fresh session',
       });
-      const firstTurnPrompt = this.systemPrompt.trim().length > 0 ? `${this.systemPrompt}\n\n${text}` : text;
-      result = await this.#attemptTurn({ isResume: false, stdinPrompt: firstTurnPrompt });
+      let firstTurnPrompt = this.systemPrompt.trim().length > 0 ? `${this.systemPrompt}\n\n${text}` : text;
+      needsProbe = true;
+      firstTurnPrompt += `\n\n${buildProbeInstruction()}`;
+      result = await this.#attemptTurn({ isResume: false, stdinPrompt: firstTurnPrompt, needsProbe: true });
     }
     if (result.accepted !== true && typeof result.__failError === 'string' && result.__pushedFailure !== true) {
       this.#push({ runtimeId: this.runtimeId, teamId: this.teamId, agentId: this.agentId, type: 'turn_failed', error: result.__failError });
@@ -103,7 +108,7 @@ export class GeminiExecAdapter extends RuntimeAdapter {
     return result;
   }
 
-  async #attemptTurn({ isResume, stdinPrompt }) {
+  async #attemptTurn({ isResume, stdinPrompt, needsProbe }) {
     // §7 RATIFIED argv. First turn: `--session-id <generated-uuid>` (a
     // caller-controlled UUID so the session is identifiable; the `init`
     // event echoes it back). Resume turn: `--resume latest` — the literal
@@ -143,6 +148,7 @@ export class GeminiExecAdapter extends RuntimeAdapter {
       let stderrBuf = '';
       const STDERR_CAP = 8 * 1024;
       const ctx = { runtimeId: this.runtimeId, teamId: this.teamId, agentId: this.agentId };
+      const turnEvents = [];
       let timedOut = false;
 
       const timeoutTimer = setTimeout(() => {
@@ -172,6 +178,7 @@ export class GeminiExecAdapter extends RuntimeAdapter {
           const line = lineBuf.slice(0, nl);
           lineBuf = lineBuf.slice(nl + 1);
           for (const ev of normalizeGeminiStreamLine(line, ctx)) {
+            turnEvents.push(ev);
             this.#push(ev);
             if (ev.type === 'session_started' && typeof ev.sessionId === 'string'
                 && ev.sessionId.length > 0 && this.sessionStore) {
@@ -181,7 +188,11 @@ export class GeminiExecAdapter extends RuntimeAdapter {
               finish({ accepted: false, responseState: 'turn_failed', receipt: { written: true, runtimeId: this.runtimeId }, __failError: ev.error, __pushedFailure: true });
             }
             if (ev.type === 'turn_completed') {
-              finish({ accepted: true, responseState: 'accepted_by_runtime', receipt: { written: true, runtimeId: this.runtimeId } });
+              if (needsProbe && !evaluateFirstTurnProbe(turnEvents).satisfied) {
+                finish({ accepted: false, responseState: 'turn_failed', receipt: { written: true, runtimeId: this.runtimeId }, __failError: 'TOAD tools unavailable: gemini agent could not confirm the toad MCP rail on the first turn' });
+              } else {
+                finish({ accepted: true, responseState: 'accepted_by_runtime', receipt: { written: true, runtimeId: this.runtimeId } });
+              }
             }
           }
         }

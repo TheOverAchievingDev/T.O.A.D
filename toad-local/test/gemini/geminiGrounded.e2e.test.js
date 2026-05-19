@@ -114,7 +114,7 @@ test('GROUNDED E2E PROOF: gemini 0.42.0 §8 turn boots, echoes --session-id, sid
       'the echoed session id must be captured into the sessionStore as confirmation');
 
     // assistant_text carries the grounded reply text.
-    assert.equal(seen[iText].text, 'grounded gemini ok');
+    assert.ok(seen[iText].text.includes('grounded gemini ok'));
 
     // Real on-disk side effect performed by the stand-in (codex-precedent
     // fixture depth).
@@ -130,7 +130,7 @@ test('GROUNDED E2E PROOF: gemini 0.42.0 §8 turn boots, echoes --session-id, sid
     assert.equal(inbox.length, 1, 'exactly one broker reply must be delivered from the grounded turn');
     assert.equal(inbox[0].kind, 'reply');
     assert.equal(inbox[0].from.id, 'dev-1');
-    assert.equal(inbox[0].text, 'grounded gemini ok');
+    assert.ok(inbox[0].text.includes('grounded gemini ok'));
     assert.equal(inbox[0].metadata.runtimeId, 'r1');
 
     // The ingestor audit-logged every surfaced grounded event.

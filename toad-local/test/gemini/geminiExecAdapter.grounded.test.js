@@ -68,7 +68,7 @@ function makeAdapter(child, opts = {}) {
 test('first-turn argv === §7 RATIFIED array and carries --session-id <generated-uuid>', async () => {
   const child = fakeChild([
     JSON.stringify({ type: 'init', session_id: DETERMINISTIC_UUID, model: 'auto-gemini-3' }),
-    JSON.stringify({ type: 'message', role: 'assistant', content: 'ok', delta: true }),
+    JSON.stringify({ type: 'message', role: 'assistant', content: 'ok \u27E6TOAD_MCP_OK\u27E7', delta: true }),
     JSON.stringify({ type: 'result', status: 'success', stats: { input_tokens: 5, output_tokens: 2 } }),
   ]);
   const adapter = makeAdapter(child, { uuidImpl: () => DETERMINISTIC_UUID });
@@ -96,6 +96,7 @@ test('first-turn argv === §7 RATIFIED array and carries --session-id <generated
 test('first-turn --session-id value is a generated UUID-shaped string when no uuidImpl injected', async () => {
   const child = fakeChild([
     JSON.stringify({ type: 'init', session_id: 'whatever', model: 'm' }),
+    JSON.stringify({ type: 'message', role: 'assistant', content: 'ok \u27E6TOAD_MCP_OK\u27E7', delta: true }),
     JSON.stringify({ type: 'result', status: 'success', stats: {} }),
   ]);
   const adapter = makeAdapter(child); // default crypto.randomUUID
@@ -159,7 +160,7 @@ test('sendTurn resolves on result:success (normalized turn_completed); events() 
     'Ripgrep is not available. Falling back to GrepTool.',
     JSON.stringify({ type: 'init', session_id: DETERMINISTIC_UUID, model: 'auto-gemini-3' }),
     JSON.stringify({ type: 'message', role: 'user', content: 'do the task' }),
-    JSON.stringify({ type: 'message', role: 'assistant', content: 'hi', delta: true }),
+    JSON.stringify({ type: 'message', role: 'assistant', content: 'hi \u27E6TOAD_MCP_OK\u27E7', delta: true }),
     JSON.stringify({ type: 'result', status: 'success', stats: { input_tokens: 2, output_tokens: 1 } }),
   ]);
   const adapter = makeAdapter(child, { uuidImpl: () => DETERMINISTIC_UUID });

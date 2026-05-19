@@ -54,7 +54,7 @@ process.stdin.on('end', () => {
     type: 'message',
     timestamp: iso(),
     role: 'assistant',
-    content: 'grounded gemini ok',
+    content: 'grounded gemini ok \u27E6TOAD_MCP_OK\u27E7',
     delta: true,
   });
   emit({
