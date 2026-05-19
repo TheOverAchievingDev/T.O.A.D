@@ -49,6 +49,7 @@ test('listLocalMcpTools exposes MCP-shaped local command tools', () => {
     'github_status',
     'health_status',
     'ide_apply_patch',
+    'ide_changes_summary',
     'ide_checkpoint_task',
     'ide_diagnostics_run',
     'ide_fix_file',

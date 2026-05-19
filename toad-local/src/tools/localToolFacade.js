@@ -81,6 +81,7 @@ import {
   applyIdePatch,
   searchIdeFiles,
 } from '../ide/ideGitTools.js';
+import { getIdeChangesSummary } from '../ide/ideChangesSummary.js';
 import { computeContextUsage } from '../runtime/contextUsage/index.js';
 
 // P3c-1 span-summary transport: the honest "monitor not running" status
@@ -319,6 +320,8 @@ export class LocalToolFacade {
         return this.#ideGetStatus(actor, args);
       case COMMANDS.IDE_GET_DIFF:
         return this.#ideGetDiff(actor, args);
+      case COMMANDS.IDE_CHANGES_SUMMARY:
+        return this.#ideChangesSummary(actor, args);
       case COMMANDS.IDE_CHECKPOINT_TASK:
         return this.#ideCheckpointTask(actor, args);
       case COMMANDS.IDE_APPLY_PATCH:
@@ -631,6 +634,15 @@ export class LocalToolFacade {
       teamId: actor.teamId,
       source: args.source,
       relativePath: args.relativePath,
+    });
+  }
+
+  #ideChangesSummary(actor, args) {
+    return getIdeChangesSummary({
+      projectCwd: this.projectCwd,
+      taskBoard: this.taskBoard,
+      teamId: actor.teamId,
+      source: args.source,
     });
   }
 

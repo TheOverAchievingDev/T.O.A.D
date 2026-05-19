@@ -25,6 +25,7 @@ export const COMMANDS = Object.freeze({
   IDE_FIX_PROJECT: 'ide_fix_project',
   IDE_GET_STATUS: 'ide_get_status',
   IDE_GET_DIFF: 'ide_get_diff',
+  IDE_CHANGES_SUMMARY: 'ide_changes_summary',
   IDE_CHECKPOINT_TASK: 'ide_checkpoint_task',
   IDE_APPLY_PATCH: 'ide_apply_patch',
   IDE_SEARCH_FILES: 'ide_search_files',

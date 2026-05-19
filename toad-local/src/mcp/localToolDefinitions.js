@@ -324,6 +324,15 @@ const LOCAL_MCP_TOOL_DEFINITIONS = Object.freeze([
     },
   }),
   makeTool({
+    name: COMMANDS.IDE_CHANGES_SUMMARY,
+    title: 'IDE Changes Summary',
+    description: 'Read-only. Returns the working-tree change set vs HEAD with per-file added/deleted line counts for the selected project root or task worktree.',
+    required: [],
+    properties: {
+      source: IDE_SOURCE_SCHEMA,
+    },
+  }),
+  makeTool({
     name: COMMANDS.IDE_SEARCH_FILES,
     title: 'IDE Search Files',
     description: 'Read-only. Searches for text across files in a project or task worktree. Uses case-insensitive regex matching natively through git grep.',
