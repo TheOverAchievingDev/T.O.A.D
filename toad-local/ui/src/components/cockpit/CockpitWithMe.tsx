@@ -274,6 +274,8 @@ export function CockpitWithMe({
 
   const runChangesSummary = useCallback(async () => {
     if (!treeActor.teamId) return;
+    // No in-flight guard: matches runPythonDiagnostics; the 4s interval
+    // makes request overlap unlikely and last-write-wins is acceptable.
     setChangesRunning(true);
     try {
       const result = await callTool<IdeChangesResult>({
@@ -284,7 +286,7 @@ export function CockpitWithMe({
       setChanges(result.files ?? []);
       setChangesError(result.error ?? null);
     } catch (err) {
-      // Keep the last good list on a transient failure (spec s6).
+      // Keep the last good list on a transient failure (per spec).
       setChangesError(errorMessage(err));
     } finally {
       setChangesRunning(false);
@@ -293,6 +295,9 @@ export function CockpitWithMe({
 
   // Poll only while the Changes tab is the active bottom-panel tab;
   // zero work when the panel is closed or another tab is active.
+  // activeProjectId is an intentional dep: a project switch can occur
+  // with the same team/actor, so it must reset the poll (mirrors the
+  // tree-load effect's [treeActor, ..., activeProjectId] dep pattern).
   useEffect(() => {
     if (!showBottomPanel || bottomPanelTab !== 'changes') return;
     void runChangesSummary();
