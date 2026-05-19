@@ -16,7 +16,6 @@ import { isEditableIdeFile, languageForFile, unsupportedReason } from './ideFile
 import {
   diagnosticsForPath,
   isDiagnosablePath,
-  isPythonPath,
   toMonacoMarkerData,
   type IdeDiagnostic,
   type IdeDiagnosticsResult,
