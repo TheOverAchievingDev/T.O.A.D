@@ -15,6 +15,7 @@ import type { IdeFileResult, IdeSource } from './ideSource';
 import { isEditableIdeFile, languageForFile, unsupportedReason } from './ideFilePresentation';
 import {
   diagnosticsForPath,
+  isDiagnosablePath,
   isPythonPath,
   toMonacoMarkerData,
   type IdeDiagnostic,
@@ -563,7 +564,7 @@ export function IdeEditorPane({
                   <button className={`btn btn-sm ${activeTab.editorMode === 'split' ? 'btn-primary' : ''}`} style={{ border: 'none', borderRadius: 0 }} onClick={() => setTabs(prev => prev.map(t => t.path === activeTabPath ? { ...t, editorMode: 'split' } : t))}>Split</button>
                 </div>
               )}
-              {isPythonPath(activeTab.path) && activeTabEditable && (
+              {isDiagnosablePath(activeTab.path) && activeTabEditable && (
                 <div className="code-mode-toggles" style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: '4px', overflow: 'hidden' }}>
                   <button
                     className="btn btn-sm"

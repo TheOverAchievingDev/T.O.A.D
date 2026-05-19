@@ -37,6 +37,20 @@ export function isPythonPath(filePath: string): boolean {
   return normalizeDiagnosticPath(filePath).toLowerCase().endsWith('.py');
 }
 
+const JS_TS_RE = /\.(jsx?|tsx?|cjs|mjs|cts|mts)$/i;
+
+export function isDiagnosablePath(filePath: string): boolean {
+  const p = normalizeDiagnosticPath(filePath).toLowerCase();
+  return p.endsWith('.py') || JS_TS_RE.test(p);
+}
+
+export function languageForDiagnostics(filePath: string): 'python' | 'jsts' | null {
+  const p = normalizeDiagnosticPath(filePath).toLowerCase();
+  if (p.endsWith('.py')) return 'python';
+  if (JS_TS_RE.test(p)) return 'jsts';
+  return null;
+}
+
 export function normalizeDiagnosticPath(filePath: string): string {
   return String(filePath || '').replace(/\\/g, '/').replace(/^\.\/+/, '');
 }
