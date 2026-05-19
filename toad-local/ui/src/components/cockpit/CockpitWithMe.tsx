@@ -206,7 +206,7 @@ export function CockpitWithMe({
       window.clearTimeout(timeoutId);
       controller.abort();
     };
-  }, [treeActor, treeReloadNonce]);
+  }, [treeActor, treeReloadNonce, team]);
 
   // Build the hierarchical tree from the flat entries the MCP method
   // returns. Memoized so re-renders don't rebuild unless entries change.

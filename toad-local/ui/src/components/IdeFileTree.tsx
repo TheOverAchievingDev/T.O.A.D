@@ -31,11 +31,13 @@ export function IdeFileTree({
             }
             onOpenFile(node.path);
           }}
-          title={node.path}
+          title={node.reason ? `${node.path} - ${node.reason}` : node.path}
           style={{ '--depth': node.depth } as CSSProperties}
         >
           <span className="code-tree-disclosure" aria-hidden="true">
-            {node.kind === 'directory' ? (expandedPaths.has(node.path) ? 'v' : '>') : ''}
+            {node.kind === 'directory' ? (
+              <Icon name={expandedPaths.has(node.path) ? 'chevronDown' : 'chevronRight'} size={14} />
+            ) : null}
           </span>
           <span className="code-tree-icon">
             <Icon name={node.kind === 'directory' ? 'folder' : 'file'} size={13} />
@@ -44,6 +46,14 @@ export function IdeFileTree({
           {node.gitStatus && (
             <span className={`code-tree-git-badge status-${node.gitStatus.replace(/\?/g, 'u').toLowerCase()}`}>
               {node.gitStatus}
+            </span>
+          )}
+          {node.kind === 'file' && node.editable === false && (
+            <span
+              className={`code-tree-kind-badge ${node.category ?? 'unsupported'}`}
+              title={node.reason ?? 'Not editable in Symphony'}
+            >
+              {node.category === 'readonly_text' ? 'RO' : 'BIN'}
             </span>
           )}
           {node.kind === 'file' && node.sizeBytes !== undefined && (
