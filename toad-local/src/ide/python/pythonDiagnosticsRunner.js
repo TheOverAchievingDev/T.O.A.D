@@ -1,11 +1,17 @@
 import { spawn as defaultSpawn } from 'node:child_process';
-import { existsSync, realpathSync, statSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { readIdeFile, resolveIdeSourceRoot } from '../ideFileTools.js';
 import {
   parseMypyDiagnostics,
   parseRuffJsonDiagnostics,
 } from './pythonDiagnosticParsers.js';
+import {
+  runTool,
+  summarizeToolResult,
+  compareDiagnostics,
+  resolveDiagnosticFileTarget,
+} from '../diagnosticsToolRunner.js';
 
 const DIAGNOSTICS_TIMEOUT_MS = 30_000;
 const FILE_ACTION_TIMEOUT_MS = 15_000;
@@ -49,14 +55,18 @@ export async function formatPythonFile({
   const root = resolveIdeSourceRoot({ projectCwd, taskBoard, teamId, source });
   const target = resolvePythonFileTarget(root.rootPath, relativePath, 'ide_format_file');
   const pythonCommand = resolvePythonCommand(root.rootPath);
+  const tool = 'ruff';
   const toolResult = await runTool({
-    tool: 'ruff',
+    tool,
     command: pythonCommand,
     args: ['-m', 'ruff', 'format', target.commandTarget],
     cwd: root.rootPath,
     timeoutMs: FILE_ACTION_TIMEOUT_MS,
     spawn,
     findingsExitCodes: new Set([0]),
+    isUnavailable: ({ stderr }) => isPythonModuleMissing(stderr, tool),
+    buildMessage: ({ tool: t, available, ok, exitCode, stdout, stderr }) =>
+      toolMessage({ tool: t, available, ok, exitCode, stdout, stderr }),
   });
   assertToolSucceeded(toolResult, 'ide_format_file');
 
@@ -81,14 +91,18 @@ export async function fixPythonFile({
   const root = resolveIdeSourceRoot({ projectCwd, taskBoard, teamId, source });
   const target = resolvePythonFileTarget(root.rootPath, relativePath, 'ide_fix_file');
   const pythonCommand = resolvePythonCommand(root.rootPath);
+  const tool = 'ruff';
   const toolResult = await runTool({
-    tool: 'ruff',
+    tool,
     command: pythonCommand,
     args: ['-m', 'ruff', 'check', '--fix', target.commandTarget],
     cwd: root.rootPath,
     timeoutMs: FILE_ACTION_TIMEOUT_MS,
     spawn,
     findingsExitCodes: new Set([0, 1]),
+    isUnavailable: ({ stderr }) => isPythonModuleMissing(stderr, tool),
+    buildMessage: ({ tool: t, available, ok, exitCode, stdout, stderr }) =>
+      toolMessage({ tool: t, available, ok, exitCode, stdout, stderr }),
   });
   assertToolSucceeded(toolResult, 'ide_fix_file');
 
@@ -120,14 +134,18 @@ export async function fixPythonProject({
 } = {}) {
   const root = resolveIdeSourceRoot({ projectCwd, taskBoard, teamId, source });
   const pythonCommand = resolvePythonCommand(root.rootPath);
+  const tool = 'ruff';
   const toolResult = await runTool({
-    tool: 'ruff',
+    tool,
     command: pythonCommand,
     args: ['-m', 'ruff', 'check', '--fix', '.'],
     cwd: root.rootPath,
     timeoutMs: PROJECT_FIX_TIMEOUT_MS,
     spawn,
     findingsExitCodes: new Set([0, 1]),
+    isUnavailable: ({ stderr }) => isPythonModuleMissing(stderr, tool),
+    buildMessage: ({ tool: t, available, ok, exitCode, stdout, stderr }) =>
+      toolMessage({ tool: t, available, ok, exitCode, stdout, stderr }),
   });
   assertToolSucceeded(toolResult, 'ide_fix_project');
 
@@ -142,14 +160,18 @@ export async function fixPythonProject({
 
 async function runRuffDiagnostics({ rootPath, targetPath, spawn }) {
   const pythonCommand = resolvePythonCommand(rootPath);
+  const tool = 'ruff';
   const result = await runTool({
-    tool: 'ruff',
+    tool,
     command: pythonCommand,
     args: ['-m', 'ruff', 'check', '--output-format', 'json', targetPath],
     cwd: rootPath,
     timeoutMs: DIAGNOSTICS_TIMEOUT_MS,
     spawn,
     findingsExitCodes: new Set([0, 1]),
+    isUnavailable: ({ stderr }) => isPythonModuleMissing(stderr, tool),
+    buildMessage: ({ tool: t, available, ok, exitCode, stdout, stderr }) =>
+      toolMessage({ tool: t, available, ok, exitCode, stdout, stderr }),
   });
   return {
     diagnostics: result.available ? parseRuffJsonDiagnostics(result.stdout, { rootPath }) : [],
@@ -159,14 +181,18 @@ async function runRuffDiagnostics({ rootPath, targetPath, spawn }) {
 
 async function runMypyDiagnostics({ rootPath, targetPath, spawn }) {
   const pythonCommand = resolvePythonCommand(rootPath);
+  const tool = 'mypy';
   const result = await runTool({
-    tool: 'mypy',
+    tool,
     command: pythonCommand,
     args: ['-m', 'mypy', targetPath],
     cwd: rootPath,
     timeoutMs: DIAGNOSTICS_TIMEOUT_MS,
     spawn,
     findingsExitCodes: new Set([0, 1]),
+    isUnavailable: ({ stderr }) => isPythonModuleMissing(stderr, tool),
+    buildMessage: ({ tool: t, available, ok, exitCode, stdout, stderr }) =>
+      toolMessage({ tool: t, available, ok, exitCode, stdout, stderr }),
   });
   return {
     diagnostics: result.available ? parseMypyDiagnostics(result.stdout, { rootPath }) : [],
@@ -202,120 +228,7 @@ function resolvePythonCommand(rootPath) {
 }
 
 function resolvePythonFileTarget(rootPath, relativePath, commandName) {
-  if (typeof relativePath !== 'string' || relativePath.length === 0 || path.isAbsolute(relativePath)) {
-    throw new Error(`${commandName}: path outside source root`);
-  }
-  const absolutePath = path.resolve(rootPath, relativePath);
-  const relativeToRoot = path.relative(rootPath, absolutePath);
-  if (isOutsideRoot(relativeToRoot)) {
-    throw new Error(`${commandName}: path outside source root`);
-  }
-  if (!relativeToRoot.toLowerCase().endsWith('.py')) {
-    throw new Error(`${commandName}: unsupported file type`);
-  }
-  let stats;
-  let realRootPath;
-  let realTargetPath;
-  try {
-    stats = statSync(absolutePath);
-    realRootPath = realpathSync(rootPath);
-    realTargetPath = realpathSync(absolutePath);
-  } catch (error) {
-    throw new Error(`${commandName}: ${error?.message || 'filesystem error'}`);
-  }
-  const realRelativeToRoot = path.relative(realRootPath, realTargetPath);
-  if (isOutsideRoot(realRelativeToRoot)) {
-    throw new Error(`${commandName}: path outside source root`);
-  }
-  if (!stats.isFile()) {
-    throw new Error(`${commandName}: not a file`);
-  }
-  return {
-    absolutePath: realTargetPath,
-    relativePath: toPosixPath(relativeToRoot),
-    commandTarget: toPosixPath(relativeToRoot),
-  };
-}
-
-async function runTool({ tool, command, args, cwd, timeoutMs, spawn, findingsExitCodes }) {
-  const startedAt = Date.now();
-  return new Promise((resolve) => {
-    let stdout = '';
-    let stderr = '';
-    let settled = false;
-    let timedOut = false;
-    let child;
-
-    const finish = (result) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({
-        tool,
-        command,
-        args,
-        cwd,
-        stdout,
-        stderr,
-        durationMs: Date.now() - startedAt,
-        ...result,
-      });
-    };
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try {
-        child?.kill?.('SIGTERM');
-      } catch {}
-      finish({
-        available: true,
-        exitCode: null,
-        timedOut: true,
-        ok: false,
-        message: `${tool} timed out after ${timeoutMs}ms`,
-      });
-    }, timeoutMs);
-
-    try {
-      child = spawn(command, args, { cwd, shell: false, windowsHide: true });
-    } catch (error) {
-      finish({
-        available: false,
-        exitCode: null,
-        timedOut: false,
-        ok: false,
-        message: `${tool} unavailable: ${error?.message || 'spawn failed'}`,
-      });
-      return;
-    }
-
-    child.stdout?.on('data', (chunk) => {
-      stdout += chunk.toString();
-    });
-    child.stderr?.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-    child.on('error', (error) => {
-      finish({
-        available: false,
-        exitCode: null,
-        timedOut,
-        ok: false,
-        message: `${tool} unavailable: ${error?.message || 'spawn failed'}`,
-      });
-    });
-    child.on('close', (exitCode) => {
-      const available = !isPythonModuleMissing(stderr, tool);
-      const ok = available && findingsExitCodes.has(exitCode);
-      finish({
-        available,
-        exitCode,
-        timedOut,
-        ok,
-        message: toolMessage({ tool, available, ok, exitCode, stdout, stderr }),
-      });
-    });
-  });
+  return resolveDiagnosticFileTarget(rootPath, relativePath, commandName, ['.py']);
 }
 
 function assertToolSucceeded(toolResult, commandName) {
@@ -325,17 +238,6 @@ function assertToolSucceeded(toolResult, commandName) {
   if (!toolResult.ok) {
     throw new Error(`${commandName}: ${toolResult.message}`);
   }
-}
-
-function summarizeToolResult(result) {
-  return {
-    tool: result.tool,
-    available: result.available,
-    exitCode: result.exitCode,
-    timedOut: result.timedOut,
-    durationMs: result.durationMs,
-    message: result.message,
-  };
 }
 
 function toolMessage({ tool, available, ok, exitCode, stdout, stderr }) {
@@ -363,21 +265,4 @@ function safeJsonCount(stdout) {
 
 function isPythonModuleMissing(stderr, tool) {
   return new RegExp(`No module named ['"]?${tool}['"]?`, 'i').test(stderr || '');
-}
-
-function compareDiagnostics(a, b) {
-  return a.path.localeCompare(b.path)
-    || a.line - b.line
-    || a.column - b.column
-    || a.source.localeCompare(b.source);
-}
-
-function isOutsideRoot(relativePath) {
-  return relativePath === '..'
-    || relativePath.startsWith(`..${path.sep}`)
-    || path.isAbsolute(relativePath);
-}
-
-function toPosixPath(filePath) {
-  return filePath.split(path.sep).join('/');
 }
