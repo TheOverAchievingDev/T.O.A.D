@@ -17,9 +17,19 @@ function languageForExt(relativePath) {
 
 function detectProjectLanguages(rootPath) {
   const langs = [];
-  let hasPy = existsSync(path.join(rootPath, 'pyproject.toml'));
+  // Python: any of the standard project/marker files at root, OR a root *.py,
+  // OR src/ directory containing at least one *.py (mirrors pythonDiagnosticsRunner
+  // which targets src/ as the mypy root).
+  const PY_ROOT_MARKERS = ['pyproject.toml', 'setup.py', 'setup.cfg', 'requirements.txt', 'tox.ini'];
+  let hasPy = PY_ROOT_MARKERS.some((f) => existsSync(path.join(rootPath, f)));
   if (!hasPy) {
     try { hasPy = readdirSync(rootPath).some((n) => n.toLowerCase().endsWith('.py')); } catch {}
+  }
+  if (!hasPy) {
+    const srcDir = path.join(rootPath, 'src');
+    try {
+      hasPy = readdirSync(srcDir).some((n) => n.toLowerCase().endsWith('.py'));
+    } catch {}
   }
   if (hasPy) langs.push('python');
   if (existsSync(path.join(rootPath, 'package.json'))) langs.push('jsts');

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { routeDiagnostics, routeFixFile } from '../src/ide/diagnosticsRouter.js';
@@ -9,6 +9,10 @@ function proj(markers) {
   const dir = mkdtempSync(path.join(tmpdir(), 'toad-router-'));
   if (markers.includes('js')) writeFileSync(path.join(dir, 'package.json'), '{}');
   if (markers.includes('py')) writeFileSync(path.join(dir, 'pyproject.toml'), '[tool]\n');
+  if (markers.includes('pysrc')) {
+    mkdirSync(path.join(dir, 'src'), { recursive: true });
+    writeFileSync(path.join(dir, 'src', 'app.py'), 'import os\n');
+  }
   return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 const impls = {
@@ -56,5 +60,13 @@ test('routeFixFile routes by extension', async () => {
   try {
     assert.equal((await routeFixFile({ projectCwd: p.dir, teamId: 't', source: { kind: 'project' }, relativePath: 'a.ts' }, impls)).source, 'js');
     assert.equal((await routeFixFile({ projectCwd: p.dir, teamId: 't', source: { kind: 'project' }, relativePath: 'a.py' }, impls)).source, 'python');
+  } finally { p.cleanup(); }
+});
+
+test('src/-nested .py (no pyproject.toml at root) is detected as python', async () => {
+  const p = proj(['pysrc']);
+  try {
+    const r = await routeDiagnostics({ projectCwd: p.dir, teamId: 't', source: { kind: 'project' }, scope: 'project' }, impls);
+    assert.deepEqual([...new Set(r.diagnostics.map((d) => d.source))], ['ruff']);
   } finally { p.cleanup(); }
 });
