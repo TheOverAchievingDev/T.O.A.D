@@ -216,3 +216,52 @@ id and the post-switch refresh.
   does not add IDE capabilities. The editor-feature gap the user
   observed is addressed by IDE-1 (diagnostics/auto-fix for JS/TS) and
   IDE-2 (changed-files panel), each its own cycle.
+
+## 10. Correction (2026-05-18): pre-existing `main` UI-build break
+
+The §1/§2 premise — "the work is verified/green, just commit it" — was
+**partially false**, discovered during the Task-3 verification gate and
+confirmed via `git show HEAD:`:
+
+- A prior agent committed `CockpitWithMe.tsx` (the python-diagnostics
+  "Task 9" wiring) to `main` **but never committed the matching
+  `IdeEditorPane.tsx` changes** (file-compat Task 4 + python-diag
+  Task 10). At HEAD, `CockpitWithMe.tsx` passes `diagnostics` /
+  `diagnosticNavigationTarget` / `onRunDiagnosticsRequest` /
+  `onDiagnosticsResult` to `<IdeEditorPane>`, but
+  `IdeEditorPaneProps` does not declare them. **`main`'s `npm run
+  build` (`tsc -b`) is therefore already red, independent of IDE-0.**
+- The uncommitted `ideSource.ts` change turns `IdeFileResult` into a
+  discriminated union; `IdeEditorPane.tsx` reads `.content`/`.sha256`
+  without narrowing → **12 additional `tsc` errors**.
+- All backend layers + pure UI helpers are genuinely green
+  (file-compat backend 19/19, python-diagnostics backend/facade/
+  authority 39/39, UI helpers 8/8). The break is *entirely* the
+  unfinished `IdeEditorPane.tsx` integration.
+
+**User decision (2026-05-18): re-scope IDE-0 to finish
+`IdeEditorPane.tsx` and ship build-green.** IDE-0 now additionally
+completes the well-specified, WITHme-only `IdeEditorPane.tsx`
+integration before the scoped commits:
+
+- **file-compat Task 4:** import `isEditableIdeFile` / `languageForFile`
+  / `unsupportedReason` from `ideFilePresentation`; narrow every
+  `IdeFileResult` `.content`/`.sha256` access through
+  `isEditableIdeFile()`; render the unsupported-file panel; disable
+  Save/Revert for non-editable tabs. (Styles already present in
+  `app-shell.css`.)
+- **python-diag Task 10:** add `diagnostics`,
+  `diagnosticNavigationTarget`, `onRunDiagnosticsRequest`,
+  `onDiagnosticsResult` to `IdeEditorPaneProps`; apply Monaco markers
+  (owner `symphony-python-diagnostics`) for the active tab; clear them
+  on tab close / file change / unmount; add Python-only format/fix
+  toolbar buttons; apply the diagnostic navigation target via
+  `setPosition` + `revealPositionInCenter`. (Styles in `cockpit.css`.)
+
+Still WITHme-only. FOR me / persona pill / `developerMode` /
+`CockpitScreenV2` / `useTweaks` remain byte-unchanged. The objective
+gate becomes: `npm run typecheck` shows only the unrelated pre-existing
+`SummaryStatus.quota` error (App.tsx, a separate usage workstream — not
+IDE, not touched); `npm run build` exits 0; the 12 union errors and the
+`CockpitWithMe`→`IdeEditorPane` prop error are gone; all IDE suites
+stay green. `IdeEditorPane.tsx` joins the committed file-set.
