@@ -19,6 +19,7 @@
     "@lydell/node-pty": "^1.2.0-beta.12"
   },
   "devDependencies": {
-    "playwright": "^1.48.0"
+    "@playwright/test": "^1.60.0",
+    "playwright": "^1.60.0"
   }
 }
