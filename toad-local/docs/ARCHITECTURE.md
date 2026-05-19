@@ -33,17 +33,29 @@ reviewed and grounded. **Gemini is grounded against gemini 0.42.0 (SP1b** —
 vocabulary captured from the real CLI, adapter/normalizer corrected (the
 broken `--resume <uuid>` model fixed to `--session-id`/`--resume latest`),
 scripted e2e green in the root gate; residuals (cross-restart resume,
-`tool_use`/`error` event shapes, the cross-cutting A4 MCP-visibility probe)
-are documented and tracked. **OpenCode is grounded against opencode 1.15.4
-(SP1c** — `docs/superpowers/grounding/2026-05-18-opencode-cli.md`): `run
+`tool_use`/`error` event shapes) are documented and tracked. **OpenCode is
+grounded against opencode 1.15.4 (SP1c** —
+`docs/superpowers/grounding/2026-05-18-opencode-cli.md`): `run
 --format json` contract + NDJSON vocabulary captured from the real CLI, a
 real stdin→positional-arg prompt defect fixed, adapter/normalizer corrected,
 scripted e2e green in the root gate; residuals (multi-event streaming of
 long replies, `tool`/`error` event shapes, error-path format, cross-restart
-resume, the cross-cutting A4 MCP-visibility probe) are documented and
-tracked.
+resume) are documented and tracked.
 The adapter seam is provider-agnostic; un-grounded providers are wired but
 not production-trusted.
+
+**A4 — First-Turn MCP-Tool Visibility Probe (cross-cutting, 2026-05-18):**
+the silent-mute failure mode is CLOSED for all 3 session adapters
+(`CodexExecAdapter`, `GeminiExecAdapter`, `OpencodeExecAdapter`). A shared
+pure core (`src/runtime/firstTurnMcpProbe.js`) appends a read-only tool-call
+instruction to the first-turn prompt; each adapter evaluates the first turn's
+`assistant_text` for a sentinel token (`⟦TOAD_MCP_OK⟧`) and fails loudly as
+`turn_failed("TOAD tools unavailable…")` if absent. Resume turns skip the
+probe. A front-loaded scripted e2e (broken + healthy rail) confirms the
+behavior for all 3 adapters. Claude is out of scope (Claude-Code
+`can_use_tool` duplex). **Residual:** the sentinel proves a compliant agent
+called the tool; a non-compliant model could emit it without success
+(strictly safer than before; grounded `tool_use` hardening is future work).
 
 ## Components
 

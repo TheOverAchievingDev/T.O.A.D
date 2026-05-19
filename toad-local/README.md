@@ -62,9 +62,9 @@ Team agents run through a provider-keyed adapter seam (`adapterForProvider()`); 
 | Provider | Adapter | Lifecycle | Status |
 | --- | --- | --- | --- |
 | Anthropic (Claude) | `ClaudeStreamJsonAdapter` | persistent child | **Working** — whole-impl reviewed, full suite green |
-| OpenAI (Codex) | `CodexExecAdapter` | session / per-turn (`codex exec [resume]`) | **Working** — SP1a Stage 1+2 reviewed |
-| Google (Gemini) | `GeminiExecAdapter` | session / per-turn (`--session-id` / `--resume latest`) | **Grounded (gemini 0.42.0)** |
-| OpenCode | `OpencodeExecAdapter` | session / per-turn (`run … --session <id>`) | **Grounded (opencode 1.15.4)** |
+| OpenAI (Codex) | `CodexExecAdapter` | session / per-turn (`codex exec [resume]`) | **Working** — SP1a Stage 1+2 reviewed, A4 probe |
+| Google (Gemini) | `GeminiExecAdapter` | session / per-turn (`--session-id` / `--resume latest`) | **Grounded (gemini 0.42.0)**, A4 probe |
+| OpenCode | `OpencodeExecAdapter` | session / per-turn (`run … --session <id>`) | **Grounded (opencode 1.15.4)**, A4 probe |
 
 ## Screenshots
 
