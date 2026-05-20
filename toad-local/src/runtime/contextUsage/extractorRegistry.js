@@ -1,13 +1,15 @@
 import * as claudeExtractor from './extractors/claudeExtractor.js';
 import * as codexExtractor from './extractors/codexExtractor.js';
 import * as geminiExtractor from './extractors/geminiExtractor.js';
+import * as opencodeExtractor from './extractors/opencodeExtractor.js';
 
 const REGISTRY = Object.freeze({
   claude:    claudeExtractor,
   anthropic: claudeExtractor,
   codex:     codexExtractor,
   gemini:    geminiExtractor,
-  // opencode added by SP2 Task 6.
+  opencode:  opencodeExtractor,
+  // All four named-deferred slots from SP2 are filled.
 });
 
 export const PROVIDER_KEYS = Object.freeze(Object.keys(REGISTRY));
