@@ -42,6 +42,11 @@ test('non-numeric input or output → null (degraded)', () => {
 test('no qualifying event (no turn_completed with type:result) → null', () => {
   assert.equal(extractLatestUsage([ev(T0, 'assistant_text', { type: 'assistant' })]), null);
   assert.equal(extractLatestUsage([]), null);
+  assert.equal(
+    extractLatestUsage([ev(T0, 'turn_completed', { type: 'error', subtype: 'max_turns' })]),
+    null,
+    'turn_completed with non-result raw.type must not qualify',
+  );
 });
 
 test('inFlight: a newer non-result event exists after the latest result frame', () => {
