@@ -3,6 +3,12 @@
 // { input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens }.
 // `reasoning_output_tokens` is Codex's reasoning-tier accounting and
 // IS part of context occupancy — sum it.
+//
+// Gate divergence vs claudeExtractor: Claude emits multiple events with
+// eventType=turn_completed per turn and discriminates via raw.type='result';
+// Codex's normalizer emits a SINGLE turn_completed per turn carrying usage
+// directly, so gating on raw.usage presence is sufficient. Do NOT harmonize
+// to claudeExtractor's `raw.type === 'result'` check — Codex doesn't emit it.
 
 function num(v) {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;

@@ -45,6 +45,9 @@ test('missing or non-numeric input/output → null', () => {
 
 test('no usage object at all → null', () => {
   assert.equal(extractLatestUsage([ev(T0, 'turn_completed', { model: 'gpt-5-codex' })]), null);
+  // Array typeof is 'object' so the gate admits it, but u.input_tokens
+  // is undefined → num() → null → extractor returns null. Lock that edge.
+  assert.equal(extractLatestUsage([ev(T0, 'turn_completed', { usage: [1, 2] })]), null);
 });
 
 test('no qualifying event → null', () => {
