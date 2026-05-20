@@ -778,6 +778,31 @@ function AppInner() {
       case 'approvals:open':
         setTweak('showApprovals', true);
         return;
+      case 'terminal:new':
+        setTweak('showBottomPanel', true);
+        setTweak('bottomPanelTab', 'terminal');
+        return;
+      case 'palette:open':
+        togglePalette();
+        return;
+      case 'help:shortcuts':
+        setShortcutsOpen(true);
+        return;
+      case 'help:docs':
+        window.open('https://opencode.ai/docs', '_blank');
+        return;
+      case 'help:feedback':
+        window.open('https://github.com/anomalyco/opencode/issues/new?labels=feedback', '_blank');
+        return;
+      case 'help:issue':
+        window.open('https://github.com/anomalyco/opencode/issues/new', '_blank');
+        return;
+      case 'help:about':
+        window.alert('Symphony AI v0.1.3');
+        return;
+      case 'goto:picker':
+        setTweak('screen', 'picker');
+        return;
     }
   }
 
@@ -1251,6 +1276,10 @@ function AppInner() {
         gitBranch="main"
         gitClean
         developerMode={tweaks.developerMode === true}
+        providerQuota={{
+          claude: summaryStatus?.quota?.session?.pctUsed ?? null,
+          codex: summaryStatus?.quota?.session?.pctUsed ?? null, // Root quota in res is actually Claude's
+        }}
         pendingApprovals={pendingApprovals}
         onOpenApprovals={() => setTweak('showApprovals', true)}
         summaryState={summaryStatus?.state ?? null}

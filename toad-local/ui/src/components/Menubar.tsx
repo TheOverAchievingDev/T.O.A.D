@@ -45,7 +45,18 @@ export type MenuAction =
   | 'drift:run'
   | 'validations:run'
   | 'foundry:refine'
-  | 'approvals:open';
+  | 'approvals:open'
+  // Terminal
+  | 'terminal:new'
+  // Help
+  | 'help:shortcuts'
+  | 'help:docs'
+  | 'help:feedback'
+  | 'help:issue'
+  | 'help:about'
+  // General
+  | 'palette:open'
+  | 'goto:picker';
 
 type MenuItemKind = 'row' | 'sep' | 'head';
 
@@ -60,61 +71,20 @@ interface MenuItem {
 
 const MENUS: Record<string, MenuItem[]> = {
   File: [
-    { kind: 'row', label: 'New File', k: '⌘N' },
-    { kind: 'row', label: 'New Window', k: '⌘⇧N' },
+    { kind: 'row', label: 'Open Project Folder…', k: '⌘O', action: 'goto:picker' },
     { kind: 'sep' },
-    { kind: 'row', label: 'Open Project Folder…', k: '⌘O' },
-    { kind: 'row', label: 'Open Recent', k: '▸' },
-    { kind: 'sep' },
-    { kind: 'row', label: 'Save', k: '⌘S' },
-    { kind: 'row', label: 'Save As…', k: '⌘⇧S' },
-    { kind: 'row', label: 'Save All', k: '⌘K S' },
-    { kind: 'sep' },
-    { kind: 'row', label: 'Auto Save', check: true },
-    { kind: 'row', label: 'Preferences', k: '▸' },
-    { kind: 'sep' },
-    { kind: 'row', label: 'Close Project', k: '⌘K F' },
-    { kind: 'row', label: 'Close Window', k: '⌘W' },
-  ],
-  Edit: [
-    { kind: 'row', label: 'Undo', k: '⌘Z' },
-    { kind: 'row', label: 'Redo', k: '⌘⇧Z' },
-    { kind: 'sep' },
-    { kind: 'row', label: 'Cut', k: '⌘X' },
-    { kind: 'row', label: 'Copy', k: '⌘C' },
-    { kind: 'row', label: 'Paste', k: '⌘V' },
-    { kind: 'sep' },
-    { kind: 'row', label: 'Find', k: '⌘F' },
-    { kind: 'row', label: 'Replace', k: '⌘H' },
-    { kind: 'row', label: 'Find in Files', k: '⌘⇧F' },
-  ],
-  Selection: [
-    { kind: 'row', label: 'Select All', k: '⌘A' },
-    { kind: 'row', label: 'Expand Selection', k: '⌃⇧⌘→' },
-    { kind: 'row', label: 'Shrink Selection', k: '⌃⇧⌘←' },
-    { kind: 'sep' },
-    { kind: 'row', label: 'Add Cursor Above', k: '⌥⌘↑' },
-    { kind: 'row', label: 'Add Cursor Below', k: '⌥⌘↓' },
-    { kind: 'row', label: 'Add Next Occurrence', k: '⌘D' },
-    { kind: 'row', label: 'Select All Occurrences', k: '⌃⇧L' },
+    { kind: 'row', label: 'Preferences', k: '⌘,', goto: 'settings' },
   ],
   View: [
-    { kind: 'row', label: 'Command Palette…', k: '⌘⇧P' },
-    { kind: 'row', label: 'Open View…' },
+    { kind: 'row', label: 'Command Palette…', k: '⌘⇧P', action: 'palette:open' },
     { kind: 'sep' },
-    { kind: 'row', label: 'Appearance', k: '▸' },
-    { kind: 'row', label: 'Editor Layout', k: '▸' },
     { kind: 'head', label: 'Screens' },
-    // Screen-jumps use SidebarKey values; App.tsx's handleNavSelect
-    // maps them onto setTweak('screen', …).
     { kind: 'row', label: 'Cockpit',  k: '⌘1', goto: 'workspace' },
     { kind: 'row', label: 'Foundry',  k: '⌘2', goto: 'foundry' },
     { kind: 'row', label: 'Code',     k: '⌘3', goto: 'code' },
     { kind: 'row', label: 'Tasks',    k: '⌘4', goto: 'tasks' },
     { kind: 'row', label: 'Drift',    k: '⌘5', goto: 'drift' },
     { kind: 'row', label: 'Costs',    k: '⌘6', goto: 'costs' },
-    // Audit will be its own screen once Phase 2/3 lands; until then
-    // 'diagnostics' is the closest existing surface.
     { kind: 'row', label: 'Audit',    k: '⌘7', goto: 'diagnostics' },
     { kind: 'row', label: 'Settings', k: '⌘,', goto: 'settings' },
     { kind: 'sep' },
@@ -125,25 +95,9 @@ const MENUS: Record<string, MenuItem[]> = {
     { kind: 'row', label: 'Developer Mode', check: true, action: 'devmode' },
   ],
   Go: [
-    { kind: 'row', label: 'Back', k: '⌃−' },
-    { kind: 'row', label: 'Forward', k: '⌃⇧−' },
-    { kind: 'sep' },
-    { kind: 'row', label: 'Go to File…', k: '⌘P' },
-    { kind: 'row', label: 'Go to Symbol in Workspace…', k: '⌘T' },
-    { kind: 'row', label: 'Go to Symbol in Editor…', k: '⌘⇧O' },
-    { kind: 'sep' },
-    { kind: 'row', label: 'Go to Definition', k: 'F12' },
-    { kind: 'row', label: 'Go to References', k: '⇧F12' },
-    // Symphony deviation — Cursor has "Add Symbol to Current/New Chat";
-    // ours is "Add Symbol to Agent Inbox".
-    { kind: 'row', label: 'Add Symbol to Agent Inbox', k: '⇧F12' },
-    { kind: 'sep' },
-    { kind: 'row', label: 'Next Problem', k: 'F8' },
-    { kind: 'row', label: 'Previous Problem', k: '⇧F8' },
+    { kind: 'row', label: 'Go to File…', k: '⌘P', action: 'palette:open' },
   ],
   Run: [
-    // Symphony deviation — Cursor's Run is a debugger UI; ours is
-    // Symphony team operations because agents do the work.
     { kind: 'head', label: 'Team' },
     { kind: 'row', label: 'Start / Resume Team', k: 'F5', action: 'team:resume' },
     { kind: 'row', label: 'Pause Team', k: '⇧F5', action: 'team:pause' },
@@ -156,27 +110,17 @@ const MENUS: Record<string, MenuItem[]> = {
     { kind: 'row', label: 'End Team', action: 'team:end' },
   ],
   Terminal: [
-    { kind: 'row', label: 'New Terminal', k: '⌃⇧`' },
-    { kind: 'row', label: 'Split Terminal', k: '⌘⇧5' },
-    { kind: 'row', label: 'Kill Active Terminal', k: '⌘⇧W' },
-    { kind: 'row', label: 'Clear', k: '⌘L' },
-    { kind: 'sep' },
-    { kind: 'row', label: 'Run Task…' },
-    { kind: 'row', label: 'Run Build Task…', k: '⌘⇧B' },
-    { kind: 'sep' },
-    { kind: 'row', label: 'Choose Validation Kind', k: '▸' },
+    { kind: 'row', label: 'New Terminal', k: '⌃⇧`', action: 'terminal:new' },
   ],
   Help: [
-    { kind: 'row', label: 'Show All Commands', k: '⌘⇧P' },
-    { kind: 'row', label: 'Documentation' },
-    { kind: 'row', label: 'Keyboard Shortcuts…', k: '⌘K ⌘S' },
-    { kind: 'row', label: 'Symphony Tour' },
+    { kind: 'row', label: 'Show All Commands', k: '⌘⇧P', action: 'palette:open' },
+    { kind: 'row', label: 'Keyboard Shortcuts…', k: '⌘K ⌘S', action: 'help:shortcuts' },
     { kind: 'sep' },
-    { kind: 'row', label: 'Give Feedback…' },
-    { kind: 'row', label: 'Report Issue…' },
+    { kind: 'row', label: 'Documentation', action: 'help:docs' },
+    { kind: 'row', label: 'Give Feedback…', action: 'help:feedback' },
+    { kind: 'row', label: 'Report Issue…', action: 'help:issue' },
     { kind: 'sep' },
-    { kind: 'row', label: 'Toggle Developer Tools' },
-    { kind: 'row', label: 'About Symphony' },
+    { kind: 'row', label: 'About Symphony', action: 'help:about' },
   ],
 };
 
@@ -221,9 +165,6 @@ export function Menubar({
 
   const isItemChecked = (item: MenuItem): boolean => {
     if (item.action === 'devmode') return devMode;
-    // Auto Save is always rendered checked in the prototype — a real
-    // setting binding lands in Phase 3 polish.
-    if (item.label === 'Auto Save') return true;
     return false;
   };
 
