@@ -61,3 +61,25 @@ test('branch order: stale wins over an otherwise-fireable threshold cross', () =
   const r = shouldCompact({ usage: { percentage: 0.99, stale: true, source: 'claude' }, threshold: 0.7, state: idle(), now: NOW });
   assert.equal(r.reason, REASONS.SIGNAL_UNTRUSTWORTHY);
 });
+
+test('percent-form input (computeContextUsage returns 0.0-100.0): correctly compared against fraction threshold', () => {
+  // computeContextUsage emits one-decimal PERCENT (e.g. 70.0 for 70%);
+  // resolveThresholdFromSettings emits FRACTION (e.g. 0.70). shouldCompact
+  // must tolerate both forms so the existing tests (fraction) and
+  // production (percent) both decide correctly.
+  // 70.0 percent vs 0.70 fraction -> SAME logical value -> THRESHOLD_CROSSED.
+  assert.deepEqual(
+    shouldCompact({ usage: { percentage: 70.0, stale: false, source: 'claude' }, threshold: 0.70, state: { gateArmed: false, lastFireAt: 0, retriesRemaining: 0, cooldownMs: 120_000 }, now: 1_000_000 }),
+    { trigger: true, reason: REASONS.THRESHOLD_CROSSED },
+  );
+  // 50.0 percent vs 0.70 fraction -> BELOW.
+  assert.deepEqual(
+    shouldCompact({ usage: { percentage: 50.0, stale: false, source: 'claude' }, threshold: 0.70, state: { gateArmed: false, lastFireAt: 0, retriesRemaining: 0, cooldownMs: 120_000 }, now: 1_000_000 }),
+    { trigger: false, reason: REASONS.BELOW_THRESHOLD },
+  );
+  // 1.0 percent (low usage) vs 0.70 fraction -> BELOW (was incorrectly firing before the fix).
+  assert.deepEqual(
+    shouldCompact({ usage: { percentage: 1.0, stale: false, source: 'claude' }, threshold: 0.70, state: { gateArmed: false, lastFireAt: 0, retriesRemaining: 0, cooldownMs: 120_000 }, now: 1_000_000 }),
+    { trigger: false, reason: REASONS.BELOW_THRESHOLD },
+  );
+});

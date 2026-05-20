@@ -44,6 +44,13 @@ export function shouldCompact({ usage, threshold, state, now } = {}) {
   if (pct === null) {
     return { trigger: false, reason: REASONS.NO_SIGNAL };
   }
+  // Defensive unit-normalization: computeContextUsage returns percentage
+  // as one-decimal PERCENT (e.g. 70.0); resolveThresholdFromSettings and
+  // legacy tests use FRACTION (0.70). Accept both — a value >= 1 must be
+  // a percent (fraction-form usage is always in (0,1); no provider reports
+  // >= 100% occupancy). This stops the pre-SP2 misfire where any non-zero
+  // percent value crossed any fraction threshold (e.g. 1.0% >= 0.70).
+  const pctFrac = pct >= 1 ? pct / 100 : pct;
   const st = state || {};
   if (st.gateArmed === true) {
     const cooledFor = now - st.lastFireAt;
@@ -59,7 +66,7 @@ export function shouldCompact({ usage, threshold, state, now } = {}) {
     return { trigger: false, reason: REASONS.GIVING_UP_SURFACED };
   }
   // #6 — fresh cross.
-  if (pct >= threshold) {
+  if (pctFrac >= threshold) {
     return { trigger: true, reason: REASONS.THRESHOLD_CROSSED };
   }
   // #7
