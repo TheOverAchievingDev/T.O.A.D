@@ -1,8 +1,29 @@
 {
-  "name": "symphony-ai-workspace",
+  "name": "symphony-engine",
+  "version": "0.1.4",
   "private": true,
-  "description": "Workspace wrapper for the Symphony AI local agent platform.",
+  "type": "module",
+  "description": "Local-first engine for Symphony AI's agent teams, Foundry, IDE, drift monitor, and infrastructure plugins.",
+  "scripts": {
+    "api:dev": "node --no-warnings scripts/dev-api-server.mjs",
+    "desktop:dev": "npm --prefix ui run tauri:dev",
+    "desktop:build": "npm --prefix ui run tauri:build",
+    "mcp:stdio": "node --no-warnings src/mcp/stdioServer.js",
+    "smoke:claude": "node --no-warnings test/claudeCliSmoke.test.js",
+    "screenshots": "node --no-warnings scripts/capture-screenshots.mjs",
+    "token:generate": "node --no-warnings scripts/generate-api-token.mjs",
+    "ui:typecheck": "npm --prefix ui run typecheck",
+    "ui:build": "npm --prefix ui run build",
+    "test": "node scripts/run-test-suites.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@lydell/node-pty": "^1.2.0-beta.12"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "playwright": "^1.60.0"
   }
 }

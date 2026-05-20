@@ -1,0 +1,30 @@
+[package]
+name = "toad-desktop"
+version = "0.1.4"
+description = "TOAD — local-first multi-agent CLI orchestrator (desktop wrapper)"
+authors = ["TOAD"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.70"
+
+# Tauri's build helper consumes tauri.conf.json at compile time and
+# regenerates Rust constants when the config changes.
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+
+[features]
+# Default Cargo features. `custom-protocol` is required for production
+# (file:// scheme). Tauri's CLI flips this on automatically when running
+# `tauri build`; in `tauri dev` it stays off so HMR works against the
+# Vite dev server.
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

@@ -21,18 +21,18 @@ jobs:
         with:
           node-version: lts/*
           cache: 'npm'
-          cache-dependency-path: toad-local/ui/package-lock.json
+          cache-dependency-path: ui/package-lock.json
 
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
       - name: install engine dependencies
         run: npm install --omit=dev
-        working-directory: toad-local
+        working-directory: .
 
       - name: install frontend dependencies
         run: npm install
-        working-directory: toad-local/ui
+        working-directory: ui
 
       - uses: tauri-apps/tauri-action@v0
         env:
@@ -42,7 +42,7 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: 'Symphony AI v__VERSION__'
-          releaseBody: 'See the assets below for the latest installers and updater bundles.'
+          releaseBody: 'See CHANGELOG.md for the release notes and the assets below for installers and updater bundles.'
           releaseDraft: false
           prerelease: false
-          projectPath: toad-local/ui
+          projectPath: ui

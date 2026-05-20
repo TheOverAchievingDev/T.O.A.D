@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="toad-local/ui/src-tauri/icons/icon.png?v=20260518" alt="Symphony AI" width="96" height="96" />
+<img src="ui/src-tauri/icons/icon.png?v=20260518" alt="Symphony AI" width="96" height="96" />
 
 # Symphony AI
 
@@ -17,9 +17,9 @@ Symphony combines a project-planning Foundry, real coding-agent teams, a local I
 
 <br/>
 
-<img src="toad-local/docs/screenshots/workspace.png?v=20260518" alt="Symphony AI workspace" width="900" />
+<img src="docs/screenshots/workspace.png?v=20260518" alt="Symphony AI workspace" width="900" />
 
-<sub><i>Workspace view with a Symphony agent team in flight. Run <code>npm run screenshots</code> from <code>toad-local</code> to regenerate screenshots from the local app.</i></sub>
+<sub><i>Workspace view with a Symphony agent team in flight. Run <code>npm run screenshots</code> from the repo root to regenerate screenshots from the local app.</i></sub>
 
 </div>
 
@@ -50,7 +50,7 @@ The important distinction: Symphony is not just a chat box and not just a proces
 
 Foundry is the planning front door. You chat through the idea, constraints, data model, architecture, product decisions, roadmap, and acceptance criteria. Symphony then materializes real project documents and starter tasks that an agent team can use.
 
-<img src="toad-local/docs/screenshots/foundry.png?v=20260518" alt="Foundry" width="100%"/>
+<img src="docs/screenshots/foundry.png?v=20260518" alt="Foundry" width="100%"/>
 
 </td>
 <td width="50%" valign="top">
@@ -59,7 +59,7 @@ Foundry is the planning front door. You chat through the idea, constraints, data
 
 Create a lead plus specialist teammates, assign providers and roles, and let the team work through a structured task lifecycle. Agents communicate through Symphony's MCP tools, not through hidden side channels.
 
-<img src="toad-local/docs/screenshots/workspace.png?v=20260518" alt="Workspace" width="100%"/>
+<img src="docs/screenshots/workspace.png?v=20260518" alt="Workspace" width="100%"/>
 
 </td>
 </tr>
@@ -70,7 +70,7 @@ Create a lead plus specialist teammates, assign providers and roles, and let the
 
 Tasks move through a deterministic lifecycle: backlog, ready, planned, in progress, review, testing, merge ready, done. Reviews capture real git diffs, validations capture real command output, and high-risk work can require human approval before merge.
 
-<img src="toad-local/docs/screenshots/tasks.png?v=20260518" alt="Tasks" width="100%"/>
+<img src="docs/screenshots/tasks.png?v=20260518" alt="Tasks" width="100%"/>
 
 </td>
 <td width="50%" valign="top">
@@ -79,7 +79,7 @@ Tasks move through a deterministic lifecycle: backlog, ready, planned, in progre
 
 The drift monitor scores whether work is staying aligned: invalid transitions, out-of-scope files, missing tests, role violations, rubber-stamped reviews, provider leakage, semantic drift, and done-without-merge evidence.
 
-<img src="toad-local/docs/screenshots/drift-screen.png?v=20260518" alt="Drift Monitor" width="100%"/>
+<img src="docs/screenshots/drift-screen.png?v=20260518" alt="Drift Monitor" width="100%"/>
 
 </td>
 </tr>
@@ -97,7 +97,7 @@ Browse a project, switch repositories, inspect task worktrees, edit files, and s
 
 Symphony tracks provider auth and plan state where possible, including subscription-style CLI auth. The goal is to make model assignment and team launch decisions with visible context instead of guesswork.
 
-<img src="toad-local/docs/screenshots/settings-providers.png?v=20260518" alt="Provider settings" width="100%"/>
+<img src="docs/screenshots/settings-providers.png?v=20260518" alt="Provider settings" width="100%"/>
 
 </td>
 </tr>
@@ -162,7 +162,7 @@ graph TB
 
 SQLite at `<project>/.toad/toad.db` is the durable source of truth. The desktop shell, React UI, sidecar API, CLI agents, MCP server, and plugin tools are adapters around that evented core.
 
-Agents call Symphony MCP tools such as `task_comment`, `validation_run`, `review_request`, `task_human_approve`, and `drift_run`. Those tools dispatch through [`LocalToolFacade`](toad-local/src/tools/localToolFacade.js), the same enforcement layer used by the UI's HTTP API. That gives Symphony one place for idempotency, role authority, task gates, risk policy, and audit logging.
+Agents call Symphony MCP tools such as `task_comment`, `validation_run`, `review_request`, `task_human_approve`, and `drift_run`. Those tools dispatch through [`LocalToolFacade`](src/tools/localToolFacade.js), the same enforcement layer used by the UI's HTTP API. That gives Symphony one place for idempotency, role authority, task gates, risk policy, and audit logging.
 
 ---
 
@@ -205,7 +205,7 @@ The plugin system gives agents controlled access to external infrastructure thro
 ```bash
 # 1. Clone
 git clone https://github.com/TheOverAchievingDev/T.O.A.D.git symphony-ai
-cd symphony-ai/toad-local
+cd symphony-ai
 
 # 2. Install backend dependencies
 npm install
@@ -222,11 +222,11 @@ Web-mode development is also supported:
 
 ```bash
 # Terminal 1
-cd toad-local
+cd symphony-ai
 npm run api:dev
 
 # Terminal 2
-cd toad-local/ui
+cd symphony-ai/ui
 npm run dev
 ```
 
@@ -239,28 +239,28 @@ The desktop app is the intended experience because it can switch project folders
 ```text
 symphony-ai/
 |-- README.md
-|-- start-dev.bat
-|-- toad-local/
-|   |-- src/
-|   |   |-- app/                 Runtime composition
-|   |   |-- foundry/             Planning sessions and generated docs
-|   |   |-- task/                Task board, worktrees, diffs, merge gates
-|   |   |-- runtime/             CLI process supervision and event ingestion
-|   |   |-- mcp/                 Agent-facing MCP server
-|   |   |-- tools/               Shared tool facade for UI and agents
-|   |   |-- drift/               Drift engine, checks, LLM tier, corrections
-|   |   |-- plugins/             Infrastructure plugin system
-|   |   |-- policy/              Risk policy and human approval rules
-|   |   |-- settings/            Global and project settings
-|   |   |-- github/              GitHub auth and API helpers
-|   |   `-- transport/           HTTP API and SSE
-|   |-- test/                    Node test suite
-|   |-- ui/                      React, TypeScript, Vite, Tauri desktop app
-|   |-- docs/                    Architecture, hardening matrix, screenshots
-|   `-- scripts/                 Dev server, token generation, screenshots
+|-- CHANGELOG.md
+|-- RELEASE.md
+|-- src/
+|   |-- app/                 Runtime composition
+|   |-- foundry/             Planning sessions and generated docs
+|   |-- task/                Task board, worktrees, diffs, merge gates
+|   |-- runtime/             CLI process supervision and event ingestion
+|   |-- mcp/                 Agent-facing MCP server
+|   |-- tools/               Shared tool facade for UI and agents
+|   |-- drift/               Drift engine, checks, LLM tier, corrections
+|   |-- plugins/             Infrastructure plugin system
+|   |-- policy/              Risk policy and human approval rules
+|   |-- settings/            Global and project settings
+|   |-- github/              GitHub auth and API helpers
+|   `-- transport/           HTTP API and SSE
+|-- test/                    Node test suite
+|-- ui/                      React, TypeScript, Vite, Tauri desktop app
+|-- docs/                    Architecture, engine notes, screenshots
+`-- scripts/                 Dev server, token generation, screenshots
 ```
 
-The `toad-local` directory name is a historical engine codename. Public product naming is Symphony AI; internal `TOAD_*` environment variables are retained for compatibility while the project is renamed.
+The old `toad-local` directory name was a historical engine codename. The app now lives at the repository root. Internal `TOAD_*` environment variables are retained for compatibility while the project is renamed in stages.
 
 ---
 
@@ -294,11 +294,10 @@ Important environment variables:
 
 ```bash
 # Backend
-cd toad-local
 npm test
 
 # UI
-cd toad-local/ui
+cd ui
 npm run typecheck
 npm run build
 ```
@@ -306,7 +305,6 @@ npm run build
 Screenshot regeneration:
 
 ```bash
-cd toad-local
 npm run screenshots
 ```
 

@@ -6,18 +6,21 @@
 **/dist-electron/
 **/out/
 **/build/
+**/.vite/
 **/*.tsbuildinfo
 
 # Design source (kept locally for reference; not part of the rebuild)
 UI Sketch/
 
 # Local data
-toad-local/.toad/
+.toad/
+**/.toad/
 
 # Local logs
 *.log
 api-dev.*.log
 vite-dev.*.log
+tauri-dev.log
 
 # OS / editor cruft
 .DS_Store
@@ -33,3 +36,11 @@ Thumbs.db
 # Local build notes
 claude_agent_teams_ui-main/
 Local Notes/
+Reference material/
+upstream-reference/
+website-publish/
+code_audit.md
+
+# Historical pre-root app folder. Kept out of Git if a local process recreates
+# or leaves it behind after migration.
+toad-local/
