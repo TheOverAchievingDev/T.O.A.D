@@ -68,19 +68,15 @@ Team agents run through a provider-keyed adapter seam (`adapterForProvider()`); 
 
 ## Screenshots
 
-Captured dynamically via our Playwright integration script (`npm run screenshots`). Full gallery available in **[docs/SCREENSHOTS.md](docs/SCREENSHOTS.md)**.
+Captured dynamically via the Playwright integration script (`npm run screenshots`). Full gallery available in **[docs/SCREENSHOTS.md](SCREENSHOTS.md)**.
 
-| Cockpit (Hero) | Tasks Board |
+| FORme cockpit | WITHme cockpit |
 | --- | --- |
-| ![Cockpit](docs/screenshots/workspace.png?v=20260518) | ![Tasks board](docs/screenshots/tasks.png?v=20260518) |
+| ![FORme cockpit](screenshots/cockpit-for-me.png?v=20260520) | ![WITHme cockpit](screenshots/cockpit-with-me.png?v=20260520) |
 
-| Foundry Discovery | Drift Monitor |
+| Run menu | Settings providers |
 | --- | --- |
-| ![Foundry discovery](docs/screenshots/foundry.png?v=20260518) | ![Drift monitor](docs/screenshots/drift-screen.png?v=20260518) |
-
-| Team Creation | Settings |
-| --- | --- |
-| ![Create Team](docs/screenshots/create-team-modal.png?v=20260518) | ![Settings](docs/screenshots/settings-providers.png?v=20260518) |
+| ![Run menu](screenshots/menu-run.png?v=20260520) | ![Settings providers](screenshots/settings-providers.png?v=20260520) |
 
 ## Local Development
 

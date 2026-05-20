@@ -7,6 +7,16 @@ and release tags follow semantic versioning where practical.
 
 ## [Unreleased]
 
+### Changed
+
+- Refreshed the root README, screenshot gallery, and engine screenshot docs
+  for the promoted repository-root layout and the current FORme/WITHme UI.
+- Replaced the README screenshot capture flow with an isolated current-app
+  Playwright capture that seeds temporary demo data instead of relying on the
+  older walkthrough script.
+- Updated visible settings and menu copy that still referred to TOAD or older
+  Foundry wording.
+
 ## [0.1.4] - 2026-05-20
 
 ### Changed

@@ -235,7 +235,7 @@ export function GitHubSettings() {
     <div>
       <SettingsSectionHeader
         title="GitHub"
-        description="Connect a GitHub account so TOAD can read branches, manage worktrees, and create PRs against a real remote."
+        description="Connect a GitHub account so Symphony can read branches, manage worktrees, and create PRs against a real remote."
       />
 
       {error && (
@@ -356,7 +356,7 @@ export function GitHubSettings() {
             title="Or sign in with GitHub OAuth"
             description={
               status?.clientIdSource === 'built-in'
-                ? 'One-click sign-in via this build\'s registered TOAD OAuth App. Browser opens, you click Authorize, you\'re in.'
+                ? 'One-click sign-in via this build\'s registered Symphony OAuth app. Browser opens, you click Authorize, you\'re in.'
                 : 'Opens GitHub in your browser with the auth code pre-filled. Requires a one-time OAuth App registration (~60 seconds on github.com — no secret needed).'
             }
           >
@@ -382,7 +382,7 @@ export function GitHubSettings() {
                   >
                     github.com/settings/applications/new
                   </a>
-                  : Application name "TOAD", Homepage URL <span className="mono">http://localhost</span>, leave callback URL
+                  : Application name "Symphony AI", Homepage URL <span className="mono">http://localhost</span>, leave callback URL
                   blank. Tick "Enable Device Flow" then save the Client ID here.
                 </div>
                 <div style={{ marginTop: 8 }}>
@@ -414,7 +414,7 @@ export function GitHubSettings() {
       {!loading && mode === 'device' && device && (
         <SettingsCard
           title="Authorizing in your browser…"
-          description="GitHub should have opened in your default browser with the code pre-filled. Click Authorize there — TOAD will pick it up automatically."
+          description="GitHub should have opened in your default browser with the code pre-filled. Click Authorize there — Symphony will pick it up automatically."
         >
           <div
             style={{

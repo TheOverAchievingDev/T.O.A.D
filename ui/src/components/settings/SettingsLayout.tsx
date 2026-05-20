@@ -31,7 +31,7 @@ const SECTIONS: SettingsSection[] = [
   { key: 'github', label: 'GitHub', icon: 'github', description: 'Connect a GitHub account for branch + PR ops.' },
   { key: 'workspace', label: 'Workspace', icon: 'folder', description: 'Default project path, worktree behaviour.' },
   { key: 'risk', label: 'Risk policies', icon: 'info', description: 'File and command rules for §14.' },
-  { key: 'mcp', label: 'MCP servers', icon: 'workflow', description: 'TOAD’s server + extras.' },
+  { key: 'mcp', label: 'MCP servers', icon: 'workflow', description: 'Symphony server + extras.' },
   { key: 'notifications', label: 'Notifications', icon: 'bell', description: 'Toasts, drawer entries, push.' },
   { key: 'advanced', label: 'Advanced', icon: 'terminal', description: 'DB path, port, log level, dev tools.' },
   { key: 'about', label: 'About', icon: 'info', description: 'Version, updates, license.' },

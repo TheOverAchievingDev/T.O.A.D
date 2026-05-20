@@ -1,513 +1,623 @@
 #!/usr/bin/env node
 /**
- * Symphony AI — automated screenshot capture
+ * Capture the README screenshot set from the current app.
  *
- * Boots the sidecar API + Vite dev server, then drives a headless
- * Chromium through every major screen and saves PNGs to docs/screenshots/.
- *
- * Usage:
- *   npm run screenshots
- *
- * Requirements:
- *   - playwright (auto-checked at startup; the script bails with a helpful
- *     message if it's missing rather than failing deep inside an import).
- *   - The Vite UI must run in a regular browser (no Tauri-only APIs gating
- *     the screens we capture). The UI talks to the sidecar over HTTP so
- *     this works headlessly.
- *
- * Re-run as the UI evolves — the PNGs are committed to docs/screenshots/.
+ * This script intentionally builds its own isolated demo project and sidecar
+ * database on each run. It does not reuse the older walkthrough script, and it
+ * does not write to the operator's real Symphony project state.
  */
 
-import { spawn } from 'node:child_process';
-import { setTimeout as sleep } from 'node:timers/promises';
-import { mkdir, readFile } from 'node:fs/promises';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import net from 'node:net';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, resolve } from 'node:path';
-import { createConnection } from 'node:net';
+import { chromium } from 'playwright';
+import { SqliteRuntimeRegistry } from '../src/runtime/sqliteRuntimeRegistry.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = resolve(__dirname, '..');
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const UI_DIR = join(REPO_ROOT, 'ui');
 const OUT_DIR = join(REPO_ROOT, 'docs', 'screenshots');
-
+const WORK_ROOT = join(REPO_ROOT, '.toad', 'screenshot-workspace');
+const PROJECT_DIR = join(WORK_ROOT, 'readme-demo-project');
+const DB_PATH = join(PROJECT_DIR, '.toad', 'toad.db');
+const FOUNDRY_DB_PATH = join(PROJECT_DIR, '.toad', 'foundry.db');
+const API_TOKEN = 'readme-screenshot-token';
+const TEAM_ID = 'release-readiness';
 const VIEWPORT = { width: 1440, height: 900 };
-// 2x device pixel ratio for retina-quality screenshots. Quadruples the
-// pixel count of each PNG (file sizes ~4x) but produces crisp output
-// on Retina/4K displays — required for marketing surfaces.
-const DEVICE_SCALE_FACTOR = 2;
-const SIDECAR_HOST = '127.0.0.1';
-const SIDECAR_PORT = 3001;
-// Vite binds to "localhost" by default. On Windows, IPv4 vs IPv6 resolution
-// for `localhost` is system-dependent — using the literal hostname avoids
-// the 127.0.0.1 vs ::1 mismatch that bites our probe.
-const VITE_HOST = 'localhost';
-const VITE_PORT = 5173;
 
-const SIDECAR_HEALTH_URL = `http://${SIDECAR_HOST}:${SIDECAR_PORT}/api/teams`;
-const VITE_URL = `http://${VITE_HOST}:${VITE_PORT}/`;
-
-// Each entry is { name, navigate, waitFor }. `navigate` is a function that
-// runs in the browser context to click the right sidebar item / open the
-// right modal. `waitFor` is a CSS selector or function to wait for before
-// the screenshot is taken.
-const SCREENS = [
-  // Sidebar nav buttons all set a `title` attribute matching their label
-  // (see SidebarNav.tsx renderItem). title-attribute selectors are far more
-  // reliable than :has-text() matching, which can miss when the visible
-  // text is wrapped in spans.
-  {
-    name: 'workspace',
-    description: 'Workspace overview (hero shot)',
-    navigate: async (page) => {
-      await page.click('button[title="Workspace"]').catch(() => {});
-    },
-    waitFor: '.titlebar',
-  },
-  {
-    name: 'drift-screen',
-    description: 'Drift Monitor dashboard',
-    navigate: async (page) => {
-      await page.click('button[title="Drift"]').catch(() => {});
-    },
-    waitFor: 'text=Drift Monitor',
-  },
-  {
-    name: 'tasks',
-    description: 'Tasks board with drift badges',
-    navigate: async (page) => {
-      await page.click('button[title="Tasks"]').catch(() => {});
-    },
-    waitFor: '.titlebar',
-  },
-  {
-    name: 'foundry',
-    description: 'Foundry kiro-style spec docs',
-    navigate: async (page) => {
-      await page.click('button[title="Foundry"]').catch(() => {});
-    },
-    waitFor: '.titlebar',
-  },
-  {
-    name: 'settings-providers',
-    description: 'Settings → Providers (plan-quota panel visible)',
-    navigate: async (page) => {
-      await page.click('button[title="Settings"]').catch(() => {});
-      await sleep(400);
-      await page.click('text=Providers').catch(() => {});
-    },
-    waitFor: '.titlebar',
-  },
-  {
-    name: 'settings-foundry',
-    description: 'Settings → Foundry (default-provider radio, F.2)',
-    navigate: async (page) => {
-      await page.click('button[title="Settings"]').catch(() => {});
-      await sleep(400);
-      // The Foundry section was added to the Settings sidebar in F.2's
-      // Task 10 (commit 49abcf5). The label text in the sidebar is
-      // "Foundry" alongside other section labels.
-      await page.click('text=Foundry').catch(() => {});
-    },
-    waitFor: '.titlebar',
-  },
-  {
-    name: 'create-team-modal',
-    description: 'New-team modal (includes plan-usage panel)',
-    navigate: async (page) => {
-      await page.click('[title="New team"]').catch(() => {});
-    },
-    waitFor: '.modal',
-  },
-  {
-    name: 'commands-palette',
-    description: 'Command palette (Cmd+K / Ctrl+K)',
-    navigate: async (page) => {
-      await page.keyboard.press('Control+K');
-    },
-    waitFor: '.modal, [role="dialog"]',
-  },
+const CAPTURES = [
+  { name: 'cockpit-for-me', label: 'Cockpit FORme overview' },
+  { name: 'cockpit-with-me', label: 'Cockpit WITHme code editor' },
+  { name: 'menu-file', label: 'File menu' },
+  { name: 'menu-view', label: 'View menu' },
+  { name: 'menu-run', label: 'Run menu' },
+  { name: 'menu-terminal', label: 'Terminal menu' },
+  { name: 'settings-general', label: 'Settings general' },
+  { name: 'settings-providers', label: 'Settings providers' },
+  { name: 'settings-github', label: 'Settings GitHub' },
 ];
 
-async function ensurePlaywright() {
-  try {
-    return await import('playwright');
-  } catch (err) {
-    console.error(`
-ERROR: 'playwright' is not installed.
-
-Install it as a dev dependency, then re-run:
-
-  npm install --save-dev playwright
-  npx playwright install chromium
-  npm run screenshots
-
-(Original error: ${err?.message ?? err})
-`);
-    process.exit(1);
-  }
-}
-
-async function ensureOutDir() {
-  await mkdir(OUT_DIR, { recursive: true });
-}
-
-/**
- * Resolve the bearer token the sidecar will accept. Mirrors
- * src/runtime/resolveApiToken.js's precedence so we authenticate the
- * same way the production sidecar will:
- *
- *   1. process.env.TOAD_API_TOKEN
- *   2. <projectCwd>/.toad/api-token (the persistent on-disk token)
- *   3. null  (sidecar runs unauthenticated)
- *
- * If we find a token, both seed calls and Playwright's page-level
- * fetches send it as Authorization: Bearer. If we don't, requests go
- * tokenless and the sidecar accepts everything.
- */
-async function resolveSidecarToken() {
-  const envToken = process.env.TOAD_API_TOKEN;
-  if (typeof envToken === 'string' && envToken.trim().length > 0) {
-    return envToken.trim();
-  }
-  // dev-api-server.mjs uses TOAD_PROJECT_CWD || process.cwd(). We're
-  // launched from REPO_ROOT, so use the same default.
-  const projectCwd = process.env.TOAD_PROJECT_CWD || REPO_ROOT;
-  const tokenPath = join(projectCwd, '.toad', 'api-token');
-  if (existsSync(tokenPath)) {
-    try {
-      const raw = (await readFile(tokenPath, 'utf8')).trim();
-      if (raw.length > 0) return raw;
-    } catch { /* ignore */ }
-  }
-  return null;
-}
-
-async function alreadyListening(host, port, timeoutMs = 1500) {
-  // Quick TCP probe to see if a service is already bound. We don't want
-  // to double-spawn if the user has the dev stack already running.
-  return new Promise((resolveProbe) => {
-    const sock = createConnection({ host, port, timeout: timeoutMs });
-    sock.once('connect', () => { sock.end(); resolveProbe(true); });
-    sock.once('error', () => { resolveProbe(false); });
-    sock.once('timeout', () => { sock.destroy(); resolveProbe(false); });
-  });
-}
-
-async function waitForUrl(url, timeoutMs = 30_000, label = url) {
-  const deadline = Date.now() + timeoutMs;
-  let lastErr = null;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(url, { method: 'GET' });
-      if (res.ok || res.status === 401 || res.status === 404) {
-        // 401/404 is fine — server is up but the path may be auth-gated
-        // or unmatched; we just need a TCP-listening process.
-        return;
-      }
-    } catch (err) {
-      lastErr = err;
-    }
-    await sleep(500);
-  }
-  throw new Error(`Timed out waiting for ${label} (${url}). Last error: ${lastErr?.message ?? '(none)'}`);
-}
-
-function spawnBackground(cmd, args, opts, label) {
-  const proc = spawn(cmd, args, {
-    cwd: opts.cwd,
-    stdio: opts.silent ? 'ignore' : ['ignore', 'pipe', 'pipe'],
-    shell: process.platform === 'win32',
-    env: { ...process.env, ...opts.env },
-  });
-  proc.label = label;
-  if (!opts.silent) {
-    proc.stdout?.on('data', (chunk) => process.stdout.write(`[${label}] ${chunk}`));
-    proc.stderr?.on('data', (chunk) => process.stderr.write(`[${label}!] ${chunk}`));
-  }
-  proc.on('exit', (code) => {
-    if (code != null && code !== 0) {
-      console.warn(`[${label}] exited with code ${code}`);
-    }
-  });
-  return proc;
-}
-
-function killTree(proc) {
-  if (!proc || proc.killed) return;
-  try {
-    if (process.platform === 'win32') {
-      // Windows: spawn a synchronous taskkill so child Vite/node processes
-      // don't get orphaned when this script exits.
-      spawn('taskkill', ['/pid', String(proc.pid), '/f', '/t'], { stdio: 'ignore' });
-    } else {
-      proc.kill('SIGTERM');
-      setTimeout(() => proc.kill('SIGKILL'), 2000).unref();
-    }
-  } catch {
-    // best-effort
-  }
-}
-
-/**
- * Push some demo data into the sidecar so screenshots show populated
- * dashboards instead of empty states. Idempotent — safe to re-run.
- *
- * Seeds: one team (`symphony-demo`), 5 tasks across the lifecycle, and
- * triggers a drift_run so the dashboard has findings + history.
- */
-async function seedDemoData(token) {
-  const TEAM_ID = 'symphony-demo';
-  const ACTOR = { teamId: TEAM_ID, agentId: 'screenshot-bot', role: 'human' };
-  const headers = { 'content-type': 'application/json' };
-  if (token) headers['authorization'] = `Bearer ${token}`;
-  const apiCall = async (method, args, idempotencyKey) => {
-    const body = { actor: ACTOR, method, args };
-    if (idempotencyKey) body.idempotencyKey = idempotencyKey;
-    const res = await fetch(`http://${SIDECAR_HOST}:${SIDECAR_PORT}/api/call`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      console.warn(`  seed ${method} → HTTP ${res.status}: ${text.slice(0, 200)}`);
-      return null;
-    }
-    return res.json();
-  };
-
-  // 1. Team — idempotent: team_create errors on dup, we ignore.
-  await apiCall('team_create', {
-    teamId: TEAM_ID,
-    lead: { agentId: 'lead', providerId: 'anthropic', model: 'sonnet-4', cwd: '.' },
-    teammates: [
-      { agentId: 'dev-1', role: 'developer', providerId: 'anthropic', model: 'sonnet-4' },
-      { agentId: 'reviewer-1', role: 'reviewer', providerId: 'openai', model: 'gpt-5' },
-      { agentId: 'tester-1', role: 'tester', providerId: 'gemini', model: 'gemini-2.5-pro' },
-    ],
-  }, `seed-team-${TEAM_ID}`);
-
-  // 2. Tasks across the lifecycle — gives the kanban actual cards.
-  const tasks = [
-    { id: 't_demo_1', subject: 'Wire OAuth Device Flow into Settings', status: 'in_progress', ownerId: 'dev-1' },
-    { id: 't_demo_2', subject: 'Risk policy: forbid edits to .env files', status: 'review', ownerId: 'reviewer-1' },
-    { id: 't_demo_3', subject: 'Add per-task drift score badge', status: 'testing', ownerId: 'tester-1' },
-    { id: 't_demo_4', subject: 'Document the §-numbered hardening checklist', status: 'merge_ready', ownerId: 'dev-1' },
-    { id: 't_demo_5', subject: 'Refactor RuntimeSupervisor for stuck-runtime detection', status: 'done', ownerId: 'dev-1' },
-  ];
-  for (const t of tasks) {
-    await apiCall('task_create', {
-      taskId: t.id, subject: t.subject, ownerId: t.ownerId,
-      // Status is set in the create event — orchestrator accepts it.
-      status: t.status,
-    }, `seed-task-${t.id}`);
-  }
-
-  // 3. Trigger drift run so the dashboard has findings + a history row.
-  await apiCall('drift_run', { teamId: TEAM_ID, trigger: 'manual' });
-  // Run twice so the sparkline has at least 2 points.
-  await sleep(200);
-  await apiCall('drift_run', { teamId: TEAM_ID, trigger: 'periodic' });
-
-  // 4. Foundry sessions — seed one Claude session and one Codex session
-  // so the FoundryScreen sidebar shows the F.2 provider chip variety.
-  // Idempotent via deterministic sessionId.
-  await apiCall('foundry_session_create', {
-    sessionId: 'fnd_demo_claude',
-    title: 'Habit tracker (Claude)',
-    provider: 'anthropic',
-  }, 'seed-foundry-claude');
-  await apiCall('foundry_session_create', {
-    sessionId: 'fnd_demo_codex',
-    title: 'Meal planner (Codex)',
-    provider: 'openai',
-  }, 'seed-foundry-codex');
-}
-
-async function captureScreens(playwright, { headed = false, token = null } = {}) {
-  const browser = await playwright.chromium.launch({ headless: !headed });
-  const contextOpts = {
-    viewport: VIEWPORT,
-    deviceScaleFactor: DEVICE_SCALE_FACTOR,
-  };
-  // If the sidecar has auth on (TOAD_API_TOKEN env or persisted
-  // .toad/api-token), Playwright stamps the same Bearer header on every
-  // fetch the page makes — so the UI's tokenless XHRs become
-  // authenticated and stop 401-ing.
-  if (token) {
-    contextOpts.extraHTTPHeaders = { authorization: `Bearer ${token}` };
-  }
-  const context = await browser.newContext(contextOpts);
-  const page = await context.newPage();
-
-  // Inject localStorage BEFORE the page loads so useProjects + useTweaks
-  // see a configured project on first render. Without this, the welcome
-  // screen takes over and we can't reach the populated views.
-  await context.addInitScript(() => {
-    try {
-      localStorage.setItem('toad.projects', JSON.stringify({
-        projects: [{ id: 'p_demo', name: 'symphony-demo', path: 'C:/symphony-demo' }],
-        activeId: 'p_demo',
-      }));
-      localStorage.setItem('toad.tweaks', JSON.stringify({
-        screen: 'workspace',
-        theme: 'dark',
-        layout: 'kanban',
-      }));
-    } catch { /* ignore */ }
-  });
-
-  // Capture every kind of failure signal Playwright exposes.
-  page.on('pageerror', (err) => console.warn('[ui] pageerror:', err.message));
-  page.on('crash', () => console.warn('[ui] page CRASHED'));
-  page.on('console', (msg) => {
-    const t = msg.type();
-    if (t === 'error' || t === 'warning') console.warn(`[ui] console.${t}:`, msg.text());
-  });
-  page.on('requestfailed', (req) => {
-    console.warn('[ui] request failed:', req.url(), '-', req.failure()?.errorText);
-  });
-  page.on('response', (res) => {
-    if (res.status() >= 400) console.warn(`[ui] HTTP ${res.status()} ${res.url()}`);
-  });
-
-  console.log(`Loading ${VITE_URL}...`);
-  await page.goto(VITE_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-  // domcontentloaded is enough to know HTML/JS reached the browser. After
-  // that we wait for React to paint by polling the DOM. The titlebar is
-  // the first thing the App component renders so it's a good "ready" mark.
-  console.log('Waiting for React to paint (polling for .titlebar)...');
-  await page.waitForSelector('.titlebar, .empty-state, [role="dialog"], .modal', {
-    timeout: 15_000,
-  }).catch(() => {
-    console.warn('  (no anchor selector found within 15s — UI may not be rendering)');
-  });
-
-  // Sanity check: does the page have non-trivial content? If it's blank,
-  // dump the HTML so we can debug instead of writing junk PNGs.
-  const bodyText = await page.evaluate(() => document.body?.innerText?.length ?? 0).catch(() => 0);
-  const bodyHtmlLength = await page.evaluate(() => document.body?.outerHTML?.length ?? 0).catch(() => 0);
-  console.log(`Body innerText length: ${bodyText}, outerHTML length: ${bodyHtmlLength}`);
-  if (bodyText < 20) {
-    const html = await page.content();
-    const dumpPath = join(OUT_DIR, '_blank-page-dump.html');
-    await (await import('node:fs/promises')).writeFile(dumpPath, html, 'utf8');
-    console.warn(`\n⚠️  Body has almost no text — UI is not rendering.`);
-    console.warn(`   Dumped current HTML to ${dumpPath} for inspection.`);
-    console.warn(`   Tip: re-run with HEADED=1 npm run screenshots to see the page live.`);
-    console.warn(`   Bailing out before writing junk PNGs.\n`);
-    await browser.close();
-    return false;
-  }
-
-  await sleep(1500); // settle in animations / async state
-
-  for (const screen of SCREENS) {
-    const target = join(OUT_DIR, `${screen.name}.png`);
-    try {
-      console.log(`→ capturing: ${screen.name} (${screen.description})`);
-      await screen.navigate(page);
-      if (screen.waitFor) {
-        await page.waitForSelector(screen.waitFor, { timeout: 5000 }).catch(() => {
-          console.warn(`  (waitFor "${screen.waitFor}" timed out — capturing whatever is rendered)`);
-        });
-      }
-      await sleep(600);
-      await page.screenshot({ path: target, fullPage: false });
-      console.log(`  saved → docs/screenshots/${screen.name}.png`);
-
-      // Reset to a clean state between captures (close any modals).
-      await page.keyboard.press('Escape').catch(() => {});
-      await sleep(200);
-    } catch (err) {
-      console.warn(`  FAILED: ${screen.name} — ${err.message}`);
-    }
-  }
-
-  await browser.close();
-  return true;
-}
+const demoFiles = new Map([
+  ['README.md', '# Symphony demo project\n\nA small workspace used for documentation screenshots.\n'],
+  ['package.json', JSON.stringify({
+    scripts: {
+      typecheck: 'tsc --noEmit',
+      test: 'node --test',
+      build: 'vite build',
+    },
+    dependencies: {
+      '@symphony/local': '0.1.4',
+    },
+  }, null, 2)],
+  ['src/app.ts', [
+    'export function bootWorkspace() {',
+    "  return { mode: 'local-first', surface: 'WITHme' };",
+    '}',
+    '',
+  ].join('\n')],
+  ['src/editor/diff.ts', [
+    'export function diffLabel(path: string, changed: boolean) {',
+    "  return changed ? `${path} has local edits` : `${path} is clean`;",
+    '}',
+    '',
+  ].join('\n')],
+  ['src/team/orchestrator.ts', [
+    'export const releaseTeam = [',
+    "  'lead',",
+    "  'builder',",
+    "  'reviewer',",
+    "  'qa',",
+    '];',
+    '',
+  ].join('\n')],
+  ['docs/foundry/product-brief.md', [
+    '# Product brief',
+    '',
+    'Symphony coordinates local agent teams, keeps the human in control, and ships through GitHub releases.',
+    '',
+  ].join('\n')],
+  ['docs/foundry/release-plan.md', [
+    '# Release plan',
+    '',
+    '- Refresh README screenshots',
+    '- Keep changelog entries tied to tags',
+    '- Validate FORme and WITHme flows before publishing',
+    '',
+  ].join('\n')],
+]);
 
 async function main() {
-  console.log('Symphony AI screenshot capture');
-  console.log('==============================\n');
+  await prepareWorkspace();
+  await seedProjectFiles();
+  await initGitRepository();
 
-  await ensureOutDir();
-  const playwright = await ensurePlaywright();
-  const token = await resolveSidecarToken();
-  if (token) {
-    console.log(`Detected sidecar token (length=${token.length}) — stamping auth on all requests.`);
-  } else {
-    console.log('No sidecar token configured — running unauthenticated.');
+  const apiPort = await findFreePort(4301);
+  const uiPort = await findFreePort(5174);
+  const apiBaseUrl = `http://127.0.0.1:${apiPort}`;
+  const uiUrl = `http://127.0.0.1:${uiPort}`;
+
+  const processes = [];
+  const api = spawnNode(join(REPO_ROOT, 'scripts', 'dev-api-server.mjs'), [], {
+    cwd: REPO_ROOT,
+    env: {
+      ...process.env,
+      TOAD_PROJECT_CWD: PROJECT_DIR,
+      TOAD_DB_PATH: DB_PATH,
+      TOAD_FOUNDRY_DB_PATH: FOUNDRY_DB_PATH,
+      SYMPHONY_FOUNDRY_DB_PATH: FOUNDRY_DB_PATH,
+      TOAD_SETTINGS_PATH: join(PROJECT_DIR, '.toad', 'global-settings.json'),
+      TOAD_API_PORT: String(apiPort),
+      TOAD_API_TOKEN: API_TOKEN,
+      TOAD_API_ALLOWED_ORIGINS: '*',
+      TOAD_STUCK_MONITOR_INTERVAL_MS: '3600000',
+      TOAD_STUCK_MONITOR_THRESHOLD_MS: '3600000',
+      APPDATA: join(WORK_ROOT, 'appdata'),
+      XDG_CONFIG_HOME: join(WORK_ROOT, 'xdg-config'),
+      HOME: join(WORK_ROOT, 'home'),
+      USERPROFILE: join(WORK_ROOT, 'home'),
+    },
+    name: 'api',
+  });
+  processes.push(api);
+
+  const viteBin = join(UI_DIR, 'node_modules', 'vite', 'bin', 'vite.js');
+  if (!existsSync(viteBin)) {
+    throw new Error('Vite is not installed under ui/node_modules. Run npm install first.');
   }
+  const vite = spawnNode(viteBin, ['--host', '127.0.0.1', '--port', String(uiPort), '--strictPort'], {
+    cwd: UI_DIR,
+    env: {
+      ...process.env,
+      VITE_TOAD_API_BASE_URL: apiBaseUrl,
+      VITE_TOAD_API_TOKEN: API_TOKEN,
+    },
+    name: 'vite',
+  });
+  processes.push(vite);
 
-  let sidecar = null;
-  let vite = null;
-
-  const cleanup = () => {
-    console.log('\nCleaning up...');
-    killTree(vite);
-    killTree(sidecar);
+  const cleanup = async () => {
+    for (const child of processes.reverse()) {
+      await stopProcess(child);
+    }
   };
-  process.on('SIGINT', () => { cleanup(); process.exit(130); });
-  process.on('SIGTERM', () => { cleanup(); process.exit(143); });
+  process.once('SIGINT', () => {
+    cleanup().finally(() => process.exit(130));
+  });
+  process.once('SIGTERM', () => {
+    cleanup().finally(() => process.exit(143));
+  });
 
   try {
-    if (await alreadyListening(SIDECAR_HOST, SIDECAR_PORT)) {
-      console.log(`Sidecar already running on ${SIDECAR_HOST}:${SIDECAR_PORT} (using as-is — make sure auth matches the UI)`);
-    } else {
-      console.log('Booting sidecar API...');
-      sidecar = spawnBackground('node', ['--no-warnings', 'scripts/dev-api-server.mjs'], {
-        cwd: REPO_ROOT,
-        silent: true,
-        // Inherit env. The token (env OR persisted .toad/api-token file)
-        // is resolved by resolveSidecarToken() and stamped onto both seed
-        // calls and Playwright's request headers, so we don't need to
-        // disable auth — both ends just speak the same token.
-      }, 'sidecar');
-      await waitForUrl(SIDECAR_HEALTH_URL, 30_000, 'sidecar API');
-      console.log(`Sidecar API ready at http://${SIDECAR_HOST}:${SIDECAR_PORT}`);
-    }
-
-    if (await alreadyListening(VITE_HOST, VITE_PORT)) {
-      console.log(`Vite already running on ${VITE_HOST}:${VITE_PORT}`);
-    } else {
-      console.log('Booting Vite UI dev server...');
-      // NOT silent — Vite's first-run dependency optimization can take 30–
-      // 60 seconds and we want the user to see progress. Vite prints
-      // "Local: http://localhost:5173/" when ready.
-      vite = spawnBackground('npm', ['run', 'dev'], {
-        cwd: UI_DIR,
-        silent: false,
-      }, 'vite');
-      // Vite first-run can spend a while pre-bundling deps, so we give it
-      // a generous window. The waitForUrl probe re-tries every 500ms.
-      await waitForUrl(VITE_URL, 120_000, 'Vite UI');
-      console.log(`Vite UI ready at ${VITE_URL}`);
-    }
-
-    console.log('\nSeeding demo data (team + tasks + drift findings)...');
-    await seedDemoData(token);
-    console.log('Seed complete.');
-
-    console.log('\nCapturing screens...\n');
-    const headed = process.env.HEADED === '1';
-    if (headed) console.log('(HEADED=1 — Chromium will open visibly)');
-    const ok = await captureScreens(playwright, { headed, token });
-    if (!ok) {
-      console.error('\nCapture aborted because the UI did not render.');
-      console.error('Inspect the HTML dump or re-run with HEADED=1.');
-      process.exitCode = 1;
-    } else {
-      console.log(`\nDone. PNGs in ${OUT_DIR}`);
-    }
-  } catch (err) {
-    console.error('\nFAILED:', err.message);
-    process.exitCode = 1;
+    await waitForApi(apiBaseUrl);
+    await seedApplicationData(apiBaseUrl);
+    await waitForHttp(uiUrl);
+    await captureScreenshots(uiUrl, apiBaseUrl);
+    await writeGalleryReadme();
   } finally {
-    cleanup();
+    await cleanup();
   }
 }
 
-main();
+async function prepareWorkspace() {
+  await mkdir(OUT_DIR, { recursive: true });
+  await safeRemoveInside(join(REPO_ROOT, '.toad'), WORK_ROOT);
+  await mkdir(PROJECT_DIR, { recursive: true });
+  await mkdir(join(PROJECT_DIR, '.toad'), { recursive: true });
+}
+
+async function seedProjectFiles() {
+  for (const [file, content] of demoFiles) {
+    const target = join(PROJECT_DIR, file);
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, content, 'utf8');
+  }
+}
+
+async function initGitRepository() {
+  runGit(['init', '-b', 'main']);
+  runGit(['config', 'user.email', 'screenshots@symphony.local']);
+  runGit(['config', 'user.name', 'Symphony Screenshots']);
+  runGit(['add', '.']);
+  runGit(['commit', '-m', 'Initial screenshot workspace']);
+  await writeFile(
+    join(PROJECT_DIR, 'src', 'app.ts'),
+    [
+      'export function bootWorkspace() {',
+      "  return { mode: 'local-first', surface: 'FORme + WITHme', releaseReady: true };",
+      '}',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+}
+
+function runGit(args) {
+  const result = spawnSync('git', args, {
+    cwd: PROJECT_DIR,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  if (result.status !== 0) {
+    throw new Error(`git ${args.join(' ')} failed: ${result.stderr || result.stdout}`);
+  }
+}
+
+async function seedApplicationData(apiBaseUrl) {
+  const actor = { teamId: TEAM_ID, agentId: 'operator', agentName: 'Operator', role: 'human' };
+  const call = (method, args = {}, suffix = method) =>
+    apiCall(apiBaseUrl, { actor, method, args, idempotencyKey: `screenshots:${suffix}` });
+
+  await call('team_create', {
+    teamId: TEAM_ID,
+    lead: {
+      agentId: 'lead',
+      role: 'lead',
+      providerId: 'anthropic',
+      model: 'claude-sonnet-4.5',
+      cwd: PROJECT_DIR,
+    },
+    teammates: [
+      { agentId: 'builder', role: 'developer', providerId: 'openai', model: 'gpt-5.2-codex', cwd: PROJECT_DIR },
+      { agentId: 'reviewer', role: 'reviewer', providerId: 'anthropic', model: 'claude-sonnet-4.5', cwd: PROJECT_DIR },
+      { agentId: 'qa', role: 'tester', providerId: 'gemini', model: 'gemini-3-pro', cwd: PROJECT_DIR },
+    ],
+    validation: {
+      typecheckCommand: 'node -e "console.log(\'typecheck passed\')"',
+      testCommand: 'node -e "console.log(\'tests passed\')"',
+      buildCommand: 'node -e "console.log(\'build passed\')"',
+    },
+  }, 'team');
+
+  const tasks = [
+    {
+      taskId: 'T-101',
+      subject: 'Refresh README release narrative',
+      description: 'Update repository layout, screenshots, and release workflow documentation.',
+      ownerId: 'lead',
+      assignedRole: 'lead',
+      status: 'in_progress',
+      priority: 'high',
+      riskLevel: 'low',
+      allowedFiles: ['README.md', 'docs/**'],
+      acceptanceCriteria: ['Root layout is accurate', 'Screenshots match current UI'],
+    },
+    {
+      taskId: 'T-102',
+      subject: 'Verify WITHme diff and terminal surfaces',
+      description: 'Exercise code editor panels, terminal, and local diff handling in the cockpit.',
+      ownerId: 'builder',
+      assignedRole: 'developer',
+      status: 'review',
+      priority: 'high',
+      riskLevel: 'medium',
+      allowedFiles: ['ui/src/**', 'src/ide/**'],
+      acceptanceCriteria: ['Diff opens without HEAD failures', 'Terminal connects from the cockpit'],
+    },
+    {
+      taskId: 'T-103',
+      subject: 'Run release validation pass',
+      description: 'Confirm test, typecheck, and screenshot capture paths before publishing.',
+      ownerId: 'qa',
+      assignedRole: 'tester',
+      status: 'pending',
+      priority: 'medium',
+      riskLevel: 'low',
+      acceptanceCriteria: ['Validation history is recorded', 'Release notes link to changelog'],
+    },
+    {
+      taskId: 'T-104',
+      subject: 'Archive stale wrapper documentation',
+      description: 'Remove references to the old toad-local wrapper layout from public docs.',
+      ownerId: 'reviewer',
+      assignedRole: 'reviewer',
+      status: 'completed',
+      priority: 'medium',
+      riskLevel: 'low',
+      acceptanceCriteria: ['No public docs point at toad-local as the repo root'],
+    },
+  ];
+
+  for (const task of tasks) {
+    await call('task_create', task, `task:${task.taskId}`);
+  }
+
+  await call('review_request', {
+    taskId: 'T-102',
+    reviewerId: 'reviewer',
+    summary: 'Diff fallback and terminal wiring are ready for release review.',
+    diff: 'M ui/src/components/cockpit/CockpitWithMe.tsx\nM src/ide/diffComputer.js',
+    files: ['ui/src/components/cockpit/CockpitWithMe.tsx', 'src/ide/diffComputer.js'],
+  }, 'review:T-102');
+
+  await call('validation_run', {
+    taskId: 'T-101',
+    kind: 'typecheck',
+    command: 'node -e "console.log(\'typecheck passed\')"',
+    cwd: PROJECT_DIR,
+  }, 'validation:T-101:typecheck');
+  await call('validation_run', {
+    taskId: 'T-103',
+    kind: 'test',
+    command: 'node -e "console.log(\'tests passed\')"',
+    cwd: PROJECT_DIR,
+  }, 'validation:T-103:test');
+
+  await call('message_send', {
+    to: { kind: 'agent', agentId: 'builder' },
+    text: 'Open the WITHme cockpit and verify file tree, diff, and terminal controls against the release branch.',
+    taskRefs: ['T-102'],
+  }, 'message:builder');
+  await call('message_send', {
+    to: { kind: 'agent', agentId: 'qa' },
+    text: 'Run the release validation checklist and keep failures visible in the bottom panel.',
+    taskRefs: ['T-103'],
+  }, 'message:qa');
+
+  await call('foundry_session_create', {
+    sessionId: 'foundry-release-readiness',
+    title: 'Release readiness plan',
+    projectPath: PROJECT_DIR,
+    provider: 'anthropic',
+    metadata: { source: 'readme-screenshots' },
+  }, 'foundry:session');
+  await call('foundry_message_add', {
+    sessionId: 'foundry-release-readiness',
+    role: 'user',
+    text: 'Prepare Symphony for a GitHub release with accurate docs, screenshots, and changelog proof.',
+  }, 'foundry:user');
+  await call('foundry_message_add', {
+    sessionId: 'foundry-release-readiness',
+    role: 'assistant',
+    text: 'Plan captured: verify the root layout, keep release notes in CHANGELOG.md, and refresh the FORme/WITHme screenshots from the current app.',
+  }, 'foundry:assistant');
+  await call('foundry_artifact_upsert', {
+    artifactId: 'release-readiness-roadmap',
+    sessionId: 'foundry-release-readiness',
+    kind: 'roadmap',
+    title: 'Release readiness roadmap',
+    targetPath: 'docs/foundry/release-plan.md',
+    status: 'draft',
+    content: '# Release readiness roadmap\n\n1. Confirm the root project layout.\n2. Refresh screenshots from the current UI.\n3. Publish through GitHub tags and changelog entries.\n',
+  }, 'foundry:artifact');
+
+  const registry = new SqliteRuntimeRegistry({ filePath: DB_PATH });
+  try {
+    const now = Date.now();
+    const rows = [
+      ['lead', 'anthropic', 'claude', 'running', 'T-101', 7111, now - 1000 * 60 * 47],
+      ['builder', 'openai', 'codex', 'running', 'T-102', 7112, now - 1000 * 60 * 39],
+      ['reviewer', 'anthropic', 'claude', 'running', 'T-102', 7113, now - 1000 * 60 * 23],
+      ['qa', 'gemini', 'gemini', 'running', 'T-103', 7114, now - 1000 * 60 * 12],
+    ];
+    for (const [agentId, providerId, command, status, taskId, pid, started] of rows) {
+      registry.upsertRuntime({
+        runtimeId: `rt-${agentId}`,
+        teamId: TEAM_ID,
+        agentId,
+        providerId,
+        command,
+        deliveryMode: 'stdio',
+        status,
+        cwd: PROJECT_DIR,
+        pid,
+        taskId,
+        startedAt: new Date(started).toISOString(),
+      });
+    }
+  } finally {
+    registry.close();
+  }
+}
+
+async function captureScreenshots(uiUrl, apiBaseUrl) {
+  const browser = await chromium.launch({
+    headless: process.env.HEADED === '1' ? false : true,
+  });
+  const page = await browser.newPage({ viewport: VIEWPORT, deviceScaleFactor: 1 });
+
+  try {
+    await page.addInitScript(({ projectDir, apiBaseUrl, token }) => {
+      const now = new Date().toISOString();
+      window.localStorage.setItem('toad.projects', JSON.stringify({
+        activeId: 'readme-demo',
+        projects: [{
+          id: 'readme-demo',
+          name: 'release-readiness',
+          path: projectDir,
+          apiBaseUrl,
+          apiToken: token,
+          lastOpenedAt: now,
+        }],
+      }));
+      window.localStorage.setItem('toad.tweaks', JSON.stringify({
+        theme: 'dark',
+        density: 'comfy',
+        layout: 'org',
+        cardVariant: 'detail',
+        screen: 'cockpit',
+        agentInbox: '',
+        showProviders: false,
+        showNotifs: false,
+        showApprovals: false,
+        showRuntimes: false,
+        showDiagnostics: false,
+        showTweaks: false,
+        showSidebar: true,
+        showBottomPanel: true,
+        showRightPanel: true,
+        bottomPanelTab: 'terminal',
+        rightPanelAgent: 'builder',
+        tasksGroupBy: 'status',
+        tasksFilter: 'all',
+        developerMode: false,
+        firstRunComplete: true,
+      }));
+      window.localStorage.setItem('cockpit.forMe.viewMode', 'flow');
+    }, { projectDir: PROJECT_DIR, apiBaseUrl, token: API_TOKEN });
+
+    await page.goto(uiUrl, { waitUntil: 'domcontentloaded' });
+    await waitForStableScreen(page, '.cockpit-for');
+    await screenshot(page, 'cockpit-for-me');
+
+    await page.getByRole('button', { name: 'WITH me' }).click();
+    await waitForStableScreen(page, '.cockpit-with');
+    await page.waitForTimeout(1200);
+    await screenshot(page, 'cockpit-with-me');
+
+    for (const menu of ['File', 'View', 'Run', 'Terminal']) {
+      await openMenu(page, menu);
+      await screenshot(page, `menu-${menu.toLowerCase()}`);
+    }
+
+    await page.keyboard.press('Escape').catch(() => {});
+    await page.locator('.side-item[title="Settings"]').click();
+    await waitForStableScreen(page, '.settings-screen');
+    await screenshot(page, 'settings-general');
+    await page.getByRole('button', { name: 'Providers' }).click();
+    await page.waitForTimeout(350);
+    await screenshot(page, 'settings-providers');
+    await page.getByRole('button', { name: 'GitHub' }).click();
+    await page.waitForTimeout(350);
+    await screenshot(page, 'settings-github');
+  } finally {
+    await browser.close();
+  }
+}
+
+async function openMenu(page, name) {
+  await page.keyboard.press('Escape').catch(() => {});
+  await page.locator('.menubar-item', { hasText: name }).click();
+  await page.locator('.menu-pop').waitFor({ state: 'visible', timeout: 5000 });
+  await page.waitForTimeout(250);
+}
+
+async function screenshot(page, name) {
+  const file = join(OUT_DIR, `${name}.png`);
+  await page.screenshot({ path: file, fullPage: false });
+  console.log(`saved docs/screenshots/${name}.png`);
+}
+
+async function setTweaks(page, patch) {
+  await page.evaluate((next) => {
+    const raw = window.localStorage.getItem('toad.tweaks');
+    const current = raw ? JSON.parse(raw) : {};
+    window.localStorage.setItem('toad.tweaks', JSON.stringify({ ...current, ...next }));
+  }, patch);
+}
+
+async function waitForStableScreen(page, selector) {
+  try {
+    await page.locator(selector).waitFor({ state: 'visible', timeout: 30000 });
+  } catch (err) {
+    const body = await page.locator('body').innerText({ timeout: 2000 }).catch(() => '');
+    throw new Error(`Timed out waiting for ${selector}. Body text starts with: ${body.slice(0, 600)}`);
+  }
+  await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(750);
+}
+
+async function apiCall(apiBaseUrl, payload) {
+  const response = await fetch(`${apiBaseUrl}/api/call`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${API_TOKEN}`,
+    },
+    body: JSON.stringify(payload),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(`${payload.method} failed (${response.status}): ${body.error || response.statusText}`);
+  }
+  return body.result;
+}
+
+async function waitForApi(apiBaseUrl) {
+  const started = Date.now();
+  const actor = { teamId: 'system', agentId: 'screenshots', role: 'human' };
+  while (Date.now() - started < 30000) {
+    try {
+      await apiCall(apiBaseUrl, { actor, method: 'team_list', args: {} });
+      return;
+    } catch {
+      await delay(300);
+    }
+  }
+  throw new Error(`API did not become ready at ${apiBaseUrl}`);
+}
+
+async function waitForHttp(url) {
+  const started = Date.now();
+  while (Date.now() - started < 30000) {
+    try {
+      const response = await fetch(url);
+      if (response.ok) return;
+    } catch {
+      // Retry until timeout.
+    }
+    await delay(300);
+  }
+  throw new Error(`HTTP server did not become ready at ${url}`);
+}
+
+function spawnNode(script, args, { cwd, env, name }) {
+  const child = spawn(process.execPath, [script, ...args], {
+    cwd,
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  child.stdout.on('data', (chunk) => process.stdout.write(`[${name}] ${chunk}`));
+  child.stderr.on('data', (chunk) => process.stderr.write(`[${name}] ${chunk}`));
+  child.on('exit', (code, signal) => {
+    if (code !== 0 && signal == null) {
+      process.stderr.write(`[${name}] exited with code ${code}\n`);
+    }
+  });
+  return child;
+}
+
+async function stopProcess(child) {
+  if (!child || child.exitCode !== null || child.killed) return;
+  child.kill('SIGTERM');
+  const exited = await Promise.race([
+    new Promise((resolve) => child.once('exit', resolve)),
+    delay(2500).then(() => false),
+  ]);
+  if (exited === false && child.exitCode === null) {
+    child.kill('SIGKILL');
+    await Promise.race([
+      new Promise((resolve) => child.once('exit', resolve)),
+      delay(1000),
+    ]);
+  }
+}
+
+async function findFreePort(start) {
+  for (let port = start; port < start + 100; port += 1) {
+    if (await canListen(port)) return port;
+  }
+  throw new Error(`No free port found starting at ${start}`);
+}
+
+function canListen(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once('error', () => resolve(false));
+    server.once('listening', () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port, '127.0.0.1');
+  });
+}
+
+async function safeRemoveInside(root, target) {
+  const resolvedRoot = resolve(root);
+  const resolvedTarget = resolve(target);
+  const rel = relative(resolvedRoot, resolvedTarget);
+  if (rel === '' || rel.startsWith('..') || resolve(resolvedRoot, rel) !== resolvedTarget) {
+    throw new Error(`Refusing to remove path outside ${resolvedRoot}: ${resolvedTarget}`);
+  }
+  await rm(resolvedTarget, { recursive: true, force: true });
+}
+
+async function writeGalleryReadme() {
+  const rows = CAPTURES
+    .map((capture) => `- \`${capture.name}.png\` - ${capture.label}`)
+    .join('\n');
+  await writeFile(
+    join(OUT_DIR, 'README.md'),
+    [
+      '# Screenshots',
+      '',
+      'These PNGs are captured from the live local Symphony UI by `scripts/capture-screenshots.mjs` and embedded in the root README and docs gallery.',
+      '',
+      '## Regenerate',
+      '',
+      '```bash',
+      'npm run screenshots',
+      '```',
+      '',
+      'The script creates an isolated demo workspace under `.toad/screenshot-workspace`, starts the API and Vite UI on temporary local ports, seeds a representative team, captures Chromium screenshots, and stops the servers on exit.',
+      '',
+      '## Current Set',
+      '',
+      rows,
+      '',
+      'The PNGs are committed so GitHub renders the docs without requiring a local capture run.',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

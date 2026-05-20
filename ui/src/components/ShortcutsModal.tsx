@@ -73,7 +73,7 @@ const GROUPS: ShortcutGroup[] = [
   {
     label: 'Browser-native',
     entries: [
-      { keys: ['F12'], description: 'Open browser dev tools (debug TOAD UI state)' },
+      { keys: ['F12'], description: 'Open browser dev tools (debug Symphony UI state)' },
       { keys: ['⌘', 'R'], description: 'Reload the page (re-fetches projection from API)' },
     ],
   },

@@ -119,7 +119,7 @@ const MENUS: Record<string, MenuItem[]> = {
     { kind: 'sep' },
     { kind: 'row', label: 'Run Drift Check', k: '⌘⇧D', action: 'drift:run' },
     { kind: 'row', label: 'Run Validations on Active Task', k: '⌘⇧V', action: 'validations:run' },
-    { kind: 'row', label: 'Trigger Foundry Refinement Pass', action: 'foundry:refine' },
+    { kind: 'row', label: 'Open Foundry', action: 'foundry:refine' },
     { kind: 'sep' },
     { kind: 'row', label: 'Approve Pending…', k: '⌘⇧A', action: 'approvals:open' },
     { kind: 'row', label: 'End Team', action: 'team:end' },

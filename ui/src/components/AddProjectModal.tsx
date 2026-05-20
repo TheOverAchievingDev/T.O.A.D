@@ -45,7 +45,7 @@ export function AddProjectModal({ onClose, onAdd }: AddProjectModalProps) {
         <div className="modal-head">
           <div>
             <h2>Add project</h2>
-            <div className="sub">Register an existing TOAD project so you can switch between them from the titlebar.</div>
+            <div className="sub">Register an existing Symphony project so you can switch between them from the titlebar.</div>
           </div>
           <button className="icon-btn" onClick={onClose} type="button">
             <Icon name="x" size={16} />
@@ -69,7 +69,7 @@ export function AddProjectModal({ onClose, onAdd }: AddProjectModalProps) {
               className="field-input mono"
               value={path}
               onChange={(e) => setPath(e.target.value)}
-              placeholder="C:\Project-TOAD\…"
+              placeholder="C:\Projects\my-app\…"
             />
             <div className="field-hint">
               The directory holding the project's <span className="mono">.toad/toad.db</span>.

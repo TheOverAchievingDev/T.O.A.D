@@ -114,7 +114,7 @@ export function AdvancedSettings({ tweaks, setTweak }: AdvancedSettingsProps) {
 
       <SettingsCard
         title="DB path override"
-        description="Where TOAD opens its SQLite file. Leaving this blank uses .toad/toad.db inside the active project. Changes apply on next API restart."
+        description="Where Symphony opens its SQLite file. Leaving this blank uses .toad/toad.db inside the active project. Changes apply on next API restart."
       >
         <div className="field">
           <label>Path</label>
@@ -122,7 +122,7 @@ export function AdvancedSettings({ tweaks, setTweak }: AdvancedSettingsProps) {
             className="field-input mono"
             value={draft.draft.dbPathOverride}
             onChange={(e) => draft.patch({ dbPathOverride: e.target.value })}
-            placeholder="e.g. C:\\toad\\db\\shared.db"
+            placeholder="e.g. C:\\symphony\\db\\shared.db"
             disabled={draft.saving}
             style={{ fontSize: 12 }}
           />

@@ -1,29 +1,25 @@
 # Screenshots
 
-PNGs in this directory are captured by `scripts/capture-screenshots.mjs` and embedded in the project's root `README.md`.
+These PNGs are captured from the live local Symphony UI by `scripts/capture-screenshots.mjs` and embedded in the root README and docs gallery.
 
-## Regenerate after a UI change
+## Regenerate
 
 ```bash
-# from the repository root
-npm install --save-dev playwright   # one-time
-npx playwright install chromium     # one-time
 npm run screenshots
 ```
 
-The script:
+The script creates an isolated demo workspace under `.toad/screenshot-workspace`, starts the API and Vite UI on temporary local ports, seeds a representative team, captures Chromium screenshots, and stops the servers on exit.
 
-1. Boots the sidecar API server (port 3001) and the Vite UI dev server (port 5173) in the background — or detects them if you have them running already.
-2. Drives a headless Chromium through every major screen.
-3. Saves PNGs at 1440×900 to this directory.
-4. Tears the dev servers back down on exit (or on Ctrl+C).
+## Current Set
 
-If a particular screen fails to capture, the script keeps going and warns. Re-run after fixing.
+- `cockpit-for-me.png` - Cockpit FORme overview
+- `cockpit-with-me.png` - Cockpit WITHme code editor
+- `menu-file.png` - File menu
+- `menu-view.png` - View menu
+- `menu-run.png` - Run menu
+- `menu-terminal.png` - Terminal menu
+- `settings-general.png` - Settings general
+- `settings-providers.png` - Settings providers
+- `settings-github.png` - Settings GitHub
 
-## Adding a new screen to the capture set
-
-Edit `scripts/capture-screenshots.mjs`'s `SCREENS` array and add an entry with `{ name, description, navigate, waitFor }`. The next `npm run screenshots` run will pick it up.
-
-## What ships in git
-
-The PNGs themselves ARE committed to git so a fresh clone has visuals in the README without having to run the capture pipeline.
+The PNGs are committed so GitHub renders the docs without requiring a local capture run.

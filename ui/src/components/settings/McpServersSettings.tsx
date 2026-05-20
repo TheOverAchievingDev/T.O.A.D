@@ -51,13 +51,13 @@ export function McpServersSettings() {
     <div>
       <SettingsSectionHeader
         title="MCP servers"
-        description="The MCP servers TOAD injects into each launched Claude. TOAD's own stdio server is auto-managed; everything else is yours."
+        description="The MCP servers Symphony injects into each launched Claude. Symphony's own stdio server is auto-managed; everything else is yours."
       />
       <SectionMeta draft={draft} />
 
       <SettingsCard
-        title="TOAD's stdio MCP server"
-        description="The orchestrator's tool surface (task_*, review_*, validation_run, etc.). Disabling this means launched agents can't talk to TOAD — usually only desired for debugging."
+        title="Symphony stdio MCP server"
+        description="The orchestrator's tool surface (task_*, review_*, validation_run, etc.). Disabling this means launched agents can't talk to Symphony — usually only desired for debugging."
       >
         <div
           className="toggle-row"
@@ -65,7 +65,7 @@ export function McpServersSettings() {
         >
           <div className={`toggle ${draft.draft.toadEnabled ? 'on' : ''}`} />
           <div className="toggle-label-block" style={{ flex: 1 }}>
-            <div className="ti">Inject toad-local MCP into Claude launches</div>
+            <div className="ti">Inject Symphony MCP into Claude launches</div>
             <div className="sub">Recommended. Each runtime gets its own --mcp-config pointing at src/mcp/stdioServer.js.</div>
           </div>
         </div>
@@ -73,7 +73,7 @@ export function McpServersSettings() {
 
       <SettingsCard
         title="Custom MCP servers"
-        description="Stdio servers added to every Claude launch alongside toad-local. Each entry maps to one entry in the generated --mcp-config."
+        description="Stdio servers added to every Claude launch alongside Symphony. Each entry maps to one entry in the generated --mcp-config."
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {draft.draft.servers.length === 0 && (
