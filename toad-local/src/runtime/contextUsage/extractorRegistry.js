@@ -1,11 +1,13 @@
 import * as claudeExtractor from './extractors/claudeExtractor.js';
 import * as codexExtractor from './extractors/codexExtractor.js';
+import * as geminiExtractor from './extractors/geminiExtractor.js';
 
 const REGISTRY = Object.freeze({
   claude:    claudeExtractor,
   anthropic: claudeExtractor,
   codex:     codexExtractor,
-  // gemini/opencode added by SP2 Tasks 5-6.
+  gemini:    geminiExtractor,
+  // opencode added by SP2 Task 6.
 });
 
 export const PROVIDER_KEYS = Object.freeze(Object.keys(REGISTRY));
