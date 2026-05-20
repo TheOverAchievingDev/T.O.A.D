@@ -29,3 +29,10 @@ test('getProviderThreshold(unknown) → DEFAULT_THRESHOLD', () => {
   assert.equal(getProviderThreshold(''), DEFAULT_THRESHOLD);
   assert.equal(getProviderThreshold(undefined), DEFAULT_THRESHOLD);
 });
+
+test('inherited prototype keys return DEFAULT_THRESHOLD (no prototype-pollution leak)', () => {
+  assert.equal(getProviderThreshold('__proto__'), DEFAULT_THRESHOLD);
+  assert.equal(getProviderThreshold('constructor'), DEFAULT_THRESHOLD);
+  assert.equal(getProviderThreshold('hasOwnProperty'), DEFAULT_THRESHOLD);
+  assert.equal(getProviderThreshold('toString'), DEFAULT_THRESHOLD);
+});

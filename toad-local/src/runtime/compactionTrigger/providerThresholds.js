@@ -17,5 +17,11 @@ export const DEFAULT_THRESHOLD = Object.freeze({ trigger: 0.70 });
 
 export function getProviderThreshold(providerId) {
   if (typeof providerId !== 'string' || providerId.length === 0) return DEFAULT_THRESHOLD;
-  return PROVIDER_COMPACTION_THRESHOLDS[providerId] || DEFAULT_THRESHOLD;
+  // Own-property check matches the extractorRegistry pattern (SP2 Task 3):
+  // PROVIDER_COMPACTION_THRESHOLDS[providerId] would resolve inherited
+  // keys like '__proto__' (→ Object.prototype, truthy) and yield silent
+  // `threshold = undefined` downstream. hasOwnProperty.call closes that.
+  return Object.prototype.hasOwnProperty.call(PROVIDER_COMPACTION_THRESHOLDS, providerId)
+    ? PROVIDER_COMPACTION_THRESHOLDS[providerId]
+    : DEFAULT_THRESHOLD;
 }

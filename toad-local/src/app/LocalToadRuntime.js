@@ -322,7 +322,7 @@ export class LocalToadRuntime {
         runtimeRegistry: this.runtimeRegistry,
         eventLog: this.eventLog,
       }),
-      getThreshold: () => resolveThresholdFromSettings(this.settingsStore),
+      getThreshold: (providerId) => resolveThresholdFromSettings(this.settingsStore, providerId),
     });
     this.apiServer = new ApiServer({
       eventBus: this.eventBus,

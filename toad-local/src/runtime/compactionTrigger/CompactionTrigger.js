@@ -1,7 +1,6 @@
 import { shouldCompact, REASONS } from './shouldCompact.js';
-import { getProviderThreshold, DEFAULT_THRESHOLD as PROVIDER_DEFAULT_THRESHOLD } from './providerThresholds.js';
+import { getProviderThreshold } from './providerThresholds.js';
 
-const DEFAULT_THRESHOLD = PROVIDER_DEFAULT_THRESHOLD.trigger;
 const DEFAULT_COOLDOWN_MS = 120_000;   // grounded default; injectable — run-and-tighten per executor Notes
 const DEFAULT_RETRY_BUDGET = 2;        // 1 initial + ≤2 retries = ≤3 attempts
 

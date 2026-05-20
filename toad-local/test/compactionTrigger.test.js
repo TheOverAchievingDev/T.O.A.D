@@ -149,7 +149,7 @@ describe('resolveThresholdFromSettings', () => {
     const store = { readEffective: async () => ({ compaction: { claude: { threshold: 0.6 } } }) };
     assert.equal(await resolveThresholdFromSettings(store, 'claude'), 0.6);
   });
-  it('falls back to 0.70 when section/key absent or non-finite or store missing', async () => {
+  it('falls back to DEFAULT_THRESHOLD (0.70) when providerId absent, section missing, non-finite value, or store error', async () => {
     assert.equal(await resolveThresholdFromSettings({ readEffective: async () => ({}) }), 0.70);
     assert.equal(await resolveThresholdFromSettings({ readEffective: async () => ({ compaction: { claude: { threshold: 'x' } } }) }), 0.70);
     assert.equal(await resolveThresholdFromSettings(null), 0.70);
