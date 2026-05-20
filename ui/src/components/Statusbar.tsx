@@ -192,7 +192,7 @@ export function Statusbar({
           {typeof costToday === 'number' ? `$${costToday.toFixed(2)}` : '--'}
         </span>
         {costBudgetSummary && <span className="muted">{costBudgetSummary}</span>}
-        {!costBudgetSummary && typeof costToday === 'number' && <span className="muted">today</span>}
+        {!costBudgetSummary && typeof costToday === 'number' && <span className="muted">total</span>}
       </button>
 
       {/* Git — branch + clean. */}

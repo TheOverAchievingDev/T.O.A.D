@@ -107,6 +107,7 @@ function AppInner() {
     | { projectName: string; projectPath: string; resolve: (ok: boolean) => void }
   >(null);
   const [launchingTeamId, setLaunchingTeamId] = useState<string | null>(null);
+  const [costToday, setCostToday] = useState<number | null>(null);
   const [addProjectOpen, setAddProjectOpen] = useState(false);
   const [logRuntimeId, setLogRuntimeId] = useState<string | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -593,6 +594,31 @@ function AppInner() {
         return;
     }
   }
+
+  // Poll usage_summary every 30s for the Statusbar cost display.
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchCost() {
+      try {
+        const res = await callToadApi({
+          actor: { teamId: 'default', agentId: 'ui-client', role: 'human' },
+          method: 'usage_summary',
+          args: {},
+        });
+        if (!cancelled && res && typeof res === 'object') {
+          const summary = res as { totals?: { costUsd?: number } };
+          if (summary.totals && typeof summary.totals.costUsd === 'number') {
+            setCostToday(summary.totals.costUsd);
+          }
+        }
+      } catch {
+        // Silent — Statusbar shows '--' when cost data is unavailable.
+      }
+    }
+    void fetchCost();
+    const id = setInterval(fetchCost, 30_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
 
   // Phase 2 Task 3 — full Menubar action dispatcher. All four panel
   // toggles wire to real tweaks; Run menu items wire to the existing
@@ -1268,7 +1294,7 @@ function AppInner() {
         liveRuntimes={runtimes.filter((r) => r.status === 'live').length}
         totalRuntimes={runtimes.length}
         onOpenRuntimes={() => setTweak('showRuntimes', true)}
-        costToday={null}
+        costToday={costToday}
         onOpenCosts={() => setTweak('screen', 'costs')}
         gitBranch="main"
         gitClean
