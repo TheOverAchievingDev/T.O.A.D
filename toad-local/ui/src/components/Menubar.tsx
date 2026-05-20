@@ -67,11 +67,17 @@ interface MenuItem {
   check?: boolean;   // render as toggle with check mark when active
   action?: MenuAction;
   goto?: SidebarKey;
+  disabled?: boolean; // grayed out, not clickable — visible roadmap
 }
 
 const MENUS: Record<string, MenuItem[]> = {
   File: [
+    { kind: 'row', label: 'New File', k: '⌘N', disabled: true },
+    { kind: 'sep' },
     { kind: 'row', label: 'Open Project Folder…', k: '⌘O', action: 'goto:picker' },
+    { kind: 'sep' },
+    { kind: 'row', label: 'Save', k: '⌘S', disabled: true },
+    { kind: 'row', label: 'Save All', k: '⌘K S', disabled: true },
     { kind: 'sep' },
     { kind: 'row', label: 'Preferences', k: '⌘,', goto: 'settings' },
   ],
@@ -96,6 +102,15 @@ const MENUS: Record<string, MenuItem[]> = {
   ],
   Go: [
     { kind: 'row', label: 'Go to File…', k: '⌘P', action: 'palette:open' },
+    { kind: 'row', label: 'Go to Symbol in Workspace…', k: '⌘T', disabled: true },
+    { kind: 'sep' },
+    { kind: 'row', label: 'Go to Definition', k: 'F12', disabled: true },
+    { kind: 'row', label: 'Go to References', k: '⇧F12', disabled: true },
+    { kind: 'sep' },
+    { kind: 'row', label: 'Add Symbol to Agent Inbox', disabled: true },
+    { kind: 'sep' },
+    { kind: 'row', label: 'Next Problem', k: 'F8', disabled: true },
+    { kind: 'row', label: 'Previous Problem', k: '⇧F8', disabled: true },
   ],
   Run: [
     { kind: 'head', label: 'Team' },
@@ -111,6 +126,9 @@ const MENUS: Record<string, MenuItem[]> = {
   ],
   Terminal: [
     { kind: 'row', label: 'New Terminal', k: '⌃⇧`', action: 'terminal:new' },
+    { kind: 'sep' },
+    { kind: 'row', label: 'Kill Active Terminal', disabled: true },
+    { kind: 'row', label: 'Clear', disabled: true },
   ],
   Help: [
     { kind: 'row', label: 'Show All Commands', k: '⌘⇧P', action: 'palette:open' },
@@ -120,6 +138,7 @@ const MENUS: Record<string, MenuItem[]> = {
     { kind: 'row', label: 'Give Feedback…', action: 'help:feedback' },
     { kind: 'row', label: 'Report Issue…', action: 'help:issue' },
     { kind: 'sep' },
+    { kind: 'row', label: 'Toggle Developer Tools', disabled: true },
     { kind: 'row', label: 'About Symphony', action: 'help:about' },
   ],
 };
@@ -169,6 +188,7 @@ export function Menubar({
   };
 
   const handleItemClick = (item: MenuItem) => {
+    if (item.disabled) return;
     if (item.goto) onNav(item.goto);
     if (item.action) onAction(item.action);
     setOpenMenu(null);
@@ -220,8 +240,9 @@ export function Menubar({
             return (
               <div
                 key={i}
-                className="row"
+                className={`row${item.disabled ? ' disabled' : ''}`}
                 role="menuitem"
+                aria-disabled={item.disabled || undefined}
                 onClick={() => handleItemClick(item)}
               >
                 <span className="check">

@@ -105,6 +105,17 @@
   background: var(--clay-soft);
   color: var(--fg-0);
 }
+.menu-pop .row.disabled {
+  color: var(--fg-4);
+  cursor: default;
+}
+.menu-pop .row.disabled:hover {
+  background: transparent;
+  color: var(--fg-4);
+}
+.menu-pop .row.disabled .kbd {
+  color: var(--fg-4);
+}
 .menu-pop .row .kbd {
   color: var(--fg-3);
   font-family: var(--font-mono-new);
