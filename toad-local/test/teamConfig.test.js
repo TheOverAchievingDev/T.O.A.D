@@ -91,6 +91,7 @@ test('TeamConfig members carry launch fields with sensible defaults', () => {
   assert.deepEqual(config.teammates[0].env, {});
   assert.equal(config.teammates[0].providerId, 'anthropic');
   assert.equal(config.teammates[0].prompt, '');
+  assert.equal(config.teammates[0].systemPromptAppend, '');
 });
 
 test('TeamConfig persists validation commands when provided', () => {
@@ -172,9 +173,6 @@ test('TeamConfig auto-repairs a mismatched (providerId, command) pair (heals leg
 });
 
 test('TeamConfig preserves a custom command outside the canonical set (e.g. claude-beta binary path)', () => {
-  // The auto-repair shouldn't clobber intentional overrides to custom
-  // binaries. If the command isn't a known provider CLI name, the
-  // operator clearly meant something specific — leave it alone.
   const config = new TeamConfig({
     teamId: 'team-custom',
     lead: { agentId: 'lead', providerId: 'anthropic', command: '/opt/claude-beta/bin/claude' },
@@ -193,4 +191,22 @@ test('TeamConfig providerId defaults to anthropic when missing (was "claude" whi
   });
   assert.equal(config.lead.providerId, 'anthropic');
   assert.equal(config.lead.command, 'claude');
+});
+
+test('TeamConfig preserves systemPromptAppend for per-agent skill injection', () => {
+  const config = new TeamConfig({
+    teamId: 'team-skills',
+    lead: { agentId: 'lead', systemPromptAppend: 'Lead skill: enforce DRY across all modules.' },
+    teammates: [
+      { agentId: 'dev', role: 'developer', systemPromptAppend: 'Dev skill: always use async/await for I/O.' },
+      { agentId: 'rev', role: 'reviewer', systemPromptAppend: '' },
+    ],
+  });
+  assert.equal(config.lead.systemPromptAppend, 'Lead skill: enforce DRY across all modules.');
+  assert.equal(config.teammates[0].systemPromptAppend, 'Dev skill: always use async/await for I/O.');
+  assert.equal(config.teammates[1].systemPromptAppend, '');
+  // toJSON round-trips
+  const json = config.toJSON();
+  assert.equal(json.lead.systemPromptAppend, 'Lead skill: enforce DRY across all modules.');
+  assert.equal(json.teammates[0].systemPromptAppend, 'Dev skill: always use async/await for I/O.');
 });

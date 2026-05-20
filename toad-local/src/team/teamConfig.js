@@ -63,6 +63,10 @@ function normalizeMember(member, fallbackAgentId) {
     // the file is more likely to be the most-recently-edited source of truth
     // (mirrors upstream's --team-bootstrap-user-prompt-file behavior).
     promptPath: typeof m.promptPath === 'string' && m.promptPath.trim() ? m.promptPath.trim() : '',
+    // Optional: appended to the system prompt AFTER role guidance. Use for
+    // per-agent skill injection, custom instructions, or project-specific
+    // rules that augment the role baseline without replacing it.
+    systemPromptAppend: typeof m.systemPromptAppend === 'string' && m.systemPromptAppend.trim() ? m.systemPromptAppend.trim() : '',
   };
 }
 

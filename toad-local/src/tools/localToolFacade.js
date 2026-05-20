@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { COMMANDS, commandRequiresIdempotency } from '../commands/command-contract.js';
 import { MESSAGE_KINDS } from '../protocol/envelopes.js';
@@ -1862,11 +1863,38 @@ export class LocalToolFacade {
         // Skipped when the team config supplied a literal --append-system-prompt
         // in member.args (handled inside LocalToadRuntime so we don't
         // double-check here).
+        //
+        // Skill file auto-injection (Phase 2, 2026-05-19): when the member
+        // has no explicit systemPromptAppend set AND a foundry-generated
+        // skill file exists at docs/foundry/skills/{role}.md, read and
+        // inject it. This makes "follow existing patterns" actionable by
+        // giving each agent project-specific instructions derived from the
+        // tech spec / steering / DoD. Operator-set systemPromptAppend wins
+        // over auto-read.
+        let effectiveAppend = member.systemPromptAppend || '';
+        if (!effectiveAppend && typeof member.role === 'string' && member.role.length > 0) {
+          const skillPath = path.resolve(
+            teamCwd,
+            'docs', 'foundry', 'skills', `${member.role.toLowerCase()}.md`,
+          );
+          try {
+            if (existsSync(skillPath)) {
+              effectiveAppend = readFileSync(skillPath, 'utf-8');
+            }
+          } catch {
+            // Missing or unreadable skill file is non-fatal — proceed
+            // with the stock role guidance only.
+          }
+        }
+        const skillMember = effectiveAppend !== (member.systemPromptAppend || '')
+          ? { ...member, systemPromptAppend: effectiveAppend }
+          : member;
+
         launchInput.systemPrompt = buildAgentSystemPrompt({
           teamId: config.teamId,
           lead: config.lead,
           teammates: config.teammates,
-          member,
+          member: skillMember,
           cwd: teamCwd,
         });
         // The lead needs a stdin kickoff to actually start generating —
@@ -4036,6 +4064,23 @@ function buildFoundryArtifacts(snapshot) {
     });
   }
 
+  // Per-role skill files — the Foundry planner emits a single ===DOC: skills===
+  // block with `## role_name` sections. Split into individual artifacts so the
+  // export writes docs/foundry/skills/{role}.md. Team launch auto-reads these
+  // and injects them via systemPromptAppend (Phase 2, 2026-05-19).
+  const skillsContent = parsed.get('skills');
+  if (skillsContent) {
+    const roleSections = splitSkillSections(skillsContent);
+    for (const [role, content] of roleSections) {
+      out.push({
+        kind: `skills_${role}`,
+        title: `Skill File — ${role}`,
+        content,
+        targetPath: `docs/foundry/skills/${role}.md`,
+      });
+    }
+  }
+
   // Only include the Prisma schema draft when the operator explicitly
   // emitted a `===DOC: prisma_schema===` block in chat. The skeleton
   // template was speculative noise for projects that don't even use a
@@ -4073,6 +4118,31 @@ function buildFoundryArtifacts(snapshot) {
   }
 
   return out;
+}
+
+/**
+ * Parse a ===DOC: skills=== block into per-role sections delimited by
+ * `## role_name` markdown headings. Returns a Map of role → content.
+ * Roles without content after the heading are skipped.
+ *
+ * @param {string} text — raw skills block content
+ * @returns {Map<string, string>}
+ */
+function splitSkillSections(text) {
+  const result = new Map();
+  if (typeof text !== 'string' || text.trim().length === 0) return result;
+  // Match `## role_name` (level-2 heading, single word role) followed by
+  // content up to the next ## heading or end of string.
+  const re = /^##\s+(\w+)\s*$([\s\S]*?)(?=^##\s+\w+\s*$|\Z)/gm;
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    const role = match[1].toLowerCase().trim();
+    const content = match[2].trim();
+    if (content.length > 0) {
+      result.set(role, content);
+    }
+  }
+  return result;
 }
 
 /**
