@@ -21,3 +21,13 @@ test('PROVIDER_KEYS includes the implemented providers and is frozen', () => {
   }
   assert.throws(() => { PROVIDER_KEYS.push('foo'); }, /Cannot|read.?only|extensible/i);
 });
+
+test('inherited prototype keys return null (no prototype-pollution leak)', () => {
+  // REGISTRY[providerId] would resolve __proto__/constructor as truthy
+  // without an own-property guard, breaking the dispatcher's no-throw
+  // contract downstream.
+  assert.equal(getExtractor('__proto__'), null);
+  assert.equal(getExtractor('constructor'), null);
+  assert.equal(getExtractor('hasOwnProperty'), null);
+  assert.equal(getExtractor('toString'), null);
+});
