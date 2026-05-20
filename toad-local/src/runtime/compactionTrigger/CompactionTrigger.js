@@ -1,24 +1,26 @@
 import { shouldCompact, REASONS } from './shouldCompact.js';
+import { getProviderThreshold, DEFAULT_THRESHOLD as PROVIDER_DEFAULT_THRESHOLD } from './providerThresholds.js';
 
-const DEFAULT_THRESHOLD = 0.70;
+const DEFAULT_THRESHOLD = PROVIDER_DEFAULT_THRESHOLD.trigger;
 const DEFAULT_COOLDOWN_MS = 120_000;   // grounded default; injectable — run-and-tighten per executor Notes
 const DEFAULT_RETRY_BUDGET = 2;        // 1 initial + ≤2 retries = ≤3 attempts
 
 /**
- * Resolve the Claude compaction threshold from SettingsStore. New
- * `compaction` section: { compaction: { claude: { threshold: <0..1> } } }.
- * Always returns a finite fraction; defaults to 0.70 on any
- * miss/non-finite/IO error (never throws — honest default).
+ * Resolve the per-provider compaction threshold from SettingsStore.
+ * `compaction` section: { compaction: { <providerId>: { threshold: <0..1> } } }.
+ * Falls back to providerThresholds.js per-provider default, then to
+ * DEFAULT_THRESHOLD. Always returns a finite fraction; never throws.
  */
-export async function resolveThresholdFromSettings(settingsStore) {
+export async function resolveThresholdFromSettings(settingsStore, providerId) {
   try {
-    if (!settingsStore || typeof settingsStore.readEffective !== 'function') return DEFAULT_THRESHOLD;
-    const eff = await settingsStore.readEffective();
-    const t = eff && eff.compaction && eff.compaction.claude ? eff.compaction.claude.threshold : undefined;
-    return typeof t === 'number' && Number.isFinite(t) && t > 0 && t <= 1 ? t : DEFAULT_THRESHOLD;
-  } catch {
-    return DEFAULT_THRESHOLD;
-  }
+    if (settingsStore && typeof settingsStore.readEffective === 'function') {
+      const eff = await settingsStore.readEffective();
+      const t = eff && eff.compaction && eff.compaction[providerId]
+        ? eff.compaction[providerId].threshold : undefined;
+      if (typeof t === 'number' && Number.isFinite(t) && t > 0 && t <= 1) return t;
+    }
+  } catch { /* swallow */ }
+  return getProviderThreshold(providerId).trigger;
 }
 
 /**
@@ -70,7 +72,7 @@ export class CompactionTrigger {
     if (!event || !event.runtimeId) return;
     const state = this.#state(event.runtimeId);
     const usage = this.getContextUsage(event.agentId, { teamId: event.teamId });
-    const threshold = this.getThreshold ? await this.getThreshold() : DEFAULT_THRESHOLD;
+    const threshold = this.getThreshold ? await this.getThreshold(usage.provider) : getProviderThreshold(usage.provider).trigger;
     const verdict = shouldCompact({ usage, threshold, state, now: this.now() });
 
     if (verdict.reason === REASONS.GIVING_UP_SURFACED && !state.surfacedGiveUp) {

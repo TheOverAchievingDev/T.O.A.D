@@ -147,7 +147,7 @@ describe('CompactionTrigger — cleanup + honest-degradation', () => {
 describe('resolveThresholdFromSettings', () => {
   it('returns project compaction.claude.threshold when set', async () => {
     const store = { readEffective: async () => ({ compaction: { claude: { threshold: 0.6 } } }) };
-    assert.equal(await resolveThresholdFromSettings(store), 0.6);
+    assert.equal(await resolveThresholdFromSettings(store, 'claude'), 0.6);
   });
   it('falls back to 0.70 when section/key absent or non-finite or store missing', async () => {
     assert.equal(await resolveThresholdFromSettings({ readEffective: async () => ({}) }), 0.70);
