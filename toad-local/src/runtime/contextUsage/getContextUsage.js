@@ -1,10 +1,10 @@
 import { computeContextUsage } from './computeContextUsage.js';
+import { PROVIDER_KEYS } from './extractorRegistry.js';
 
 const DEFAULT_STALENESS_MS = 60_000;
-// Providers with a real B implementation. Codex/Gemini are NAMED-
-// DEFERRED slots (design §4): the interface stays agnostic and
-// empty-slot-safe (degraded shape, never throws) until a parser lands.
-const IMPLEMENTED = new Set(['claude', 'anthropic']);
+// IMPLEMENTED is the single-source registry-keys set. Genuinely-unknown
+// providers (anything not in the registry) return degraded.
+const IMPLEMENTED = new Set(PROVIDER_KEYS);
 
 function degraded(provider, model = null) {
   return { used: null, total: null, percentage: null, model, provider: provider || 'unknown', lastUpdatedAt: null, stale: true, source: 'unknown' };
