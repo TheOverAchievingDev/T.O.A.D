@@ -18,6 +18,14 @@ export const MODEL_CONTEXT_WINDOW = Object.freeze({
   'claude-3-opus': 200_000,
   'claude-opus-4-1m': 1_000_000,
   'claude-opus': 200_000,
+  // Non-Claude entries added for SP2 per-provider usage reporting.
+  // Codex (OpenAI): GPT-5 variants ship with 128K at time of writing.
+  'gpt-5': 128_000,
+  // Gemini: 2.5 Pro ships with 1M token context window.
+  'gemini-2.5': 1_000_000,
+  'gemini-2.0': 1_000_000,
+  // OpenCode: Qwen Coder variants ship with 128K context.
+  'qwen': 128_000,
 });
 
 export function resolveContextWindow(model) {

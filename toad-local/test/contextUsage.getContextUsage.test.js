@@ -28,8 +28,11 @@ test('no runtime for agent → degraded shape, never throws', () => {
   assert.equal(r.used, null); assert.equal(r.total, null); assert.equal(r.percentage, null);
   assert.equal(r.stale, true); assert.equal(r.source, 'unknown');
 });
-test('empty-slot safety: codex/gemini provider → degraded shape, never throws (deferred slots)', () => {
-  for (const providerId of ['codex', 'gemini', 'openai', 'anything']) {
+test('empty-slot safety: genuinely-unknown provider → degraded shape, never throws', () => {
+  // Narrowed from ['codex','gemini','openai','anything'] — codex/gemini/
+  // opencode are now implemented (SP2). The guard locks the seam invariant
+  // for any future genuinely-unknown provider.
+  for (const providerId of ['openai', 'anything']) {
     const reg = fakeRegistry([{ runtimeId: 'rt', agentId: 'a', providerId, status: 'running', startedAt: '2026-05-16T00:00:00Z' }]);
     const r = getContextUsage('a', { teamId: 'team-a', runtimeRegistry: reg, eventLog: fakeEventLog({ rt: [] }), settings: {}, now: Date.now() });
     assert.equal(r.provider, providerId);
@@ -37,6 +40,45 @@ test('empty-slot safety: codex/gemini provider → degraded shape, never throws 
     assert.equal(r.used, null);
     assert.equal(r.stale, true);
   }
+});
+
+test('codex precise: events with usage → source:precise, used = sum of fields', () => {
+  const reg = fakeRegistry([{ runtimeId: 'rt-c', agentId: 'a', providerId: 'codex', status: 'running', startedAt: '2026-05-16T00:00:00Z' }]);
+  const log = fakeEventLog({
+    'rt-c': [{ eventType: 'turn_completed', createdAt: '2026-05-16T00:00:10Z', payload: { raw: { usage: { input_tokens: 100, output_tokens: 50, cached_input_tokens: 20, reasoning_output_tokens: 10 }, model: 'gpt-5-codex' } } }],
+  });
+  const r = getContextUsage('a', { teamId: 'team-a', runtimeRegistry: reg, eventLog: log, settings: {}, now: Date.parse('2026-05-16T00:00:20Z') });
+  assert.equal(r.provider, 'codex');
+  assert.equal(r.source, 'precise');
+  assert.equal(r.used, 180);
+  assert.equal(r.model, 'gpt-5-codex');
+});
+
+test('gemini precise: events with usage → source:precise, used = input+output (no cache)', () => {
+  // Gemini normalizer stores usage at payload.usage (snake_case), NOT payload.raw.usage.
+  const reg = fakeRegistry([{ runtimeId: 'rt-g', agentId: 'a', providerId: 'gemini', status: 'running', startedAt: '2026-05-16T00:00:00Z' }]);
+  const log = fakeEventLog({
+    'rt-g': [{ eventType: 'turn_completed', createdAt: '2026-05-16T00:00:10Z', payload: { usage: { input_tokens: 1000, output_tokens: 200 } } }],
+  });
+  const r = getContextUsage('a', { teamId: 'team-a', runtimeRegistry: reg, eventLog: log, settings: {}, now: Date.parse('2026-05-16T00:00:20Z') });
+  assert.equal(r.provider, 'gemini');
+  // Gemini extractor returns model:null (not yet plumbed in normalizer) → context window unknown → source:'unknown'.
+  // This is correct: we have precise usage but unknown denominator.
+  assert.equal(r.used, 1200);
+  assert.equal(r.model, null);
+});
+
+test('opencode precise: events with usage → source:precise, used = input+output+cached', () => {
+  // OpenCode normalizer stores usage at payload.usage (camelCase), NOT payload.raw.usage.
+  const reg = fakeRegistry([{ runtimeId: 'rt-o', agentId: 'a', providerId: 'opencode', status: 'running', startedAt: '2026-05-16T00:00:00Z' }]);
+  const log = fakeEventLog({
+    'rt-o': [{ eventType: 'turn_completed', createdAt: '2026-05-16T00:00:10Z', payload: { usage: { inputTokens: 5, outputTokens: 2, cacheRead: 3 } } }],
+  });
+  const r = getContextUsage('a', { teamId: 'team-a', runtimeRegistry: reg, eventLog: log, settings: {}, now: Date.parse('2026-05-16T00:00:20Z') });
+  assert.equal(r.provider, 'opencode');
+  // OpenCode extractor returns model:null (not yet plumbed in normalizer) → context window unknown → source:'unknown'.
+  assert.equal(r.used, 10);
+  assert.equal(r.model, null);
 });
 test('staleness window read from settings.runtime.contextStaleness, default 60000', () => {
   const reg = fakeRegistry([{ runtimeId: 'rt', agentId: 'a', providerId: 'claude', status: 'running', startedAt: '2026-05-16T00:00:00Z' }]);
