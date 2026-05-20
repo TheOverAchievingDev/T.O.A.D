@@ -770,10 +770,7 @@ function AppInner() {
         return;
       }
       case 'foundry:refine':
-        // Foundry refinement passes are per-session; the menu needs to
-        // know which session is "active" which is a Phase 3 IA decision.
-        // eslint-disable-next-line no-console
-        console.warn('[menu] Trigger Foundry Refinement — coming in Phase 3');
+        setTweak('screen', 'foundry');
         return;
       case 'approvals:open':
         setTweak('showApprovals', true);

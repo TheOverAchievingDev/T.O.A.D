@@ -23,6 +23,37 @@ const GROUPS: ShortcutGroup[] = [
     ],
   },
   {
+    label: 'Screens',
+    entries: [
+      { keys: ['⌘', '1'], description: 'Cockpit' },
+      { keys: ['⌘', '2'], description: 'Foundry' },
+      { keys: ['⌘', '3'], description: 'Code' },
+      { keys: ['⌘', '4'], description: 'Tasks' },
+      { keys: ['⌘', '5'], description: 'Drift' },
+      { keys: ['⌘', '6'], description: 'Costs' },
+      { keys: ['⌘', '7'], description: 'Audit' },
+      { keys: ['⌘', ','], description: 'Settings' },
+    ],
+  },
+  {
+    label: 'Panels',
+    entries: [
+      { keys: ['⌘', 'B'], description: 'Toggle sidebar' },
+      { keys: ['⌘', 'J'], description: 'Toggle bottom panel' },
+      { keys: ['⌘', '⌥', 'I'], description: 'Toggle agent inbox (right panel)' },
+    ],
+  },
+  {
+    label: 'Team',
+    entries: [
+      { keys: ['F5'], description: 'Start / Resume team' },
+      { keys: ['⇧', 'F5'], description: 'Pause team (stop all agents)' },
+      { keys: ['⌘', '⇧', 'D'], description: 'Run drift check' },
+      { keys: ['⌘', '⇧', 'V'], description: 'Run validations on active task' },
+      { keys: ['⌘', '⇧', 'A'], description: 'Open approvals' },
+    ],
+  },
+  {
     label: 'Modals & drawers',
     entries: [
       { keys: ['Esc'], description: 'Close the current modal, drawer, or palette' },

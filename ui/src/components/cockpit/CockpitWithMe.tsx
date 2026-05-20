@@ -632,6 +632,10 @@ export function CockpitWithMe({
             outputSlot={<BottomPanelOutput team={team} agentStreams={agentStreams} />}
             validationsSlot={<BottomPanelValidations tasks={tasks} />}
             terminalSlot={<TerminalPane />}
+            onNewTerminal={() => {
+              setTweak('showBottomPanel', true);
+              setTweak('bottomPanelTab', 'terminal');
+            }}
           />
         </PaneSplitter>
       ) : (

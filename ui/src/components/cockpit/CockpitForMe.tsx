@@ -475,9 +475,6 @@ export function CockpitForMe({
                   <Icon name="workflow" size={12} /> Flow
                 </button>
               </div>
-              <button type="button" className="btn ghost" title="What can I do here? (Phase 4)">
-                <Icon name="info" size={12} /> ?
-              </button>
             </div>
             <CockpitFlowCanvas
               team={team}
@@ -688,9 +685,6 @@ export function CockpitForMe({
                   <Icon name="workflow" size={12} /> Flow
                 </button>
               </div>
-              <button type="button" className="btn ghost" title="What can I do here? (Phase 4)">
-                <Icon name="info" size={12} /> ?
-              </button>
             </div>
             <FlowTimeline events={timelineEvents} hero={heroNode} />
           </div>
